@@ -1,0 +1,12 @@
+{
+  "version": "1.0.0",
+  "tag": "v1.0.0",
+  "releasedAt": "2026-11-25",
+  "changelog": "4 curated anime themes (Starlight 8-Bit, NERV UNIT-02, Shinkai Rain, Kyoto Sakura), 60fps HLSL live shaders, and built-in `theme update` notifier.",
+  "themes": [
+    "starlight-8bit",
+    "nerv-eva",
+    "shinkai-rain",
+    "kyoto-sakura"
+  ]
+}

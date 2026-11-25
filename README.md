@@ -1,5 +1,8 @@
 # ★ Kiseki Terminal — Anime Theme Collection for Windows Terminal
 
+[![Release](https://img.shields.io/github/v/release/nerv-base/kiseki-terminal?style=flat-square&color=ff82b8)](https://github.com/nerv-base/kiseki-terminal/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-66f0ff?style=flat-square)](./LICENSE)
+
 > 一套专为 **Windows Terminal + PowerShell + Oh My Posh + Fastfetch** 打造的二次元终端美学合集。  
 > 每套主题都包含 **按终端左右阅读区专门构图的二次元壁纸**、**从画面精确取色的 16 色 ANSI 方案**、**专属 Oh My Posh 提示符**、**手绘真彩半块像素 Fastfetch 徽章**、**定制字体栈**，以及 **一键热切换引擎**。
 
@@ -92,6 +95,17 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1
 | `termfont 8bit \| code \| maple \| modern` | 单独切换字体栈（保留像素或圆体中文） |
 | `termbg 0.35` / `termbg -Off` | 微调壁纸透明度或暂时关闭壁纸 |
 | `fetch` | 重新展示当前主题的定制 Fastfetch 徽章与状态卡 |
+| `theme update` | 一键热更新到最新 GitHub Release（保留当前主题和动静开关，无需重装字体与工具） |
+| `theme update check` | 手动立即检查是否有新版本或新主题 |
+| `theme update mute` / `unmute` | 关闭 / 开启启动时的自动更新提醒 |
+
+---
+
+## Updating / 自动更新提醒与热升级
+
+- 每 **24 小时**在后台静默检查一次新版本（不阻塞终端启动、不消耗 GitHub API 配额）；
+- 当仓库发布新 Release 或新增主题时，打开终端会在 Fastfetch 下方温和提示一行，输入 `theme update` 即可在几秒内完成热升级，自动保留你的当前主题和 `live` 开关；
+- 如需关闭自动提醒，执行 `theme update mute`（或设置环境变量 `KISEKI_NO_UPDATE_CHECK=1`）。
 
 ---
 

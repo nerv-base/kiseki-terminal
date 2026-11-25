@@ -98,7 +98,10 @@ function global:fetch {
 }
 Set-Alias neofetch fetch -Scope Global
 
-# --- Auto-Greeting in Top-Level Interactive Windows Terminal Tabs ---
+# --- Auto-Greeting & Zero-Lag Update Notice in Top-Level Interactive Windows Terminal Tabs ---
 if ($env:WT_SESSION -and $Host.UI.SupportsVirtualTerminal -and -not [Console]::IsOutputRedirected -and -not $env:TERM_PROGRAM -and -not $env:NO_FETCH) {
     fetch
+    if (Get-Command Show-KisekiUpdateNotice -ErrorAction SilentlyContinue) {
+        Show-KisekiUpdateNotice
+    }
 }

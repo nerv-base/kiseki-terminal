@@ -50,11 +50,14 @@ try {
     if (Test-Path $PROFILE) { Copy-Item $PROFILE "$backupDir\profile.ps1" -Force }
     Write-Host "  [1/5] Backup saved to $backupDir" -ForegroundColor DarkGray
 
-    # 2. Copy themes, scripts, shaders, and default bat config
+    # 2. Copy themes, scripts, shaders, version manifest, and default bat config
     New-Item -ItemType Directory -Path $InstallRoot -Force | Out-Null
     Copy-Item "$RepoRoot\themes"  "$InstallRoot\" -Recurse -Force
     Copy-Item "$RepoRoot\scripts" "$InstallRoot\" -Recurse -Force
     Copy-Item "$RepoRoot\shaders" "$InstallRoot\" -Recurse -Force
+    if (Test-Path "$RepoRoot\version.json") {
+        Copy-Item "$RepoRoot\version.json" "$InstallRoot\version.json" -Force
+    }
 
     $batCfgDir = "$HOME\.config\bat"
     if (-not (Test-Path "$batCfgDir\config")) {
@@ -66,7 +69,9 @@ try {
 --paging=auto
 '@ | Set-Content "$batCfgDir\config" -Encoding utf8NoBOM
     }
-    Write-Host "  [2/5] Installed 4 anime themes to $InstallRoot" -ForegroundColor Green
+    $verLabel = if (Test-Path "$InstallRoot\version.json") { "v$((Get-Content "$InstallRoot\version.json" -Raw | ConvertFrom-Json).version)" } else { '' }
+    $themeCount = (Get-ChildItem "$InstallRoot\themes" -Directory).Count
+    Write-Host "  [2/5] Installed $themeCount anime themes ($verLabel) to $InstallRoot" -ForegroundColor Green
 
     # 3. Optional CLI tools via winget
     if (-not $SkipTools -and (Get-Command winget -ErrorAction SilentlyContinue)) {
@@ -177,7 +182,7 @@ if (Test-Path "$HOME\.config\kiseki-terminal\scripts\profile-loader.ps1") {
     Switch-KisekiTheme -Name $Theme -Quiet
     $modeLabel = if ($Static) { 'Static' } else { 'Live 60fps HLSL' }
     Write-Host "  [5/5] Activated theme: $Theme ($modeLabel)" -ForegroundColor Green
-    Write-Host "`n✦ Done! Reopen Windows Terminal and try: themes | theme nerv-eva | theme shinkai-rain | theme kyoto-sakura | live | crt`n" -ForegroundColor Magenta
+    Write-Host "`n✦ Done! Reopen Windows Terminal and try: themes | theme nerv-eva | theme shinkai-rain | theme kyoto-sakura | live | theme update`n" -ForegroundColor Magenta
 }
 finally {
     if ($TempClone -and (Test-Path $TempClone)) {

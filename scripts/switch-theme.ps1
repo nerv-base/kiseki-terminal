@@ -174,23 +174,50 @@ function Sync-KisekiWindowsTerminal {
 }
 
 function Switch-KisekiTheme {
-    <# .SYNOPSIS Switch active anime theme live (WT + HLSL Live Shader + Oh My Posh + Fastfetch + PSReadLine + FZF + EZA + Bat) #>
+    <# .SYNOPSIS Switch active anime theme live, or run `theme update` to check/upgrade Kiseki Terminal #>
+    [CmdletBinding(PositionalBinding = $false)]
     param(
         [Parameter(Position = 0)]
         [ArgumentCompleter({
             param($cmd, $param, $word)
-            Get-ChildItem "$HOME\.config\kiseki-terminal\themes" -Directory -ErrorAction SilentlyContinue |
-                Select-Object -ExpandProperty Name |
-                Where-Object { $_ -like "$word*" }
+            $items = @('update') + @(
+                Get-ChildItem "$HOME\.config\kiseki-terminal\themes" -Directory -ErrorAction SilentlyContinue |
+                    Select-Object -ExpandProperty Name
+            )
+            $items | Where-Object { $_ -like "$word*" }
         })]
         [string]$Name,
+        [Parameter(Position = 1)]
+        [ArgumentCompleter({
+            param($cmd, $param, $word, $ast, $fakeBound)
+            if ($fakeBound['Name'] -eq 'update') {
+                @('check', 'force', 'edge', 'mute', 'unmute') | Where-Object { $_ -like "$word*" }
+            }
+        })]
+        [string]$Action,
         [double]$BgOpacity = -1,
         [switch]$Static,
-        [switch]$Quiet
+        [switch]$Quiet,
+        [switch]$Check,
+        [switch]$Force,
+        [switch]$Edge,
+        [switch]$Mute,
+        [switch]$Unmute
     )
 
     if (-not $Name) {
         Get-KisekiThemes
+        return
+    }
+
+    if ($Name -eq 'update') {
+        $act = if ($Action) { $Action.ToLowerInvariant() } else { '' }
+        Update-KisekiTerminal `
+            -Check:($Check -or $act -eq 'check') `
+            -Force:($Force -or $act -eq 'force') `
+            -Edge:($Edge -or $act -eq 'edge') `
+            -Mute:($Mute -or $act -eq 'mute') `
+            -Unmute:($Unmute -or $act -eq 'unmute')
         return
     }
 
@@ -243,7 +270,10 @@ function Get-KisekiThemes {
     <# .SYNOPSIS List all installed Kiseki anime terminal themes #>
     $active = Get-KisekiActiveThemeId
     $modeTag = if (Get-KisekiLiveMode) { 'LIVE 60FPS' } else { 'STATIC' }
-    Write-Host "`n★ Kiseki Anime Terminal Themes [$modeTag]  (switch: theme <id> | toggle motion: live)`n" -ForegroundColor Cyan
+    $verTag = if (Get-Command Get-KisekiLocalVersionInfo -ErrorAction SilentlyContinue) {
+        "v$((Get-KisekiLocalVersionInfo).version)"
+    } else { '' }
+    Write-Host "`n★ Kiseki Anime Terminal Themes $verTag [$modeTag]  (switch: theme <id> | motion: live | update: theme update)`n" -ForegroundColor Cyan
     Get-ChildItem (Join-Path $script:KisekiRoot 'themes') -Directory | Sort-Object Name | ForEach-Object {
         $meta = Get-Content (Join-Path $_.FullName 'theme.json') -Raw -Encoding utf8 | ConvertFrom-Json
         $mark = if ($meta.id -eq $active) { '▶' } else { ' ' }
@@ -324,3 +354,9 @@ Set-Alias motion   Toggle-KisekiLive  -Scope Global
 Set-Alias crt      Toggle-RetroCRT    -Scope Global
 Set-Alias termfont Set-TerminalFont   -Scope Global
 Set-Alias termbg   Set-TerminalBg     -Scope Global
+
+# Load zero-lag update notifier & `theme-update` self-updater
+$script:KisekiUpdaterPath = Join-Path $script:KisekiRoot 'scripts\updater.ps1'
+if (Test-Path $script:KisekiUpdaterPath) {
+    . $script:KisekiUpdaterPath
+}
