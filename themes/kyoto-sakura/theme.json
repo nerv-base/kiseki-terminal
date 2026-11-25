@@ -1,0 +1,90 @@
+{
+  "id": "kyoto-sakura",
+  "name": "Kyoto Sakura",
+  "subtitle": "夜樱绘卷 · 和风月夜神社与垂枝樱",
+  "style": "Japanese Fantasy Anime",
+  "font": {
+    "face": "Maple Mono NF CN, JetBrainsMono NF",
+    "size": 11.0,
+    "cellHeight": "1.30",
+    "weight": "normal"
+  },
+  "terminal": {
+    "cursorShape": "bar",
+    "opacity": 94,
+    "useAcrylic": true,
+    "padding": "20, 14, 20, 14",
+    "backgroundImageOpacity": 0.44,
+    "backgroundImageAlignment": "bottomRight",
+    "unfocusedOpacity": 86,
+    "unfocusedBgOpacity": 0.26
+  },
+  "scheme": {
+    "name": "Kyoto Sakura",
+    "background": "#0F0B19",
+    "foreground": "#F7EBF4",
+    "cursorColor": "#FF9EC7",
+    "selectionBackground": "#3B2447",
+    "black": "#1C142B",
+    "red": "#FF6B7B",
+    "green": "#86E3CE",
+    "yellow": "#FFC971",
+    "blue": "#94B4FF",
+    "purple": "#C4A7FF",
+    "cyan": "#8BE8E5",
+    "white": "#EADAE6",
+    "brightBlack": "#735C82",
+    "brightRed": "#FF9EC7",
+    "brightGreen": "#ACF0DF",
+    "brightYellow": "#FFE0A3",
+    "brightBlue": "#B5CCFF",
+    "brightPurple": "#DFC9FF",
+    "brightCyan": "#B5F5F2",
+    "brightWhite": "#FFF7FC"
+  },
+  "uiTheme": {
+    "name": "Kyoto Sakura UI",
+    "tab": {
+      "background": "#1E142C",
+      "unfocusedBackground": "#120C1C",
+      "showCloseButton": "hover"
+    },
+    "tabRow": {
+      "background": "#0A0712",
+      "unfocusedBackground": "#08050E"
+    },
+    "window": {
+      "applicationTheme": "dark",
+      "frame": "#4F2B4C",
+      "unfocusedFrame": "#1C1329",
+      "useMica": false
+    }
+  },
+  "psReadLine": {
+    "Command": "#FF9EC7",
+    "Parameter": "#C4A7FF",
+    "String": "#86E3CE",
+    "Number": "#FFC971",
+    "Operator": "#FF6B7B",
+    "Variable": "#F7EBF4",
+    "Comment": "#735C82",
+    "Keyword": "#FF6B7B",
+    "Member": "#94B4FF",
+    "Type": "#8BE8E5",
+    "Default": "#F7EBF4",
+    "Error": "#FF6B7B",
+    "Selection": "#3B2447",
+    "InlinePrediction": "#735C82",
+    "ListPrediction": "#A88FB8",
+    "ListPredictionSelected": "#2E1C3D"
+  },
+  "fzf": {
+    "border": "rounded",
+    "prompt": "❀ ",
+    "pointer": "✿",
+    "marker": "★",
+    "colors": "bg+:#281938,bg:#0F0B19,spinner:#FF9EC7,hl:#FFC971,fg:#EADAE6,header:#FF9EC7,info:#FFC971,pointer:#FF9EC7,marker:#86E3CE,fg+:#FFF7FC,prompt:#FFC971,hl+:#FFE0A3,border:#634873,label:#FF9EC7,query:#F7EBF4"
+  },
+  "ezaColors": "di=38;2;255;158;199:ex=38;2;134;227;206:ln=38;2;196;167;255:da=38;2;158;134;173:sn=38;2;255;201;113:sb=38;2;196;167;255:uu=38;2;255;158;199:ga=38;2;134;227;206:gm=38;2;255;201;113:gd=38;2;255;107;123:gv=38;2;196;167;255",
+  "batTheme": "Catppuccin Mocha"
+}

@@ -1,0 +1,147 @@
+{
+  "$schema": "https://raw.githubusercontent.com/JanDeDobbeleer/oh-my-posh/main/themes/schema.json",
+  "version": 3,
+  "final_space": true,
+  "console_title_template": "★ {{ .Folder }} // pwsh",
+  "transient_prompt": {
+    "background": "transparent",
+    "foreground": "#5C6599",
+    "template": "▸ "
+  },
+  "blocks": [
+    {
+      "type": "prompt",
+      "alignment": "left",
+      "newline": true,
+      "segments": [
+        {
+          "type": "text",
+          "style": "plain",
+          "foreground": "#66F0FF",
+          "background": "transparent",
+          "template": "<#4E568A>┌─</>░▒▓"
+        },
+        {
+          "type": "path",
+          "style": "plain",
+          "foreground": "#0A0F25",
+          "background": "#66F0FF",
+          "template": " \ue5ff <b>{{ .Path }}</b> ",
+          "properties": {
+            "style": "agnoster_short",
+            "folder_separator_icon": "/",
+            "home_icon": "~",
+            "max_depth": 2
+          }
+        },
+        {
+          "type": "text",
+          "style": "plain",
+          "foreground": "#66F0FF",
+          "background": "transparent",
+          "template": "▓▒░"
+        },
+        {
+          "type": "git",
+          "style": "plain",
+          "foreground": "#D2B8FF",
+          "background": "#191E3C",
+          "template": "<#0A0F25,transparent> </><#FF8FAD>▌</><#D2B8FF> \ue725 {{ .HEAD }}</>{{ if .BranchStatus }} <#66F0FF>{{ .BranchStatus }}</>{{ end }}{{ if .Working.Changed }} <#FFD580>\uf044 {{ .Working.String }}</>{{ end }}{{ if .Staging.Changed }} <#72F1B8>\uf046 {{ .Staging.String }}</>{{ end }} ",
+          "properties": {
+            "branch_icon": "",
+            "fetch_status": true,
+            "fetch_upstream_icon": false
+          }
+        },
+        {
+          "type": "python",
+          "style": "plain",
+          "foreground": "#9EFFD3",
+          "background": "#13233A",
+          "template": "<#0A0F25,transparent> </><#72F1B8>▌</><#9EFFD3> \ue73c {{ if .Venv }}{{ .Venv }} {{ end }}{{ .Major }}.{{ .Minor }} </>",
+          "properties": {
+            "fetch_version": true,
+            "display_mode": "files"
+          }
+        },
+        {
+          "type": "node",
+          "style": "plain",
+          "foreground": "#72F1B8",
+          "background": "#132433",
+          "template": "<#0A0F25,transparent> </><#72F1B8>▌</><#9EFFD3> \ue718 {{ .Major }}.{{ .Minor }} </>",
+          "properties": {
+            "fetch_version": true,
+            "display_mode": "files"
+          }
+        },
+        {
+          "type": "rust",
+          "style": "plain",
+          "foreground": "#FFD580",
+          "background": "#241B35",
+          "template": "<#0A0F25,transparent> </><#FF8FAD>▌</><#FFD580> \ue7a8 {{ .Major }}.{{ .Minor }} </>",
+          "properties": {
+            "fetch_version": true,
+            "display_mode": "files"
+          }
+        },
+        {
+          "type": "go",
+          "style": "plain",
+          "foreground": "#99F7FF",
+          "background": "#12243A",
+          "template": "<#0A0F25,transparent> </><#66F0FF>▌</><#99F7FF> \ue627 {{ .Major }}.{{ .Minor }} </>",
+          "properties": {
+            "fetch_version": true,
+            "display_mode": "files"
+          }
+        }
+      ]
+    },
+    {
+      "type": "prompt",
+      "alignment": "right",
+      "segments": [
+        {
+          "type": "executiontime",
+          "style": "plain",
+          "foreground": "#FFD580",
+          "background": "#231E3A",
+          "template": "<#FFD580>▌ \uf0e7 {{ .FormattedMs }} </>",
+          "properties": {
+            "threshold": 1500,
+            "style": "roundrock"
+          }
+        },
+        {
+          "type": "time",
+          "style": "plain",
+          "foreground": "#B8C0EB",
+          "background": "#121733",
+          "template": "<#0A0F25,transparent> </><#B48EFE>▌</> <#B48EFE>✦</> {{ .CurrentDate | date .Format }} <#4E568A,transparent>─┐</>",
+          "properties": {
+            "time_format": "15:04"
+          }
+        }
+      ]
+    },
+    {
+      "type": "prompt",
+      "alignment": "left",
+      "newline": true,
+      "segments": [
+        {
+          "type": "status",
+          "style": "plain",
+          "foreground": "#66F0FF",
+          "background": "transparent",
+          "template": "<#4E568A>└─</>{{ if gt .Code 0 }}<#FF6B8B>\uf00d [ERR {{ .Code }}] ▶</>{{ else }}<#FF82B8>♥</> <#66F0FF>▶</>{{ end }}",
+          "properties": {
+            "always_enabled": true
+          }
+        }
+      ]
+    }
+  ]
+}

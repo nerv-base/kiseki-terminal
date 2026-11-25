@@ -1,0 +1,90 @@
+{
+  "id": "starlight-8bit",
+  "name": "Starlight 8-Bit",
+  "subtitle": "星屑 8-Bit · 复古二次元像素夜空",
+  "style": "8-bit Pixel Art",
+  "font": {
+    "face": "DepartureMono Nerd Font, Fusion Pixel 12px Mono zh-Hans, Fusion Pixel 12px Mono ja, JetBrainsMono NF",
+    "size": 11.0,
+    "cellHeight": "1.28",
+    "weight": "normal"
+  },
+  "terminal": {
+    "cursorShape": "filledBox",
+    "opacity": 94,
+    "useAcrylic": true,
+    "padding": "18, 14, 18, 14",
+    "backgroundImageOpacity": 0.40,
+    "backgroundImageAlignment": "bottomRight",
+    "unfocusedOpacity": 86,
+    "unfocusedBgOpacity": 0.24
+  },
+  "scheme": {
+    "name": "Starlight 8-Bit",
+    "background": "#0A0F25",
+    "foreground": "#E8ECFF",
+    "cursorColor": "#FF82B8",
+    "selectionBackground": "#2B2A5A",
+    "black": "#151B36",
+    "red": "#FF6B8B",
+    "green": "#72F1B8",
+    "yellow": "#FFD580",
+    "blue": "#7AA2F7",
+    "purple": "#B48EFE",
+    "cyan": "#66F0FF",
+    "white": "#D6DCFA",
+    "brightBlack": "#5C6599",
+    "brightRed": "#FF8FAD",
+    "brightGreen": "#9EFFD3",
+    "brightYellow": "#FFE5A3",
+    "brightBlue": "#9BB8FF",
+    "brightPurple": "#D2B8FF",
+    "brightCyan": "#99F7FF",
+    "brightWhite": "#F8FAFF"
+  },
+  "uiTheme": {
+    "name": "Starlight 8-Bit UI",
+    "tab": {
+      "background": "#131936",
+      "unfocusedBackground": "#0A0E22",
+      "showCloseButton": "hover"
+    },
+    "tabRow": {
+      "background": "#070A18",
+      "unfocusedBackground": "#060814"
+    },
+    "window": {
+      "applicationTheme": "dark",
+      "frame": "#2B3466",
+      "unfocusedFrame": "#121630",
+      "useMica": false
+    }
+  },
+  "psReadLine": {
+    "Command": "#66F0FF",
+    "Parameter": "#B48EFE",
+    "String": "#72F1B8",
+    "Number": "#FFD580",
+    "Operator": "#FF82B8",
+    "Variable": "#E8ECFF",
+    "Comment": "#5C6599",
+    "Keyword": "#FF6B8B",
+    "Member": "#9BB8FF",
+    "Type": "#99F7FF",
+    "Default": "#E8ECFF",
+    "Error": "#FF6B8B",
+    "Selection": "#2B2A5A",
+    "InlinePrediction": "#5C6599",
+    "ListPrediction": "#8F98C9",
+    "ListPredictionSelected": "#232A54"
+  },
+  "fzf": {
+    "border": "sharp",
+    "prompt": "▶ ",
+    "pointer": "♥",
+    "marker": "★",
+    "colors": "bg+:#1A2146,bg:#0A0F25,spinner:#66F0FF,hl:#FF82B8,fg:#D6DCFA,header:#B48EFE,info:#FFD580,pointer:#FF82B8,marker:#72F1B8,fg+:#F8FAFF,prompt:#66F0FF,hl+:#FF8FAD,border:#4E568A,label:#66F0FF,query:#E8ECFF"
+  },
+  "ezaColors": "di=38;2;102;240;255:ex=38;2;114;241;184:ln=38;2;255;130;184:da=38;2;143;152;201:sn=38;2;255;213;128:sb=38;2;180;142;254:uu=38;2;180;142;254:ga=38;2;114;241;184:gm=38;2;255;213;128:gd=38;2;255;107;139:gv=38;2;102;240;255",
+  "batTheme": "Catppuccin Mocha"
+}

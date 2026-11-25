@@ -1,0 +1,90 @@
+{
+  "id": "shinkai-rain",
+  "name": "Shinkai Rain",
+  "subtitle": "言叶之雨 · 新海诚东京雨夜电影感",
+  "style": "Cinematic Painterly Anime",
+  "font": {
+    "face": "Maple Mono NF CN, JetBrainsMono NF",
+    "size": 11.0,
+    "cellHeight": "1.30",
+    "weight": "normal"
+  },
+  "terminal": {
+    "cursorShape": "bar",
+    "opacity": 94,
+    "useAcrylic": true,
+    "padding": "20, 14, 20, 14",
+    "backgroundImageOpacity": 0.42,
+    "backgroundImageAlignment": "bottomRight",
+    "unfocusedOpacity": 86,
+    "unfocusedBgOpacity": 0.26
+  },
+  "scheme": {
+    "name": "Shinkai Rain",
+    "background": "#0C1823",
+    "foreground": "#E2F2F8",
+    "cursorColor": "#5CE6D0",
+    "selectionBackground": "#1D3B4F",
+    "black": "#132330",
+    "red": "#FF7A99",
+    "green": "#9AE6A0",
+    "yellow": "#FFCB77",
+    "blue": "#7FB8FF",
+    "purple": "#BA9CFF",
+    "cyan": "#5CE6D0",
+    "white": "#CFE3EC",
+    "brightBlack": "#527182",
+    "brightRed": "#FF9EB5",
+    "brightGreen": "#B8F5BD",
+    "brightYellow": "#FFE0A3",
+    "brightBlue": "#A8D0FF",
+    "brightPurple": "#D4C2FF",
+    "brightCyan": "#8FF5E5",
+    "brightWhite": "#F4FBFF"
+  },
+  "uiTheme": {
+    "name": "Shinkai Rain UI",
+    "tab": {
+      "background": "#132533",
+      "unfocusedBackground": "#0B1620",
+      "showCloseButton": "hover"
+    },
+    "tabRow": {
+      "background": "#081018",
+      "unfocusedBackground": "#060D14"
+    },
+    "window": {
+      "applicationTheme": "dark",
+      "frame": "#214459",
+      "unfocusedFrame": "#10212E",
+      "useMica": false
+    }
+  },
+  "psReadLine": {
+    "Command": "#5CE6D0",
+    "Parameter": "#7FB8FF",
+    "String": "#9AE6A0",
+    "Number": "#FFCB77",
+    "Operator": "#FF8CA6",
+    "Variable": "#E2F2F8",
+    "Comment": "#527182",
+    "Keyword": "#BA9CFF",
+    "Member": "#A8D0FF",
+    "Type": "#8FF5E5",
+    "Default": "#E2F2F8",
+    "Error": "#FF7A99",
+    "Selection": "#1D3B4F",
+    "InlinePrediction": "#527182",
+    "ListPrediction": "#7FA0B2",
+    "ListPredictionSelected": "#173142"
+  },
+  "fzf": {
+    "border": "rounded",
+    "prompt": "❯ ",
+    "pointer": "●",
+    "marker": "◆",
+    "colors": "bg+:#152C3B,bg:#0C1823,spinner:#5CE6D0,hl:#FFCB77,fg:#CFE3EC,header:#7FB8FF,info:#FFCB77,pointer:#5CE6D0,marker:#9AE6A0,fg+:#F4FBFF,prompt:#5CE6D0,hl+:#FFE0A3,border:#3C5A6A,label:#5CE6D0,query:#E2F2F8"
+  },
+  "ezaColors": "di=38;2;92;230;208:ex=38;2;154;230;160:ln=38;2;127;184;255:da=38;2;127;160;178:sn=38;2;255;203;119:sb=38;2;186;156;255:uu=38;2;127;184;255:ga=38;2;154;230;160:gm=38;2;255;203;119:gd=38;2;255;122;153:gv=38;2;92;230;208",
+  "batTheme": "Nord"
+}
