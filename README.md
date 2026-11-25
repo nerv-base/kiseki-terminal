@@ -1,7 +1,13 @@
-# ★ Kiseki Terminal — Anime Theme Collection for Windows Terminal
+<p align="center">
+  <img src="./assets/banner.svg" alt="Kiseki Terminal — Anime Theme Collection for Windows Terminal" width="100%" />
+</p>
 
-[![Release](https://img.shields.io/github/v/release/nerv-base/kiseki-terminal?style=flat-square&color=ff82b8)](https://github.com/nerv-base/kiseki-terminal/releases)
-[![License: MIT](https://img.shields.io/badge/License-MIT-66f0ff?style=flat-square)](./LICENSE)
+<p align="center">
+  <a href="https://github.com/nerv-base/kiseki-terminal/releases"><img src="https://img.shields.io/github/v/release/nerv-base/kiseki-terminal?style=flat-square&color=ff82b8&label=Release" alt="Release" /></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-66f0ff?style=flat-square" alt="License: MIT" /></a>
+  <img src="https://img.shields.io/badge/Windows_Terminal-1.21%2B-7aa2f7?style=flat-square" alt="Windows Terminal 1.21+" />
+  <img src="https://img.shields.io/badge/Live_Shaders-60fps_HLSL-b48efe?style=flat-square" alt="60fps HLSL Shaders" />
+</p>
 
 > 一套专为 **Windows Terminal + PowerShell + Oh My Posh + Fastfetch** 打造的二次元终端美学合集。  
 > 每套主题都包含 **按终端左右阅读区专门构图的二次元壁纸**、**从画面精确取色的 16 色 ANSI 方案**、**专属 Oh My Posh 提示符**、**手绘真彩半块像素 Fastfetch 徽章**、**定制字体栈**，以及 **一键热切换引擎**。
