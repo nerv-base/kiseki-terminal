@@ -37,10 +37,14 @@
 
 ## Features / 核心特性
 
-- **终端专属壁纸构图**：4 张壁纸均采用「左侧 58% 低干扰深色代码区 + 右下角 42% 视觉焦点」构图，并通过 `bottomRight` 锚定与精准取色背景，彻底告别“背景图挡字发灰”的问题。
+- **60fps GPU 实时动态背景（4 套专属 HLSL 着色器）**：基于 Windows Terminal 原生 `experimental.pixelShaderPath` + `experimental.pixelShaderImagePath`（`t0`/`t1` 双纹理直通），在不牺牲原图真彩画质、不增加仓库体积的前提下实现实时动态效果，且**代码文字层 100% 锐利零模糊**：
+  - `starlight-8bit`：3×3 像素网格闪烁星空 + 周期性斜向像素流星 + 海面波光微颤 + CRT 呼吸光
+  - `nerv-eva`：MAGI 琥珀扫描光带 + AT-Field 六边形战术网格脉动 + 周期性水平切片 RGB 色差故障脉冲 + 蓝图红线同步心跳
+  - `shinkai-rain`：双层视差斜向东京雨丝 + 右下角湿漉积水涟漪折射 + 路灯与便利店散景呼吸光
+  - `kyoto-sakura`：双层飘落翻转樱花花瓣 + 游曳暖金萤火虫 + 石灯笼烛火摇曳 + 寺庙镜池水面微澜
+- **终端专属壁纸构图**：4 张壁纸均采用「左侧 58% 低干扰深色代码区 + 右下角 42% 视觉焦点」构图，着色器内置等比 `UniformToFill + BottomRight` 锚定算法，任意缩放窗口都不拉伸变形、不挡字。
 - **全链路色彩统一**：一套主题同步控制 Windows Terminal 窗口框架/标签页配色、ANSI 16 色、Oh My Posh 提示符、Fastfetch 卡片、PSReadLine 语法高亮、`eza` 文件树、`bat` 代码高亮、`fzf` 模糊搜索框。
-- **开箱即用的实时热切换**：一条命令即可在 4 套风格间秒切，Windows Terminal 即时热重载，无需重启终端。
-- **可选轻量级 CRT 着色器**：内置自定义 HLSL 着色器（`shaders/retro-crt-subtle.hlsl`），`crt` 命令随时开关复古荧光辉光与微弱扫描线。
+- **开箱即用的实时热切换 & 动静一键开关**：`theme <id>` 秒切主题，`live` 随时在 **60fps 动态模式** 与 **零功耗静态模式** 间切换，另有 `crt` 可选复古扫描线着色器。
 
 ---
 
@@ -66,6 +70,7 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1
 
 可选参数：
 - `-Theme nerv-eva` — 指定默认启用的主题（`starlight-8bit` / `nerv-eva` / `shinkai-rain` / `kyoto-sakura`）
+- `-Static` — 默认使用零 GPU 重绘的静态背景模式（随时可用 `live` 开启 60fps 动态效果）
 - `-SkipTools` — 跳过 `winget` 工具安装（已安装 `oh-my-posh` / `eza` / `bat` / `fzf` / `zoxide` / `fastfetch` 时使用）
 - `-SkipFonts` — 跳过字体自动下载
 
@@ -82,6 +87,7 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1
 | `theme nerv-eva` | 实时切换到「NERV MAGI 02」 |
 | `theme shinkai-rain` | 实时切换到「言叶之雨」 |
 | `theme kyoto-sakura` | 实时切换到「夜樱绘卷」 |
+| `live` / `motion` | 实时开/关 **60fps GPU 动态背景**（离电省电时可随时一键切静态） |
 | `crt` | 实时开/关复古 CRT 荧光辉光 + 扫描线 Shader |
 | `termfont 8bit \| code \| maple \| modern` | 单独切换字体栈（保留像素或圆体中文） |
 | `termbg 0.35` / `termbg -Off` | 微调壁纸透明度或暂时关闭壁纸 |

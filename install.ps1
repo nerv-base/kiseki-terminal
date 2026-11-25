@@ -12,6 +12,7 @@
 param(
     [ValidateSet('starlight-8bit', 'nerv-eva', 'shinkai-rain', 'kyoto-sakura')]
     [string]$Theme = 'starlight-8bit',
+    [switch]$Static,
     [switch]$SkipTools,
     [switch]$SkipFonts
 )
@@ -172,9 +173,11 @@ if (Test-Path "$HOME\.config\kiseki-terminal\scripts\profile-loader.ps1") {
     }
 
     . "$InstallRoot\scripts\switch-theme.ps1"
+    Set-Content -Path "$InstallRoot\live-mode.txt" -Value ($(if ($Static) { 'off' } else { 'on' })) -Encoding utf8NoBOM -NoNewline
     Switch-KisekiTheme -Name $Theme -Quiet
-    Write-Host "  [5/5] Activated theme: $Theme" -ForegroundColor Green
-    Write-Host "`n✦ Done! Reopen Windows Terminal and try: themes | theme nerv-eva | theme shinkai-rain | theme kyoto-sakura | crt`n" -ForegroundColor Magenta
+    $modeLabel = if ($Static) { 'Static' } else { 'Live 60fps HLSL' }
+    Write-Host "  [5/5] Activated theme: $Theme ($modeLabel)" -ForegroundColor Green
+    Write-Host "`n✦ Done! Reopen Windows Terminal and try: themes | theme nerv-eva | theme shinkai-rain | theme kyoto-sakura | live | crt`n" -ForegroundColor Magenta
 }
 finally {
     if ($TempClone -and (Test-Path $TempClone)) {
