@@ -1,10 +1,10 @@
 <p align="center">
-  <img src="./assets/banner.svg" alt="Kiseki Terminal — Anime Theme Collection for Windows Terminal" width="100%" />
+  <img src="./assets/banner.svg" alt="Kiseki Terminal — Anime Theme Collection for Windows Terminal &amp; macOS (Ghostty, iTerm2, Kitty, WezTerm)" width="100%" />
 </p>
 
 <p align="center">
   <a href="https://github.com/nerv-base/kiseki-terminal/releases"><img src="https://img.shields.io/github/v/release/nerv-base/kiseki-terminal?style=flat-square&color=ff82b8&label=Release" alt="Release" /></a>
-  <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-66f0ff?style=flat-square&color=66f0ff" alt="License: MIT" /></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-66f0ff?style=flat-square" alt="License: MIT" /></a>
   <img src="https://img.shields.io/badge/Windows_Terminal-1.21%2B-7aa2f7?style=flat-square" alt="Windows Terminal 1.21+" />
   <img src="https://img.shields.io/badge/macOS-Ghostty_%7C_iTerm2_%7C_Kitty_%7C_WezTerm-ff82b8?style=flat-square" alt="macOS Ghostty, iTerm2, Kitty, WezTerm" />
   <img src="https://img.shields.io/badge/Live_Shaders-60fps_HLSL_%2F_GLSL-b48efe?style=flat-square" alt="60fps HLSL / GLSL Shaders" />
@@ -54,7 +54,7 @@
   - `kyoto-sakura`：双层飘落翻转樱花花瓣 + 游曳暖金萤火虫 + 石灯笼烛火摇曳 + 寺庙镜池水面微澜
 - **终端专属壁纸构图**：4 张壁纸均采用「左侧 58% 低干扰深色代码区 + 右下角 42% 视觉焦点」构图，配合 `UniformToFill / Cover + BottomRight` 锚定，任意缩放窗口都不拉伸变形、不挡字。
 - **全链路色彩统一**：一套主题同步控制终端配色与窗口/标签页、ANSI 16 色、Oh My Posh 提示符、Fastfetch 卡片、PSReadLine / `zsh-syntax-highlighting` / `zsh-autosuggestions` 语法高亮、`eza` 文件树、`bat` 代码高亮、`fzf` 模糊搜索框。
-- **开箱即用的实时热切换 & 动静一键开关**：`theme <id>` 秒切主题，`live` 随时在 **60fps 动态模式** 与 **零功耗静态模式** 间切换，另有 `crt` 可选复古扫描线着色器。
+- **交互式主题切换 & 动静一键开关**：输入 `themes` 通过方向键（`↑`/`↓`）选择、按 `Space` 实时预览、`Enter` 秒切主题（Windows / macOS 行为一致）；`live` 随时在 **60fps 动态模式** 与 **零功耗静态模式** 间切换，另有 `crt` 可选复古扫描线着色器。
 
 ---
 
@@ -147,7 +147,7 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1
 | `live` / `motion` | 实时开/关 **60fps GPU 动态背景**（离电省电时可随时一键切静态） |
 | `crt` | 实时开/关复古 CRT 荧光辉光 + 扫描线 Shader |
 | `termfont 8bit \| code \| maple \| modern` | 单独切换字体栈（保留像素或圆体中文） |
-| `termbg 0.35` / `termbg -Off` | 微调壁纸透明度或暂时关闭壁纸 |
+| `termbg 0.35` / `termbg off` | 微调壁纸透明度或暂时关闭壁纸（Windows 亦支持 `termbg -Off`） |
 | `fetch` | 重新展示当前主题的定制 Fastfetch 徽章与状态卡 |
 | `theme update` | 一键热更新到最新 GitHub Release（保留当前主题和动静开关，无需重装字体与工具） |
 | `theme update check` | 手动立即检查是否有新版本或新主题 |

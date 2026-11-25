@@ -119,7 +119,7 @@
     <text x="210" y="94" font-family="'Segoe UI', system-ui, -apple-system, sans-serif" font-size="44" font-weight="800" letter-spacing="3.5" fill="url(#titleGrad)">KISEKI TERMINAL</text>
 
     <!-- Bilingual subtitle -->
-    <text x="212" y="126" font-family="'Segoe UI', 'Microsoft YaHei', system-ui, sans-serif" font-size="15.5" font-weight="500" fill="#B8C4EC">二次元美学 Windows Terminal 主题合集 · 60fps GPU Live Shaders</text>
+    <text x="212" y="126" font-family="'Segoe UI', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif" font-size="14.5" font-weight="500" fill="#B8C4EC">二次元美学终端主题合集 · Windows / Ghostty / macOS · 60fps Live Shaders</text>
 
     <!-- 4-theme crisp pills -->
     <g transform="translate(212, 146)" font-family="Consolas, 'Cascadia Mono', monospace" font-size="11.5" font-weight="600">
