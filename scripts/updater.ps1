@@ -248,8 +248,10 @@ function Update-KisekiTerminal {
             throw "Failed to download release archive from GitHub."
         }
 
-        Expand-Archive -Path $zipPath -DestinationPath $tmpDir -Force
-        $extracted = (Get-ChildItem $tmpDir -Directory | Select-Object -First 1).FullName
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        $extDir = Join-Path $tmpDir 'extracted'
+        [System.IO.Compression.ZipFile]::ExtractToDirectory($zipPath, $extDir)
+        $extracted = (Get-ChildItem $extDir -Directory | Select-Object -First 1).FullName
         if (-not $extracted -or -not (Test-Path (Join-Path $extracted 'themes'))) {
             throw "Downloaded archive does not contain a valid Kiseki Terminal layout."
         }

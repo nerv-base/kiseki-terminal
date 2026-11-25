@@ -44,6 +44,14 @@ function Copy-KisekiTree {
     Copy-Item -Path (Join-Path $SourceDir '*') -Destination $DestDir -Recurse -Force
 }
 
+function Expand-KisekiZip {
+    param([string]$ZipPath, [string]$DestDir)
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    if (Test-Path $DestDir) { Remove-Item $DestDir -Recurse -Force }
+    New-Item -ItemType Directory -Path $DestDir -Force | Out-Null
+    [System.IO.Compression.ZipFile]::ExtractToDirectory($ZipPath, $DestDir)
+}
+
 $InstallRoot = "$HOME\.config\kiseki-terminal"
 $TempClone   = $null
 $star        = [char]0x2605
@@ -57,10 +65,11 @@ if (-not $RepoRoot -or -not (Test-Path (Join-Path $RepoRoot 'themes'))) {
     $TempClone = Join-Path $env:TEMP ("kiseki-dl-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
     New-Item -ItemType Directory -Path $TempClone -Force | Out-Null
     $zipPath = Join-Path $TempClone 'repo.zip'
+    $extDir  = Join-Path $TempClone 'src'
     Write-Host "  [0/5] Downloading Kiseki Terminal from GitHub..." -ForegroundColor Cyan
     Invoke-WebRequest -Uri 'https://github.com/nerv-base/kiseki-terminal/archive/refs/heads/main.zip' -OutFile $zipPath -UseBasicParsing
-    Expand-Archive -Path $zipPath -DestinationPath $TempClone -Force
-    $RepoRoot = (Get-ChildItem $TempClone -Directory | Select-Object -First 1).FullName
+    Expand-KisekiZip -ZipPath $zipPath -DestDir $extDir
+    $RepoRoot = (Get-ChildItem $extDir -Directory | Select-Object -First 1).FullName
 }
 
 try {
@@ -198,7 +207,7 @@ public class KisekiFontWin32 {
                     $zip = Join-Path $tmp $asset.name
                     $ext = Join-Path $tmp ($asset.name -replace '\.zip$', '')
                     Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zip -UseBasicParsing
-                    Expand-Archive $zip $ext -Force
+                    Expand-KisekiZip -ZipPath $zip -DestDir $ext
                     Get-ChildItem $ext -Recurse -File | Where-Object { $_.FullName -notmatch '__MACOSX' -and $_.Name -notlike '._*' -and $_.Name -match $s.Filter } | ForEach-Object {
                         $dest = Join-Path $fontDir $_.Name
                         Copy-Item $_.FullName $dest -Force
