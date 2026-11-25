@@ -15,7 +15,9 @@ cbuffer PixelShaderSettings : register(b0) {
     float4 Background;
 };
 
-static const float BG_OPACITY = 0.46;
+static const float3 BASE_BG      = float3(0.0588, 0.0431, 0.0980); // #0F0B19
+static const float  BG_OPACITY   = 0.46;
+static const float  WINDOW_ALPHA = 0.94;
 
 float hash21(float2 p) {
     p = frac(p * float2(127.1, 311.7));
@@ -37,7 +39,6 @@ float2 GetBottomRightCoverUV(float2 uv, float2 screenSize, float2 imgSize) {
     return saturate(outUV);
 }
 
-// Drifting & fluttering sakura petal layer (gentle breeze right-to-left & downward)
 float SakuraLayer(float2 aspectUV, float gridScale, float speed, float seed) {
     float2 p = aspectUV * gridScale;
     p.x += Time * speed * 0.55;
@@ -52,7 +53,6 @@ float SakuraLayer(float2 aspectUV, float gridScale, float speed, float seed) {
     float2 offset = float2(sin(phase * 0.7) * 0.24, cos(phase * 0.9) * 0.20);
     float2 q = f - offset;
 
-    // Rotate & flutter-squash to simulate 3D tumbling petal
     float ang = phase * 0.85;
     float ca = cos(ang), sa = sin(ang);
     float2 rq = float2(q.x * ca - q.y * sa, q.x * sa + q.y * ca);
@@ -64,9 +64,6 @@ float SakuraLayer(float2 aspectUV, float gridScale, float speed, float seed) {
 float4 main(float4 pos : SV_POSITION, float2 tex : TEXCOORD) : SV_TARGET {
     float4 term = shaderTexture.Sample(samplerState, tex);
 
-    float bgAlpha = max(Background.a, 0.001);
-    float3 baseBg = Background.rgb / bgAlpha;
-
     float imgW, imgH;
     imageTexture.GetDimensions(imgW, imgH);
     float2 imgUV = GetBottomRightCoverUV(tex, Resolution, float2(max(imgW, 1.0), max(imgH, 1.0)));
@@ -77,26 +74,26 @@ float4 main(float4 pos : SV_POSITION, float2 tex : TEXCOORD) : SV_TARGET {
     float rippleY  = cos(imgUV.x * 70.0  + Time * 1.3) * 0.0009 * pondMask;
     float3 wall = imageTexture.Sample(samplerState, saturate(imgUV + float2(rippleX, rippleY))).rgb;
 
-    // 2. Warm organic stone lantern candle-glow flicker (around lantern center ~0.62, 0.46)
+    // 2. Warm organic stone lantern candle-glow flicker
     float lanternDist = length((imgUV - float2(0.615, 0.44)) * float2(1.6, 1.0));
     float lanternHalo = exp(-lanternDist * 6.5);
     float flicker = 0.55 + 0.28 * sin(Time * 2.7) + 0.17 * sin(Time * 6.1 + 1.4);
-    wall += float3(1.0, 0.72, 0.34) * lanternHalo * (0.15 * flicker);
+    wall += float3(1.0, 0.72, 0.34) * lanternHalo * (0.16 * flicker);
 
-    float3 animBg = lerp(baseBg, wall, BG_OPACITY);
+    float3 animBg = lerp(BASE_BG, wall, BG_OPACITY);
 
     // 3. Two parallax layers of drifting & fluttering sakura petals
     float2 aspectUV = float2(tex.x * (Resolution.x / max(Resolution.y, 1.0)), tex.y);
     float petalsFar  = SakuraLayer(aspectUV, 5.2, 0.28, 3.7);
     float petalsNear = SakuraLayer(aspectUV, 3.4, 0.42, 11.9);
 
-    float3 sakuraPink  = float3(1.00, 0.62, 0.78); // #FF9EC7
+    float3 sakuraPink  = float3(1.00, 0.62, 0.78);
     float3 sakuraLight = float3(1.00, 0.86, 0.93);
-    animBg += sakuraPink  * (petalsFar  * 0.24);
-    animBg += sakuraLight * (petalsNear * 0.32);
+    animBg += sakuraPink  * (petalsFar  * 0.26);
+    animBg += sakuraLight * (petalsNear * 0.34);
 
-    // 4. Meandering golden shrine fireflies (6 soft glowing orbs drifting peacefully)
-    float3 fireflyCol = float3(1.0, 0.80, 0.44); // #FFC971 lantern gold
+    // 4. Meandering golden shrine fireflies
+    float3 fireflyCol = float3(1.0, 0.80, 0.44);
     [unroll]
     for (int i = 0; i < 6; i++) {
         float fi = (float)i;
@@ -116,12 +113,10 @@ float4 main(float4 pos : SV_POSITION, float2 tex : TEXCOORD) : SV_TARGET {
         animBg += fireflyCol * orb * pulse;
     }
 
-    // 5. Composite razor-sharp terminal text & HUD over animated background
-    float3 diff = abs(term.rgb - Background.rgb);
-    float maxDiff = max(diff.r, max(diff.g, diff.b));
-    float alphaDiff = max(0.0, term.a - Background.a);
-    float fgMask = saturate(max(smoothstep(0.012, 0.055, maxDiff), smoothstep(0.005, 0.035, alphaDiff)));
-
-    float3 outRgb = term.rgb + (animBg - baseBg) * bgAlpha * (1.0 - fgMask);
-    return float4(saturate(outRgb), max(term.a, bgAlpha));
+    // 5. Exact Porter-Duff Source-Over compositing (AtlasEngine t0 uses premultiplied alpha with empty=0)
+    float4 bgPremul = float4(saturate(animBg) * WINDOW_ALPHA, WINDOW_ALPHA);
+    float4 outColor;
+    outColor.rgb = term.rgb + bgPremul.rgb * (1.0 - term.a);
+    outColor.a   = term.a   + bgPremul.a   * (1.0 - term.a);
+    return saturate(outColor);
 }

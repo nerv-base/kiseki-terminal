@@ -15,7 +15,9 @@ cbuffer PixelShaderSettings : register(b0) {
     float4 Background;
 };
 
-static const float BG_OPACITY = 0.42;
+static const float3 BASE_BG      = float3(0.0392, 0.0588, 0.1451); // #0A0F25
+static const float  BG_OPACITY   = 0.42;
+static const float  WINDOW_ALPHA = 0.94;
 
 float hash21(float2 p) {
     p = frac(p * float2(123.34, 456.21));
@@ -29,11 +31,9 @@ float2 GetBottomRightCoverUV(float2 uv, float2 screenSize, float2 imgSize) {
     float imgAspect    = imgSize.x / max(imgSize.y, 1.0);
     float2 outUV = uv;
     if (screenAspect > imgAspect) {
-        // Screen wider than image -> crop top, keep bottom anchored
         float visH = imgAspect / screenAspect;
         outUV.y = (1.0 - visH) + uv.y * visH;
     } else {
-        // Screen taller/narrower -> crop left, keep right anchored
         float visW = screenAspect / imgAspect;
         outUV.x = (1.0 - visW) + uv.x * visW;
     }
@@ -43,16 +43,12 @@ float2 GetBottomRightCoverUV(float2 uv, float2 screenSize, float2 imgSize) {
 float4 main(float4 pos : SV_POSITION, float2 tex : TEXCOORD) : SV_TARGET {
     float4 term = shaderTexture.Sample(samplerState, tex);
 
-    // 1. Extract straight base background color
-    float bgAlpha = max(Background.a, 0.001);
-    float3 baseBg = Background.rgb / bgAlpha;
-
-    // 2. Compute exact BottomRight UniformToFill UV for t1 wallpaper
+    // 1. Compute exact BottomRight UniformToFill UV for t1 wallpaper
     float imgW, imgH;
     imageTexture.GetDimensions(imgW, imgH);
     float2 imgUV = GetBottomRightCoverUV(tex, Resolution, float2(max(imgW, 1.0), max(imgH, 1.0)));
 
-    // 3. Subtle pixel-stepped ocean wave shimmer (mid-lower sea reflection band)
+    // 2. Subtle pixel-stepped ocean wave shimmer (mid-lower sea reflection band)
     float oceanMask = smoothstep(0.54, 0.61, imgUV.y) * (1.0 - smoothstep(0.76, 0.85, imgUV.y))
                     * smoothstep(0.32, 0.48, imgUV.x) * (1.0 - smoothstep(0.76, 0.86, imgUV.x));
     float pixRow = floor(pos.y / 3.0);
@@ -61,16 +57,15 @@ float4 main(float4 pos : SV_POSITION, float2 tex : TEXCOORD) : SV_TARGET {
 
     float3 wall = imageTexture.Sample(samplerState, warpedUV).rgb;
 
-    // 4. Cozy breathing pulse on glowing cyan CRT monitor & mint moon highlights on right
+    // 3. Cozy breathing pulse on glowing cyan CRT monitor & mint moon highlights on right
     float rightZone = smoothstep(0.58, 0.78, imgUV.x);
     float cyanGlow  = saturate(wall.g * 0.6 + wall.b * 0.6 - wall.r * 0.5);
     float crtPulse  = 0.5 + 0.5 * sin(Time * 2.1);
-    wall += wall * cyanGlow * rightZone * (0.12 * crtPulse);
+    wall += wall * cyanGlow * rightZone * (0.14 * crtPulse);
 
-    // Blend wallpaper into theme midnight base
-    float3 animBg = lerp(baseBg, wall, BG_OPACITY);
+    float3 animBg = lerp(BASE_BG, wall, BG_OPACITY);
 
-    // 5. Crisp 3x3 pixel-grid twinkling stars in upper midnight sky (left & mid sky)
+    // 4. Crisp 3x3 pixel-grid twinkling stars in upper midnight sky (left & mid sky)
     float pixSize = max(2.0, round(3.0 * Scale));
     float2 pixCoord = floor(pos.xy / pixSize);
     float2 cell = floor(pixCoord / 18.0);
@@ -86,11 +81,11 @@ float4 main(float4 pos : SV_POSITION, float2 tex : TEXCOORD) : SV_TARGET {
             float3 starCol = (rnd > 0.92) ? float3(1.0, 0.51, 0.72) :
                              (rnd > 0.83) ? float3(0.40, 0.94, 1.0) :
                                             float3(0.95, 0.97, 1.0);
-            animBg += starCol * twinkle * 0.42 * skyMask;
+            animBg += starCol * twinkle * 0.45 * skyMask;
         }
     }
 
-    // 6. Periodic 8-bit diagonal pixel shooting star across the quiet left night sky
+    // 5. Periodic 8-bit diagonal pixel shooting star across the quiet left night sky
     float cycle = 6.0;
     float idx = floor(Time / cycle);
     float tLocal = frac(Time / cycle);
@@ -101,25 +96,22 @@ float4 main(float4 pos : SV_POSITION, float2 tex : TEXCOORD) : SV_TARGET {
         float2 dir = normalize(float2(0.86, 0.51));
         float2 head = startP + dir * (prog * 0.34);
 
-        // Snap current sample to coarse pixel grid for authentic 8-bit stair-step look
-        float2 qUV = (floor(pos.xy / pixSize) + 0.5) * pixSize / Resolution;
+        float2 qUV = (floor(pos.xy / pixSize) + 0.5) * pixSize / max(Resolution, float2(1.0, 1.0));
         float2 rel = qUV - head;
         float along = dot(rel, -dir);
         float perp  = abs(dot(rel, float2(-dir.y, dir.x)));
         float tailLen = 0.085;
-        if (along >= 0.0 && along < tailLen && perp < (pixSize * 0.75 / Resolution.y)) {
+        if (along >= 0.0 && along < tailLen && perp < (pixSize * 0.75 / max(Resolution.y, 1.0))) {
             float fade = (1.0 - along / tailLen) * sin(prog * 3.14159265);
             float3 meteorCol = lerp(float3(0.98, 0.99, 1.0), float3(0.40, 0.94, 1.0), along / tailLen);
-            animBg += meteorCol * fade * 0.78 * (1.0 - smoothstep(0.55, 0.70, tex.x));
+            animBg += meteorCol * fade * 0.82 * (1.0 - smoothstep(0.55, 0.70, tex.x));
         }
     }
 
-    // 7. Composite razor-sharp terminal content & HUD over animated background (premultiplied alpha safe)
-    float3 diff = abs(term.rgb - Background.rgb);
-    float maxDiff = max(diff.r, max(diff.g, diff.b));
-    float alphaDiff = max(0.0, term.a - Background.a);
-    float fgMask = saturate(max(smoothstep(0.012, 0.055, maxDiff), smoothstep(0.005, 0.035, alphaDiff)));
-
-    float3 outRgb = term.rgb + (animBg - baseBg) * bgAlpha * (1.0 - fgMask);
-    return float4(saturate(outRgb), max(term.a, bgAlpha));
+    // 6. Exact Porter-Duff Source-Over compositing (AtlasEngine t0 uses premultiplied alpha with empty=0)
+    float4 bgPremul = float4(saturate(animBg) * WINDOW_ALPHA, WINDOW_ALPHA);
+    float4 outColor;
+    outColor.rgb = term.rgb + bgPremul.rgb * (1.0 - term.a);
+    outColor.a   = term.a   + bgPremul.a   * (1.0 - term.a);
+    return saturate(outColor);
 }
