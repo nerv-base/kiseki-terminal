@@ -8,7 +8,15 @@ if ($PSVersionTable.PSEdition -eq 'Core') {
     [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
     $OutputEncoding           = [System.Text.UTF8Encoding]::new($false)
 } else {
-    $env:PSModulePath = "$HOME\Documents\PowerShell\Modules;" + $env:PSModulePath
+    if ($env:WT_SESSION -or $Host.UI.SupportsVirtualTerminal) {
+        try {
+            [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+            $OutputEncoding           = [System.Text.UTF8Encoding]::new($false)
+        } catch {}
+    }
+    $docsDir = [Environment]::GetFolderPath('MyDocuments')
+    if (-not $docsDir) { $docsDir = "$HOME\Documents" }
+    $env:PSModulePath = "$docsDir\PowerShell\Modules;" + $env:PSModulePath
 }
 
 # Sync newly installed WinGet / User PATH entries into running shells if needed
@@ -44,11 +52,13 @@ Set-PSReadLineOption -MaximumHistoryCount 8192 -ErrorAction SilentlyContinue
 Set-PSReadLineOption -BellStyle None -ErrorAction SilentlyContinue
 
 # --- Keybindings ---
-Set-PSReadLineKeyHandler -Key Tab -Function MenuComplete
-Set-PSReadLineKeyHandler -Key UpArrow -Function HistorySearchBackward
-Set-PSReadLineKeyHandler -Key DownArrow -Function HistorySearchForward
-if ($PSVersionTable.PSEdition -eq 'Core') {
-    Set-PSReadLineKeyHandler -Key Ctrl+d -Function DeleteCharOrExit
+if (Get-Module PSReadLine) {
+    Set-PSReadLineKeyHandler -Key Tab -Function MenuComplete -ErrorAction SilentlyContinue
+    Set-PSReadLineKeyHandler -Key UpArrow -Function HistorySearchBackward -ErrorAction SilentlyContinue
+    Set-PSReadLineKeyHandler -Key DownArrow -Function HistorySearchForward -ErrorAction SilentlyContinue
+    if ($PSVersionTable.PSEdition -eq 'Core') {
+        Set-PSReadLineKeyHandler -Key Ctrl+d -Function DeleteCharOrExit -ErrorAction SilentlyContinue
+    }
 }
 
 # --- Load Kiseki Theme Engine & Apply Active Theme ---
@@ -57,8 +67,10 @@ Apply-KisekiShellTheme
 
 # --- PSFzf (Ctrl+R history / Ctrl+T files) ---
 if ((Get-Command fzf -ErrorAction SilentlyContinue) -and (Get-Module -ListAvailable PSFzf)) {
-    Import-Module PSFzf -ErrorAction SilentlyContinue
-    Set-PsFzfOption -PSReadlineChordProvider 'Ctrl+t' -PSReadlineChordReverseHistory 'Ctrl+r'
+    try {
+        Import-Module PSFzf -ErrorAction SilentlyContinue
+        Set-PsFzfOption -PSReadlineChordProvider 'Ctrl+t' -PSReadlineChordReverseHistory 'Ctrl+r' -ErrorAction SilentlyContinue
+    } catch {}
 }
 
 # --- Zoxide (Smart `z` directory jump) ---

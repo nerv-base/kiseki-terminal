@@ -219,6 +219,8 @@ function Update-KisekiTerminal {
     $oldThemes = @(Get-ChildItem (Join-Path $script:KisekiRoot 'themes') -Directory -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name)
     $tmpDir = Join-Path $env:TEMP ("kiseki-upd-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
     New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
+    $prevProg = $ProgressPreference
+    $ProgressPreference = 'SilentlyContinue'
 
     try {
         $zipPath = Join-Path $tmpDir 'release.zip'
@@ -253,9 +255,14 @@ function Update-KisekiTerminal {
         }
 
         # Update themes, shaders, scripts, and version.json — user state files stay intact!
-        Copy-Item (Join-Path $extracted 'themes')  "$($script:KisekiRoot)\" -Recurse -Force
-        Copy-Item (Join-Path $extracted 'shaders') "$($script:KisekiRoot)\" -Recurse -Force
-        Copy-Item (Join-Path $extracted 'scripts') "$($script:KisekiRoot)\" -Recurse -Force
+        foreach ($sub in @('themes', 'shaders', 'scripts')) {
+            $srcSub = Join-Path $extracted $sub
+            $dstSub = Join-Path $script:KisekiRoot $sub
+            if (Test-Path $srcSub) {
+                if (-not (Test-Path $dstSub)) { New-Item -ItemType Directory -Path $dstSub -Force | Out-Null }
+                Copy-Item -Path (Join-Path $srcSub '*') -Destination $dstSub -Recurse -Force
+            }
+        }
         if (Test-Path (Join-Path $extracted 'version.json')) {
             Copy-Item (Join-Path $extracted 'version.json') $script:KisekiVersionFile -Force
         }
@@ -281,6 +288,7 @@ function Update-KisekiTerminal {
     } catch {
         Write-Host "✖ Update failed: $($_.Exception.Message)" -ForegroundColor Red
     } finally {
+        $ProgressPreference = $prevProg
         if (Test-Path $tmpDir) {
             Remove-Item $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
         }

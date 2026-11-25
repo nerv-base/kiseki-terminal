@@ -6,6 +6,29 @@ $script:KisekiRoot        = "$HOME\.config\kiseki-terminal"
 $script:KisekiCurrentFile = Join-Path $script:KisekiRoot 'current-theme.txt'
 $script:KisekiLiveFile    = Join-Path $script:KisekiRoot 'live-mode.txt'
 
+function Write-KisekiUtf8NoBom {
+    param([string]$Path, [string]$Content)
+    $parent = Split-Path $Path -Parent
+    if ($parent -and -not (Test-Path $parent)) {
+        New-Item -ItemType Directory -Path $parent -Force | Out-Null
+    }
+    [System.IO.File]::WriteAllText($Path, $Content, [System.Text.UTF8Encoding]::new($false))
+}
+
+function Read-KisekiJsonFile {
+    param([string]$Path)
+    $raw = Get-Content $Path -Raw -Encoding utf8
+    if ($PSVersionTable.PSEdition -ne 'Core') {
+        # Windows PowerShell 5.1 ConvertFrom-Json rejects // comments & trailing commas found in WT settings.json
+        $raw = [regex]::Replace($raw, '("([^"\\]|\\.)*")|//[^\r\n]*|/\*[\s\S]*?\*/', {
+            param($m)
+            if ($m.Groups[1].Success) { $m.Groups[1].Value } else { '' }
+        })
+        $raw = [regex]::Replace($raw, ',(\s*[\}\]])', '$1')
+    }
+    return ($raw | ConvertFrom-Json)
+}
+
 function Get-WindowsTerminalSettingsPath {
     $candidates = @(
         "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json",
@@ -101,11 +124,11 @@ function Sync-KisekiWindowsTerminal {
         return
     }
 
-    $wt = Get-Content $wtPath -Raw -Encoding utf8 | ConvertFrom-Json
-    if (-not $wt.schemes)  { $wt | Add-Member -NotePropertyName schemes  -NotePropertyValue @() -Force }
-    if (-not $wt.themes)   { $wt | Add-Member -NotePropertyName themes   -NotePropertyValue @() -Force }
-    if (-not $wt.profiles) { $wt | Add-Member -NotePropertyName profiles -NotePropertyValue ([PSCustomObject]@{ defaults = [PSCustomObject]@{} }) -Force }
-    if (-not $wt.profiles.defaults) { $wt.profiles | Add-Member -NotePropertyName defaults -NotePropertyValue ([PSCustomObject]@{}) -Force }
+    $wt = Read-KisekiJsonFile -Path $wtPath
+    if (-not $wt.PSObject.Properties['schemes']  -or $null -eq $wt.schemes)  { $wt | Add-Member -NotePropertyName schemes  -NotePropertyValue @() -Force }
+    if (-not $wt.PSObject.Properties['themes']   -or $null -eq $wt.themes)   { $wt | Add-Member -NotePropertyName themes   -NotePropertyValue @() -Force }
+    if (-not $wt.PSObject.Properties['profiles'] -or $null -eq $wt.profiles) { $wt | Add-Member -NotePropertyName profiles -NotePropertyValue ([PSCustomObject]@{ defaults = [PSCustomObject]@{} }) -Force }
+    if (-not $wt.profiles.PSObject.Properties['defaults'] -or $null -eq $wt.profiles.defaults) { $wt.profiles | Add-Member -NotePropertyName defaults -NotePropertyValue ([PSCustomObject]@{}) -Force }
 
     # Upsert all themes in themes/ so user can also browse them inside WT Settings UI
     $allThemes = Get-ChildItem (Join-Path $script:KisekiRoot 'themes') -Directory | Sort-Object Name
@@ -128,7 +151,7 @@ function Sync-KisekiWindowsTerminal {
     $finalBgOp = if ($BgOpacity -ge 0) { $BgOpacity } else { $active.terminal.backgroundImageOpacity }
     $useLive   = if ($null -ne $LiveMode) { [bool]$LiveMode } else { Get-KisekiLiveMode }
 
-    $wt.theme = $active.uiTheme.name
+    $wt | Add-Member -NotePropertyName theme -NotePropertyValue $active.uiTheme.name -Force
     $def = $wt.profiles.defaults
     $def | Add-Member -NotePropertyName colorScheme      -NotePropertyValue $active.scheme.name -Force
     $def | Add-Member -NotePropertyName cursorShape      -NotePropertyValue $active.terminal.cursorShape -Force
@@ -170,7 +193,7 @@ function Sync-KisekiWindowsTerminal {
         }) -Force
     }
 
-    $wt | ConvertTo-Json -Depth 12 | Set-Content $wtPath -Encoding utf8NoBOM
+    Write-KisekiUtf8NoBom -Path $wtPath -Content ($wt | ConvertTo-Json -Depth 12)
 }
 
 function Switch-KisekiTheme {
@@ -228,9 +251,9 @@ function Switch-KisekiTheme {
         return
     }
 
-    Set-Content -Path $script:KisekiCurrentFile -Value $Name -Encoding utf8NoBOM -NoNewline
+    Write-KisekiUtf8NoBom -Path $script:KisekiCurrentFile -Content $Name
     if ($Static) {
-        Set-Content -Path $script:KisekiLiveFile -Value 'off' -Encoding utf8NoBOM -NoNewline
+        Write-KisekiUtf8NoBom -Path $script:KisekiLiveFile -Content 'off'
     }
     Sync-KisekiWindowsTerminal -ThemeId $Name -BgOpacity $BgOpacity
     Apply-KisekiShellTheme -ThemeId $Name
@@ -256,7 +279,7 @@ function Toggle-KisekiLive {
         'off'    { $false }
         default  { -not $current }
     }
-    Set-Content -Path $script:KisekiLiveFile -Value ($(if ($next) { 'on' } else { 'off' })) -Encoding utf8NoBOM -NoNewline
+    Write-KisekiUtf8NoBom -Path $script:KisekiLiveFile -Content ($(if ($next) { 'on' } else { 'off' }))
     $active = Get-KisekiActiveThemeId
     Sync-KisekiWindowsTerminal -ThemeId $active -LiveMode $next
     if ($next) {
@@ -334,7 +357,6 @@ function Get-KisekiThemes {
     $drawn      = $false
     $chosen     = $null
 
-    $drawn = $false
     $render = {
         $sb = [System.Text.StringBuilder]::new()
         if ($drawn) {
@@ -384,7 +406,7 @@ function Get-KisekiThemes {
             } elseif ($k -eq [ConsoleKey]::Spacebar) {
                 $previewedId = $items[$selectedIdx].id
                 $activeId    = $previewedId
-                Set-Content -Path $script:KisekiCurrentFile -Value $previewedId -Encoding utf8NoBOM -NoNewline
+                Write-KisekiUtf8NoBom -Path $script:KisekiCurrentFile -Content $previewedId
                 Sync-KisekiWindowsTerminal -ThemeId $previewedId
                 Apply-KisekiShellTheme -ThemeId $previewedId
                 . $render
@@ -393,7 +415,7 @@ function Get-KisekiThemes {
                 break
             } elseif ($k -eq [ConsoleKey]::Escape -or $c -eq 'q' -or $c -eq 'Q') {
                 if ($previewedId -and $previewedId -ne $initialActive) {
-                    Set-Content -Path $script:KisekiCurrentFile -Value $initialActive -Encoding utf8NoBOM -NoNewline
+                    Write-KisekiUtf8NoBom -Path $script:KisekiCurrentFile -Content $initialActive
                     Sync-KisekiWindowsTerminal -ThemeId $initialActive
                     Apply-KisekiShellTheme -ThemeId $initialActive
                 }
@@ -422,7 +444,7 @@ function Get-KisekiThemes {
 function Toggle-RetroCRT {
     <# .SYNOPSIS Toggle static subtle CRT phosphor bloom & scanlines in Windows Terminal #>
     $wtPath = Get-WindowsTerminalSettingsPath
-    $json = Get-Content $wtPath -Raw -Encoding utf8 | ConvertFrom-Json
+    $json = Read-KisekiJsonFile -Path $wtPath
     $shader = Join-Path $script:KisekiRoot 'shaders\retro-crt-subtle.hlsl'
     $prop = 'experimental.pixelShaderPath'
     $imgProp = 'experimental.pixelShaderImagePath'
@@ -433,10 +455,10 @@ function Toggle-RetroCRT {
     } else {
         # Ensure static wallpaper is mounted underneath CRT shader cleanly
         Sync-KisekiWindowsTerminal -ThemeId $active -LiveMode $false
-        $json = Get-Content $wtPath -Raw -Encoding utf8 | ConvertFrom-Json
+        $json = Read-KisekiJsonFile -Path $wtPath
         if ($json.profiles.defaults.PSObject.Properties[$imgProp]) { $json.profiles.defaults.PSObject.Properties.Remove($imgProp) }
         $json.profiles.defaults | Add-Member -NotePropertyName $prop -NotePropertyValue $shader -Force
-        $json | ConvertTo-Json -Depth 12 | Set-Content $wtPath -Encoding utf8NoBOM
+        Write-KisekiUtf8NoBom -Path $wtPath -Content ($json | ConvertTo-Json -Depth 12)
         Write-Host "✦ Retro CRT Shader: ON (subtle phosphor bloom + scanlines)" -ForegroundColor Magenta
     }
 }
@@ -454,32 +476,42 @@ function Set-TerminalFont {
         'modern' = 'JetBrainsMono NF, Maple Mono NF CN'
     }
     $wtPath = Get-WindowsTerminalSettingsPath
-    $json = Get-Content $wtPath -Raw -Encoding utf8 | ConvertFrom-Json
-    $json.profiles.defaults.font.face = $map[$Style]
-    $json.profiles.defaults.font.size = $Size
-    $json | ConvertTo-Json -Depth 12 | Set-Content $wtPath -Encoding utf8NoBOM
+    $json = Read-KisekiJsonFile -Path $wtPath
+    if (-not $json.profiles.defaults.PSObject.Properties['font'] -or $null -eq $json.profiles.defaults.font) {
+        $json.profiles.defaults | Add-Member -NotePropertyName font -NotePropertyValue ([PSCustomObject]@{}) -Force
+    }
+    $json.profiles.defaults.font | Add-Member -NotePropertyName face -NotePropertyValue $map[$Style] -Force
+    $json.profiles.defaults.font | Add-Member -NotePropertyName size -NotePropertyValue $Size -Force
+    Write-KisekiUtf8NoBom -Path $wtPath -Content ($json | ConvertTo-Json -Depth 12)
     Write-Host "✦ Terminal Font -> $Style ($Size pt)" -ForegroundColor Cyan
 }
 
 function Set-TerminalBg {
-    <# .SYNOPSIS Adjust static background opacity or turn off wallpaper #>
+    <# .SYNOPSIS Adjust static background opacity or turn off wallpaper (`termbg 0.35`, `termbg off`, or `termbg -Off`) #>
     param(
-        [ValidateRange(0.0, 1.0)][double]$Opacity = 0.40,
+        [Parameter(Position = 0)][string]$Opacity = '0.40',
         [switch]$Off
     )
     $active = Get-KisekiActiveThemeId
-    if ($Off) {
-        Set-Content -Path $script:KisekiLiveFile -Value 'off' -Encoding utf8NoBOM -NoNewline
+    if ($Off -or ($Opacity -and $Opacity.Trim().ToLowerInvariant() -eq 'off')) {
+        Write-KisekiUtf8NoBom -Path $script:KisekiLiveFile -Content 'off'
         Sync-KisekiWindowsTerminal -ThemeId $active -LiveMode $false
         $wtPath = Get-WindowsTerminalSettingsPath
-        $json = Get-Content $wtPath -Raw -Encoding utf8 | ConvertFrom-Json
-        $json.profiles.defaults.PSObject.Properties.Remove('backgroundImage')
-        $json | ConvertTo-Json -Depth 12 | Set-Content $wtPath -Encoding utf8NoBOM
+        $json = Read-KisekiJsonFile -Path $wtPath
+        if ($json.profiles.defaults.PSObject.Properties['backgroundImage']) {
+            $json.profiles.defaults.PSObject.Properties.Remove('backgroundImage')
+        }
+        Write-KisekiUtf8NoBom -Path $wtPath -Content ($json | ConvertTo-Json -Depth 12)
         Write-Host "✦ Terminal Background: OFF" -ForegroundColor Magenta
     } else {
-        Set-Content -Path $script:KisekiLiveFile -Value 'off' -Encoding utf8NoBOM -NoNewline
-        Sync-KisekiWindowsTerminal -ThemeId $active -BgOpacity $Opacity -LiveMode $false
-        Write-Host "✦ Terminal Static Background Opacity -> $Opacity (run 'live' to re-enable 60fps motion)" -ForegroundColor Magenta
+        $val = 0.40
+        if (-not [double]::TryParse($Opacity, [System.Globalization.NumberStyles]::Float, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$val) -or $val -lt 0.0 -or $val -gt 1.0) {
+            Write-Host "✖ Opacity must be a number between 0.0 and 1.0 (or 'off')." -ForegroundColor Red
+            return
+        }
+        Write-KisekiUtf8NoBom -Path $script:KisekiLiveFile -Content 'off'
+        Sync-KisekiWindowsTerminal -ThemeId $active -BgOpacity $val -LiveMode $false
+        Write-Host "✦ Terminal Static Background Opacity -> $val (run 'live' to re-enable 60fps motion)" -ForegroundColor Magenta
     }
 }
 
