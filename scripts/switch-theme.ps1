@@ -266,21 +266,157 @@ function Toggle-KisekiLive {
     }
 }
 
+function ConvertTo-KisekiAnsiFg {
+    param([string]$Hex)
+    $h = ($Hex -replace '^#', '').Trim()
+    if ($h.Length -ne 6) { return '' }
+    $r = [Convert]::ToInt32($h.Substring(0, 2), 16)
+    $g = [Convert]::ToInt32($h.Substring(2, 2), 16)
+    $b = [Convert]::ToInt32($h.Substring(4, 2), 16)
+    return "$([char]27)[38;2;${r};${g};${b}m"
+}
+
+function Get-KisekiThemeSwatch {
+    param($Meta)
+    $esc = [char]27
+    $s = $Meta.scheme
+    $cols = @($s.cursorColor, $s.red, $s.yellow, $s.green)
+    $blocks = ($cols | ForEach-Object { "$(ConvertTo-KisekiAnsiFg $_)█" }) -join ''
+    return "${blocks}${esc}[0m"
+}
+
 function Get-KisekiThemes {
-    <# .SYNOPSIS List all installed Kiseki anime terminal themes #>
+    <# .SYNOPSIS Interactive arrow-key theme picker (Windows/macOS parity); pass -List for static output #>
+    param([switch]$List)
+
+    $dirs = @(Get-ChildItem (Join-Path $script:KisekiRoot 'themes') -Directory | Sort-Object Name)
+    $items = @()
+    foreach ($d in $dirs) {
+        $mp = Join-Path $d.FullName 'theme.json'
+        if (Test-Path $mp) {
+            $items += (Get-Content $mp -Raw -Encoding utf8 | ConvertFrom-Json)
+        }
+    }
+    if ($items.Count -eq 0) {
+        Write-Host "✖ No themes found in $script:KisekiRoot\themes" -ForegroundColor Red
+        return
+    }
+
     $active = Get-KisekiActiveThemeId
     $modeTag = if (Get-KisekiLiveMode) { 'LIVE 60FPS' } else { 'STATIC' }
     $verTag = if (Get-Command Get-KisekiLocalVersionInfo -ErrorAction SilentlyContinue) {
         "v$((Get-KisekiLocalVersionInfo).version)"
     } else { '' }
-    Write-Host "`n★ Kiseki Anime Terminal Themes $verTag [$modeTag]  (switch: theme <id> | motion: live | update: theme update)`n" -ForegroundColor Cyan
-    Get-ChildItem (Join-Path $script:KisekiRoot 'themes') -Directory | Sort-Object Name | ForEach-Object {
-        $meta = Get-Content (Join-Path $_.FullName 'theme.json') -Raw -Encoding utf8 | ConvertFrom-Json
-        $mark = if ($meta.id -eq $active) { '▶' } else { ' ' }
-        $color = if ($meta.id -eq $active) { 'Magenta' } else { 'Gray' }
-        Write-Host ("  {0} {1,-16} {2,-26} {3}" -f $mark, $meta.id, "[$($meta.style)]", $meta.subtitle) -ForegroundColor $color
+
+    $canInteract = (-not $List) -and $Host.UI.SupportsVirtualTerminal -and (-not [Console]::IsInputRedirected) -and (-not [Console]::IsOutputRedirected)
+    if (-not $canInteract) {
+        Write-Host "`n★ Kiseki Anime Terminal Themes $verTag [$modeTag]  (switch: theme <id> | motion: live | update: theme update)`n" -ForegroundColor Cyan
+        foreach ($meta in $items) {
+            $mark  = if ($meta.id -eq $active) { '●' } else { ' ' }
+            $color = if ($meta.id -eq $active) { 'Magenta' } else { 'Gray' }
+            $sw    = Get-KisekiThemeSwatch $meta
+            Write-Host ("  {0} {1,-16} {2}  [{3,-25}] {4}" -f $mark, $meta.id, $sw, $meta.style, $meta.subtitle) -ForegroundColor $color
+        }
+        Write-Host ""
+        return
     }
-    Write-Host ""
+
+    $esc           = [char]27
+    $initialActive = $active
+    $activeId      = $active
+    $previewedId   = $null
+    $selectedIdx   = 0
+    for ($i = 0; $i -lt $items.Count; $i++) {
+        if ($items[$i].id -eq $active) { $selectedIdx = $i; break }
+    }
+
+    $totalLines = $items.Count + 4
+    $drawn      = $false
+    $chosen     = $null
+
+    $drawn = $false
+    $render = {
+        $sb = [System.Text.StringBuilder]::new()
+        if ($drawn) {
+            [void]$sb.Append("${esc}[${totalLines}A`r")
+        }
+        $lines = @(
+            "${esc}[1;36m★ Kiseki Anime Terminal Themes $verTag [$modeTag]${esc}[0m",
+            "${esc}[90m  ↑/↓ (j/k) 选择  ·  Enter 切换  ·  Space 实时预览  ·  1-9 快捷  ·  q/Esc 退出${esc}[0m",
+            ""
+        )
+        for ($i = 0; $i -lt $items.Count; $i++) {
+            $meta = $items[$i]
+            $sw   = Get-KisekiThemeSwatch $meta
+            $dot  = if ($meta.id -eq $activeId) { "${esc}[32m●${esc}[0m" } else { ' ' }
+            if ($i -eq $selectedIdx) {
+                $accent = ConvertTo-KisekiAnsiFg $meta.scheme.cursorColor
+                $lines += ("  ${accent}${esc}[1m❯${esc}[0m $dot ${accent}${esc}[1m{0,-16}${esc}[0m $sw  ${esc}[1;97m[{1,-25}]${esc}[0m ${esc}[97m{2}${esc}[0m" -f $meta.id, $meta.style, $meta.subtitle)
+            } else {
+                $lines += ("    $dot ${esc}[37m{0,-16}${esc}[0m $sw  ${esc}[90m[{1,-25}] {2}${esc}[0m" -f $meta.id, $meta.style, $meta.subtitle)
+            }
+        }
+        if ($previewedId) {
+            $lines += "  ${esc}[35m✦ 正在预览: $previewedId（按 Enter 确认，Esc 恢复 $initialActive）${esc}[0m"
+        } else {
+            $lines += ""
+        }
+        foreach ($ln in $lines) {
+            [void]$sb.Append("${esc}[2K${ln}`r`n")
+        }
+        [Console]::Write($sb.ToString())
+        $drawn = $true
+    }
+
+    try {
+        [Console]::Write("${esc}[?25l")
+        . $render
+        while ($true) {
+            $key = [Console]::ReadKey($true)
+            $k = $key.Key
+            $c = $key.KeyChar
+            if ($k -eq [ConsoleKey]::UpArrow -or $c -eq 'k' -or $c -eq 'K') {
+                $selectedIdx = ($selectedIdx - 1 + $items.Count) % $items.Count
+                . $render
+            } elseif ($k -eq [ConsoleKey]::DownArrow -or $c -eq 'j' -or $c -eq 'J') {
+                $selectedIdx = ($selectedIdx + 1) % $items.Count
+                . $render
+            } elseif ($k -eq [ConsoleKey]::Spacebar) {
+                $previewedId = $items[$selectedIdx].id
+                $activeId    = $previewedId
+                Set-Content -Path $script:KisekiCurrentFile -Value $previewedId -Encoding utf8NoBOM -NoNewline
+                Sync-KisekiWindowsTerminal -ThemeId $previewedId
+                Apply-KisekiShellTheme -ThemeId $previewedId
+                . $render
+            } elseif ($k -eq [ConsoleKey]::Enter) {
+                $chosen = $items[$selectedIdx].id
+                break
+            } elseif ($k -eq [ConsoleKey]::Escape -or $c -eq 'q' -or $c -eq 'Q') {
+                if ($previewedId -and $previewedId -ne $initialActive) {
+                    Set-Content -Path $script:KisekiCurrentFile -Value $initialActive -Encoding utf8NoBOM -NoNewline
+                    Sync-KisekiWindowsTerminal -ThemeId $initialActive
+                    Apply-KisekiShellTheme -ThemeId $initialActive
+                }
+                $chosen = $null
+                break
+            } elseif ($c -ge '1' -and $c -le '9') {
+                $num = ([int][char]$c) - ([int][char]'1')
+                if ($num -ge 0 -and $num -lt $items.Count) {
+                    $selectedIdx = $num
+                    . $render
+                }
+            }
+        }
+    } finally {
+        if ($drawn) {
+            [Console]::Write("${esc}[${totalLines}A`r${esc}[J")
+        }
+        [Console]::Write("${esc}[?25h")
+    }
+
+    if ($chosen) {
+        Switch-KisekiTheme -Name $chosen
+    }
 }
 
 function Toggle-RetroCRT {
