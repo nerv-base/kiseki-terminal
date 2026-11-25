@@ -9,10 +9,13 @@ zsh-syntax-highlighting, zsh-autosuggestions, plus zero-lag 24h update checker).
 from __future__ import annotations
 
 import argparse
+import base64
 import datetime
 import json
 import os
 import platform
+import plistlib
+import pwd
 import re
 import select
 import shlex
@@ -23,6 +26,7 @@ import sys
 import tempfile
 import termios
 import tty
+import unicodedata
 import urllib.error
 import urllib.request
 import zipfile
@@ -100,20 +104,22 @@ ITERM_PS_FONT_CANDIDATES: dict[str, list[str]] = {
     "JetBrainsMono NF": [
         "JetBrainsMonoNF-Regular",
         "JetBrainsMonoNFM-Regular",
+        "JetBrainsMonoNLNF-Regular",
         "JetBrainsMonoNerdFont-Regular",
         "JetBrainsMonoNerdFontMono-Regular",
         "JetBrainsMono-Regular",
     ],
     "DepartureMono Nerd Font": [
-        "DepartureMonoNF-Regular",
-        "DepartureMonoNFM-Regular",
+        "DepartureMonoNF",
+        "DepartureMonoNFM",
         "DepartureMonoNerdFont-Regular",
+        "DepartureMonoNF-Regular",
         "DepartureMono-Regular",
     ],
     "Fusion Pixel 12px Mono zh-Hans": [
+        "Fusion-Pixel-12px-Mono-zh-Hans-Regular",
         "FusionPixel12pxMonospacedzh_hans-Regular",
         "Fusion-Pixel-12px-Monospaced-zh_hans",
-        "FusionPixel12pxMonozh_hans-Regular",
     ],
     "Maple Mono NF CN": [
         "MapleMono-NF-CN-Regular",
@@ -144,6 +150,16 @@ ANSI_KEYS = [
     "brightCyan",
     "brightWhite",
 ]
+
+
+def _is_real_user_home() -> bool:
+    """True when $HOME matches the real login home dir (prevents sandboxed HOME tests touching cfprefsd)."""
+    if os.environ.get("KISEKI_NO_MACOS_DEFAULTS") == "1":
+        return False
+    try:
+        return Path.home().resolve() == Path(pwd.getpwuid(os.getuid()).pw_dir).resolve()
+    except (KeyError, OSError):
+        return True
 
 
 def get_root() -> Path:
@@ -380,6 +396,10 @@ def detect_installed_terminals() -> list[str]:
         or (home / ".config" / "wezterm").exists()
     ):
         detected.append("wezterm")
+
+    # macOS built-in Terminal.app
+    if platform.system() == "Darwin" and Path("/System/Applications/Utilities/Terminal.app").exists():
+        detected.append("terminal-app")
 
     return detected
 
@@ -745,6 +765,84 @@ def reload_ghostty(root: Path | None = None) -> tuple[bool, str]:
 
 
 # ---------------------------------------------------------------------------
+# macOS PostScript Font Resolver (shared by iTerm2 & native Terminal.app)
+# ---------------------------------------------------------------------------
+
+def get_installed_macos_ps_fonts(root: Path | None = None) -> set[str]:
+    """Return installed macOS PostScript font names via dependency-free JXA, cached by ~/Library/Fonts mtime."""
+    if platform.system() != "Darwin":
+        return set()
+    fonts_dir = Path.home() / "Library" / "Fonts"
+    try:
+        mtime = str(int(fonts_dir.stat().st_mtime))
+    except OSError:
+        mtime = ""
+
+    cache_file = (root / ".macos-ps-fonts-cache") if root else None
+    if cache_file and mtime and cache_file.is_file():
+        try:
+            lines = cache_file.read_text(encoding="utf-8").splitlines()
+            if lines and lines[0] == mtime:
+                return set(lines[1:])
+        except OSError:
+            pass
+
+    jxa = (
+        "ObjC.import('AppKit');"
+        "const arr = ObjC.unwrap($.NSFontManager.sharedFontManager.availableFonts).map(x => ObjC.unwrap(x));"
+        "arr.join('\\n');"
+    )
+    fonts: set[str] = set()
+    try:
+        res = subprocess.run(
+            ["osascript", "-l", "JavaScript", "-e", jxa],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        if res.returncode == 0 and res.stdout.strip():
+            fonts = {line.strip() for line in res.stdout.splitlines() if line.strip()}
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+    if cache_file and mtime and fonts:
+        try:
+            write_text_atomic(cache_file, mtime + "\n" + "\n".join(sorted(fonts)) + "\n")
+        except OSError:
+            pass
+    return fonts
+
+
+def resolve_ps_font(raw_faces: list[str], installed_ps: set[str] | None = None) -> str:
+    """Resolve theme font face list to an installed Nerd-Font-capable PostScript font name."""
+    candidates: list[str] = []
+    for raw in raw_faces:
+        name = raw.strip()
+        if not name:
+            continue
+        candidates.extend(ITERM_PS_FONT_CANDIDATES.get(name, [name]))
+    # Guaranteed Nerd Font & macOS system fallbacks
+    candidates.extend(
+        [
+            "MapleMono-NF-CN-Regular",
+            "JetBrainsMonoNF-Regular",
+            "DepartureMonoNF",
+            "JetBrainsMonoNFM-Regular",
+            "Menlo-Regular",
+        ]
+    )
+    if installed_ps:
+        lower_map = {f.lower(): f for f in installed_ps}
+        for cand in candidates:
+            if cand in installed_ps:
+                return cand
+            if cand.lower() in lower_map:
+                return lower_map[cand.lower()]
+    return candidates[0] if candidates else "Menlo-Regular"
+
+
+# ---------------------------------------------------------------------------
 # iTerm2 Adapter (Dynamic Profiles auto-watched by iTerm2 + live OSC 1337)
 # ---------------------------------------------------------------------------
 
@@ -765,6 +863,7 @@ def build_iterm2_profile(
     profile_name: str,
     guid: str,
     use_overrides: bool = False,
+    installed_ps: set[str] | None = None,
 ) -> dict[str, Any]:
     theme = load_theme(root, theme_id)
     scheme = theme["scheme"]
@@ -789,10 +888,7 @@ def build_iterm2_profile(
     cursor_type = cursor_map.get(term.get("cursorShape", "filledBox"), 2)
     transparency = max(0.0, min(0.8, 1.0 - float(term.get("opacity", 94)) / 100.0))
 
-    primary_raw = raw_faces[0] if raw_faces else "JetBrainsMono NF"
-    non_ascii_raw = raw_faces[1] if len(raw_faces) > 1 else primary_raw
-    primary_font = ITERM_PS_FONT_CANDIDATES.get(primary_raw, [primary_raw])[0]
-    non_ascii_font = ITERM_PS_FONT_CANDIDATES.get(non_ascii_raw, [non_ascii_raw])[0]
+    primary_font = resolve_ps_font(raw_faces, installed_ps)
 
     try:
         v_spacing = round(max(1.0, float(theme["font"].get("cellHeight", 1.25)) * 0.92), 2)
@@ -801,6 +897,9 @@ def build_iterm2_profile(
 
     tab_bg = ui.get("tab", {}).get("background", scheme["background"])
 
+    # Keep Use Non-ASCII Font = False so iTerm2 renders Nerd Font PUA icons (U+E000..U+F8FF)
+    # and box-drawing chars directly from the primary Nerd Font (never hijacked by non-NF CJK fonts),
+    # while CoreText handles CJK fallback seamlessly (and MapleMono-NF-CN includes CJK natively).
     profile: dict[str, Any] = {
         "Name": profile_name,
         "Guid": guid,
@@ -823,8 +922,8 @@ def build_iterm2_profile(
         "Background Image Mode": 2,  # 2 = Scale to Fill (Aspect Fill)
         "Blend": round(bg_op, 3) if bg_op is not None else 0.0,
         "Normal Font": f"{primary_font} {int(round(font_size))}",
-        "Use Non-ASCII Font": non_ascii_font != primary_font,
-        "Non Ascii Font": f"{non_ascii_font} {int(round(font_size))}",
+        "Use Non-ASCII Font": False,
+        "Non Ascii Font": f"{primary_font} {int(round(font_size))}",
         "Vertical Spacing": v_spacing,
         "Horizontal Spacing": 1.0,
         "Minimum Contrast": 0.0,
@@ -837,7 +936,8 @@ def build_iterm2_profile(
     return profile
 
 
-def sync_iterm2(root: Path, active_theme_id: str) -> Path:
+def sync_iterm2(root: Path, active_theme_id: str, hook: bool = False) -> Path:
+    installed_ps = get_installed_macos_ps_fonts(root)
     profiles: list[dict[str, Any]] = [
         build_iterm2_profile(
             root,
@@ -845,6 +945,7 @@ def sync_iterm2(root: Path, active_theme_id: str) -> Path:
             profile_name="Kiseki Active",
             guid="kiseki-terminal-active-v1",
             use_overrides=True,
+            installed_ps=installed_ps,
         )
     ]
     for tid in list_theme_ids(root):
@@ -856,12 +957,427 @@ def sync_iterm2(root: Path, active_theme_id: str) -> Path:
                 profile_name=f"Kiseki: {meta['name']}",
                 guid=f"kiseki-terminal-{tid}-v1",
                 use_overrides=(tid == active_theme_id),
+                installed_ps=installed_ps,
             )
         )
 
     out_path = Path.home() / "Library" / "Application Support" / "iTerm2" / "DynamicProfiles" / "kiseki-terminal.json"
     write_text_atomic(out_path, json.dumps({"Profiles": profiles}, indent=2, ensure_ascii=False) + "\n")
+
+    if hook and platform.system() == "Darwin" and _is_real_user_home():
+        # Set Kiseki Active as iTerm2's default profile while backing up the user's previous default GUID
+        prev_marker = root / "iterm2-prev-default-guid.txt"
+        try:
+            cur = subprocess.run(
+                ["defaults", "read", "com.googlecode.iterm2", "Default Bookmark Guid"],
+                capture_output=True,
+                text=True,
+                timeout=3,
+                check=False,
+            )
+            cur_guid = (cur.stdout or "").strip() if cur.returncode == 0 else ""
+            if cur_guid and not cur_guid.startswith("kiseki-terminal-") and not prev_marker.is_file():
+                write_text_atomic(prev_marker, cur_guid)
+            subprocess.run(
+                ["defaults", "write", "com.googlecode.iterm2", "Default Bookmark Guid", "kiseki-terminal-active-v1"],
+                capture_output=True,
+                timeout=3,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            pass
+
     return out_path
+
+
+# ---------------------------------------------------------------------------
+# macOS Native Terminal.app Adapter (Pre-blended Wallpaper + Nerd Font + ANSI)
+# ---------------------------------------------------------------------------
+
+TERMINAL_APP_ANSI_MAP = [
+    ("ANSIBlackColor", "black"),
+    ("ANSIRedColor", "red"),
+    ("ANSIGreenColor", "green"),
+    ("ANSIYellowColor", "yellow"),
+    ("ANSIBlueColor", "blue"),
+    ("ANSIMagentaColor", "purple"),
+    ("ANSICyanColor", "cyan"),
+    ("ANSIWhiteColor", "white"),
+    ("ANSIBrightBlackColor", "brightBlack"),
+    ("ANSIBrightRedColor", "brightRed"),
+    ("ANSIBrightGreenColor", "brightGreen"),
+    ("ANSIBrightYellowColor", "brightYellow"),
+    ("ANSIBrightBlueColor", "brightBlue"),
+    ("ANSIBrightMagentaColor", "brightPurple"),
+    ("ANSIBrightCyanColor", "brightCyan"),
+    ("ANSIBrightWhiteColor", "brightWhite"),
+]
+
+
+def _build_terminal_app_spec(
+    root: Path,
+    theme_id: str,
+    profile_name: str,
+    use_overrides: bool,
+    installed_ps: set[str],
+) -> dict[str, Any]:
+    theme = load_theme(root, theme_id)
+    scheme = theme["scheme"]
+    term = theme["terminal"]
+    wallpaper = (root / "themes" / theme_id / "wallpaper.png").resolve()
+
+    if use_overrides:
+        bg_op = get_effective_bg_opacity(root, theme)
+        raw_faces, font_size = get_effective_fonts(root, theme)
+    else:
+        bg_op = float(term.get("backgroundImageOpacity", 0.42))
+        raw_faces = [x.strip() for x in str(theme["font"]["face"]).split(",") if x.strip()]
+        font_size = wt_size_to_macos_pt(float(theme["font"]["size"]))
+
+    primary_font = resolve_ps_font(raw_faces, installed_ps)
+    win_opacity = max(0.2, min(1.0, float(term.get("opacity", 94)) / 100.0))
+    use_blur = bool(term.get("useAcrylic", True))
+
+    blended_path = ""
+    if bg_op is not None and wallpaper.is_file():
+        op_pct = int(round(bg_op * 100))
+        blended_path = str((root / "generated" / f"terminal-app-{theme_id}-{op_pct}.png").resolve())
+
+    colors: dict[str, list[float]] = {
+        "BackgroundColor": [*parse_hex_rgb(scheme["background"]), win_opacity],
+        "TextColor": [*parse_hex_rgb(scheme["foreground"]), 1.0],
+        "TextBoldColor": [*parse_hex_rgb(scheme["brightWhite"]), 1.0],
+        "CursorColor": [*parse_hex_rgb(scheme["cursorColor"]), 1.0],
+        "SelectionColor": [*parse_hex_rgb(scheme["selectionBackground"]), 0.92],
+    }
+    for plist_key, scheme_key in TERMINAL_APP_ANSI_MAP:
+        colors[plist_key] = [*parse_hex_rgb(scheme[scheme_key]), 1.0]
+
+    return {
+        "name": profile_name,
+        "fontName": primary_font,
+        "fontSize": float(int(round(font_size))),
+        "bgHexRgb": list(parse_hex_rgb(scheme["background"])),
+        "bgOpacity": bg_op,
+        "winOpacity": win_opacity,
+        "blur": 0.35 if use_blur else 0.0,
+        "wallpaperSrc": str(wallpaper) if wallpaper.is_file() else "",
+        "blendedPng": blended_path,
+        "colors": colors,
+    }
+
+
+def _jxa_build_terminal_app_assets(payload: dict[str, Any]) -> tuple[dict[str, Any] | None, str]:
+    """
+    Use dependency-free macOS JXA (AppKit/Foundation) ONLY to generate:
+      - Pre-blended dark-matte wallpaper PNGs
+      - Base64-encoded NSKeyedArchiver NSFont & NSColor blobs + NSURL bookmarkData
+    All plist reading/merging/writing is done safely in Python via plistlib + defaults export/import.
+    """
+    jxa_script = r"""
+ObjC.import('AppKit');
+ObjC.import('Foundation');
+
+function b64(nsData) {
+  if (!nsData) return '';
+  const s = nsData.base64EncodedStringWithOptions(0);
+  return s ? ObjC.unwrap(s) : '';
+}
+
+function archiveObj(obj) {
+  if (!obj) return '';
+  const d = $.NSKeyedArchiver.archivedDataWithRootObjectRequiringSecureCodingError(obj, false, $());
+  return b64(d);
+}
+
+function ensureBlendedPng(srcPath, dstPath, bgRgb, bgOpacity) {
+  const fm = $.NSFileManager.defaultManager;
+  if (fm.fileExistsAtPath($(dstPath))) {
+    try {
+      const sAttr = fm.attributesOfItemAtPathError($(srcPath), $());
+      const dAttr = fm.attributesOfItemAtPathError($(dstPath), $());
+      if (sAttr && dAttr) {
+        const sMod = sAttr.objectForKey($.NSFileModificationDate);
+        const dMod = dAttr.objectForKey($.NSFileModificationDate);
+        if (sMod && dMod && dMod.compare(sMod) >= 0) return true;
+      }
+    } catch (e) {}
+  }
+  const src = $.NSImage.alloc.initWithContentsOfFile($(srcPath));
+  if (!src) return false;
+  const reps = src.representations;
+  if (!reps || reps.count === 0) return false;
+  const rep0 = reps.objectAtIndex(0);
+  const w = rep0.pixelsWide;
+  const h = rep0.pixelsHigh;
+  if (w <= 0 || h <= 0) return false;
+
+  const outRep = $.NSBitmapImageRep.alloc.initWithBitmapDataPlanesPixelsWidePixelsHighBitsPerSampleSamplesPerPixelHasAlphaIsPlanarColorSpaceNameBytesPerRowBitsPerPixel(
+    $(), w, h, 8, 4, true, false, $.NSCalibratedRGBColorSpace, 0, 0
+  );
+  const ctx = $.NSGraphicsContext.graphicsContextWithBitmapImageRep(outRep);
+  $.NSGraphicsContext.setCurrentContext(ctx);
+  $.NSColor.colorWithCalibratedRedGreenBlueAlpha(bgRgb[0], bgRgb[1], bgRgb[2], 1.0).setFill;
+  $.NSBezierPath.fillRect($.NSMakeRect(0, 0, w, h));
+  src.drawInRectFromRectOperationFraction($.NSMakeRect(0, 0, w, h), $.NSZeroRect, $.NSCompositingOperationSourceOver, bgOpacity);
+  ctx.flushGraphics;
+  $.NSGraphicsContext.setCurrentContext($());
+  const pngData = outRep.representationUsingTypeProperties($.NSBitmapImageFileTypePNG, $({}));
+  if (!pngData) return false;
+  return Boolean(pngData.writeToFileAtomically($(dstPath), true));
+}
+
+function run(argv) {
+  const specPath = argv[0];
+  const raw = $.NSString.stringWithContentsOfFileEncodingError($(specPath), $.NSUTF8StringEncoding, $());
+  const payload = JSON.parse(ObjC.unwrap(raw));
+  const out = {};
+
+  for (const prof of payload.profiles) {
+    const entry = { fontB64: '', colorsB64: {}, bookmarkB64: '' };
+    let font = $.NSFont.fontWithNameSize($(prof.fontName), prof.fontSize);
+    if (!font || !ObjC.unwrap(font)) {
+      font = $.NSFont.userFixedPitchFontOfSize(prof.fontSize);
+    }
+    entry.fontB64 = archiveObj(font);
+
+    for (const [ckey, rgba] of Object.entries(prof.colors)) {
+      const col = $.NSColor.colorWithCalibratedRedGreenBlueAlpha(rgba[0], rgba[1], rgba[2], rgba[3]);
+      entry.colorsB64[ckey] = archiveObj(col);
+    }
+
+    if (prof.blendedPng && prof.wallpaperSrc && prof.bgOpacity !== null) {
+      if (ensureBlendedPng(prof.wallpaperSrc, prof.blendedPng, prof.bgHexRgb, prof.bgOpacity)) {
+        const url = $.NSURL.fileURLWithPath($(prof.blendedPng));
+        const bm = url.bookmarkDataWithOptionsIncludingResourceValuesForKeysRelativeToURLError(0, $(), $(), $());
+        entry.bookmarkB64 = b64(bm);
+      }
+    }
+    out[prof.name] = entry;
+  }
+  return JSON.stringify(out);
+}
+"""
+    spec_tmp: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile("w", suffix=".json", encoding="utf-8", delete=False) as tf:
+            json.dump(payload, tf)
+            spec_tmp = Path(tf.name)
+        res = subprocess.run(
+            ["osascript", "-l", "JavaScript", "-", str(spec_tmp)],
+            input=jxa_script,
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+        if res.returncode != 0 or not (res.stdout or "").strip():
+            return (None, (res.stderr or res.stdout or "jxa_asset_build_failed").strip())
+        return (json.loads(res.stdout), "")
+    except (OSError, subprocess.SubprocessError, json.JSONDecodeError) as exc:
+        return (None, str(exc))
+    finally:
+        if spec_tmp and spec_tmp.is_file():
+            try:
+                spec_tmp.unlink()
+            except OSError:
+                pass
+
+
+def sync_terminal_app(root: Path, active_theme_id: str, hook: bool = False) -> tuple[bool, str]:
+    """
+    Create/update Kiseki profiles in macOS Terminal.app (pre-blended dark-matte wallpaper via
+    BackgroundImageBookmark, installed Nerd Font, 16-color ANSI scheme, and vibrancy blur).
+    Uses safe `defaults export` -> Python plistlib merge -> `defaults import` so existing profiles
+    are never disturbed.
+    """
+    if platform.system() != "Darwin" or not _is_real_user_home():
+        return (False, "not_darwin")
+
+    (root / "generated").mkdir(parents=True, exist_ok=True)
+    installed_ps = get_installed_macos_ps_fonts(root)
+    specs: list[dict[str, Any]] = [
+        _build_terminal_app_spec(root, active_theme_id, "Kiseki Active", True, installed_ps)
+    ]
+    active_profile_name = "Kiseki Active"
+    for tid in list_theme_ids(root):
+        meta = load_theme(root, tid)
+        pname = f"Kiseki: {meta['name']}"
+        if tid == active_theme_id:
+            active_profile_name = pname
+        specs.append(_build_terminal_app_spec(root, tid, pname, tid == active_theme_id, installed_ps))
+
+    assets, err = _jxa_build_terminal_app_assets({"profiles": specs})
+    if not assets:
+        return (False, err or "asset_generation_failed")
+
+    # Export current live com.apple.Terminal prefs safely via defaults
+    try:
+        exp = subprocess.run(
+            ["defaults", "export", "com.apple.Terminal", "-"],
+            capture_output=True,
+            timeout=6,
+            check=False,
+        )
+        plist_data: dict[str, Any] = plistlib.loads(exp.stdout) if (exp.returncode == 0 and exp.stdout) else {}
+    except (OSError, subprocess.SubprocessError, plistlib.InvalidFileException) as exc:
+        return (False, f"export_failed: {exc}")
+
+    ws = dict(plist_data.get("Window Settings") or {})
+    for prof in specs:
+        pname = prof["name"]
+        blob = assets.get(pname)
+        if not blob or not blob.get("fontB64"):
+            continue
+        pdict: dict[str, Any] = {
+            "name": pname,
+            "type": "Window Settings",
+            "ProfileCurrentVersion": 2.09,
+            "Font": base64.b64decode(blob["fontB64"]),
+            "FontAntialias": True,
+            "FontWidthSpacing": 1.0,
+            "FontHeightSpacing": 1.0,
+            "BackgroundBlur": float(prof["blur"]),
+            "BackgroundBlurInactive": 0.0,
+            "BackgroundAlphaInactive": float(prof["winOpacity"]),
+            "BackgroundSettingsForInactiveWindows": False,
+            "DynamicANSIForegroundColors": False,
+            "columnCount": 120,
+            "rowCount": 34,
+        }
+        for ckey, cb64 in blob.get("colorsB64", {}).items():
+            if cb64:
+                pdict[ckey] = base64.b64decode(cb64)
+        if blob.get("bookmarkB64"):
+            pdict["BackgroundImageBookmark"] = base64.b64decode(blob["bookmarkB64"])
+        ws[pname] = pdict
+
+    plist_data["Window Settings"] = ws
+
+    if hook:
+        prev_file = root / "terminal-app-prev-defaults.json"
+        if not prev_file.is_file():
+            cur_def = str(plist_data.get("Default Window Settings") or "Basic")
+            cur_start = str(plist_data.get("Startup Window Settings") or cur_def)
+            if not cur_def.startswith("Kiseki"):
+                write_text_atomic(
+                    prev_file,
+                    json.dumps({"default": cur_def, "startup": cur_start}, indent=2, ensure_ascii=False) + "\n",
+                )
+        plist_data["Default Window Settings"] = "Kiseki Active"
+        plist_data["Startup Window Settings"] = "Kiseki Active"
+
+    tmp_plist: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile("wb", suffix=".plist", delete=False) as tf:
+            plistlib.dump(plist_data, tf, fmt=plistlib.FMT_BINARY)
+            tmp_plist = Path(tf.name)
+        imp = subprocess.run(
+            ["defaults", "import", "com.apple.Terminal", str(tmp_plist)],
+            capture_output=True,
+            text=True,
+            timeout=6,
+            check=False,
+        )
+        if imp.returncode != 0:
+            return (False, (imp.stderr or imp.stdout or "defaults_import_failed").strip())
+    except (OSError, subprocess.SubprocessError) as exc:
+        return (False, str(exc))
+    finally:
+        if tmp_plist and tmp_plist.is_file():
+            try:
+                tmp_plist.unlink()
+            except OSError:
+                pass
+
+    # If the user is actively inside Terminal.app, switch the current tab live via AppleScript
+    if detect_current_terminal() == "terminal-app":
+        active_spec = specs[0]
+        as_name = active_profile_name.replace('"', '\\"')
+        as_font = active_spec["fontName"].replace('"', '\\"')
+        as_size = int(round(active_spec["fontSize"]))
+        applescript = (
+            'tell application "Terminal"\n'
+            '  if (count of windows) > 0 then\n'
+            f'    if exists settings set "{as_name}" then\n'
+            f'      set current settings of selected tab of front window to settings set "{as_name}"\n'
+            '    else\n'
+            f'      set font name of selected tab of front window to "{as_font}"\n'
+            f'      set font size of selected tab of front window to {as_size}\n'
+            '      return "REOPEN_NEEDED"\n'
+            '    end if\n'
+            '  end if\n'
+            'end tell'
+        )
+        try:
+            r2 = subprocess.run(["osascript", "-e", applescript], capture_output=True, text=True, timeout=3, check=False)
+            if "REOPEN_NEEDED" in (r2.stdout or ""):
+                return (True, "reopen_needed")
+        except (OSError, subprocess.SubprocessError):
+            pass
+
+    return (True, "synced")
+
+
+def unhook_terminal_app(root: Path) -> bool:
+    if platform.system() != "Darwin" or not _is_real_user_home():
+        return False
+    prev_file = root / "terminal-app-prev-defaults.json"
+    prev_def = "Basic"
+    prev_start = "Basic"
+    if prev_file.is_file():
+        try:
+            data = json.loads(prev_file.read_text(encoding="utf-8"))
+            prev_def = str(data.get("default") or "Basic")
+            prev_start = str(data.get("startup") or prev_def)
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    try:
+        exp = subprocess.run(
+            ["defaults", "export", "com.apple.Terminal", "-"],
+            capture_output=True,
+            timeout=6,
+            check=False,
+        )
+        if exp.returncode != 0 or not exp.stdout:
+            return False
+        plist_data = plistlib.loads(exp.stdout)
+    except (OSError, subprocess.SubprocessError, plistlib.InvalidFileException):
+        return False
+
+    changed = False
+    ws = dict(plist_data.get("Window Settings") or {})
+    for k in [k for k in ws if str(k).startswith("Kiseki")]:
+        del ws[k]
+        changed = True
+    if changed:
+        plist_data["Window Settings"] = ws
+
+    if str(plist_data.get("Default Window Settings") or "").startswith("Kiseki"):
+        plist_data["Default Window Settings"] = prev_def
+        changed = True
+    if str(plist_data.get("Startup Window Settings") or "").startswith("Kiseki"):
+        plist_data["Startup Window Settings"] = prev_start
+        changed = True
+
+    if changed:
+        tmp_plist: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile("wb", suffix=".plist", delete=False) as tf:
+                plistlib.dump(plist_data, tf, fmt=plistlib.FMT_BINARY)
+                tmp_plist = Path(tf.name)
+            subprocess.run(["defaults", "import", "com.apple.Terminal", str(tmp_plist)], capture_output=True, timeout=6, check=False)
+        finally:
+            if tmp_plist and tmp_plist.is_file():
+                try:
+                    tmp_plist.unlink()
+                except OSError:
+                    pass
+
+    if prev_file.is_file():
+        prev_file.unlink()
+    return changed
 
 
 # ---------------------------------------------------------------------------
@@ -1092,7 +1608,10 @@ def resolve_target_terminals(spec: str) -> list[str]:
     if spec == "none":
         return []
     if spec == "all":
-        return ["ghostty", "iterm2", "kitty", "wezterm"]
+        base = ["ghostty", "iterm2", "kitty", "wezterm"]
+        if platform.system() == "Darwin":
+            base.append("terminal-app")
+        return base
     if spec == "auto":
         return detect_installed_terminals()
     return [t.strip().lower() for t in spec.split(",") if t.strip()]
@@ -1113,7 +1632,7 @@ def sync_terminals(root: Path, theme_id: str, targets: list[str], hook: bool = F
             results["notes"].append(f"Ghostty auto-reload skipped ({reason}); press Cmd+Shift+, to reload.")
 
     if "iterm2" in targets:
-        sync_iterm2(root, theme_id)
+        sync_iterm2(root, theme_id, hook=hook)
         results["synced"].append("iterm2")
 
     if "kitty" in targets:
@@ -1130,6 +1649,13 @@ def sync_terminals(root: Path, theme_id: str, targets: list[str], hook: bool = F
             if wcfg.is_file() and "kiseki-terminal" in wcfg.read_text(encoding="utf-8"):
                 os.utime(wcfg, None)
         results["synced"].append("wezterm")
+
+    if "terminal-app" in targets and platform.system() == "Darwin":
+        ok, reason = sync_terminal_app(root, theme_id, hook=hook)
+        if ok:
+            results["synced"].append("terminal-app")
+            if reason == "reopen_needed":
+                results["notes"].append("Terminal.app profiles updated — reopen Terminal.app once (Cmd+Q) to load the wallpaper.")
 
     return results
 
@@ -1558,13 +2084,88 @@ def _tty_read_key(fd: int) -> str:
 
 def _apply_live_preview_tty(root: Path, theme_id: str, tty_fd: int, targets: list[str]) -> None:
     write_text_atomic(root / "current-theme.txt", theme_id)
-    sync_terminals(root, theme_id, targets, hook=False)
     cur_term = detect_current_terminal()
     if cur_term == "iterm2":
+        # Instant live preview in iTerm2 via pre-generated per-theme Dynamic Profile (zero disk/JXA lag)
         meta = load_theme(root, theme_id)
         os.write(tty_fd, f"\033]1337;SetProfile=Kiseki: {meta['name']}\007".encode("utf-8"))
-    elif cur_term not in ("ghostty", "kitty", "wezterm") and not os.environ.get("TMUX"):
+        return
+    if cur_term == "terminal-app" and platform.system() == "Darwin":
+        # Fast live preview in Terminal.app via already-loaded settings set (avoids JXA/defaults lag)
+        meta = load_theme(root, theme_id)
+        as_name = f"Kiseki: {meta['name']}".replace('"', '\\"')
+        script = (
+            'tell application "Terminal"\n'
+            '  if (count of windows) > 0 then\n'
+            f'    if exists settings set "{as_name}" then\n'
+            f'      set current settings of selected tab of front window to settings set "{as_name}"\n'
+            '      return "OK"\n'
+            '    end if\n'
+            '  end if\n'
+            'end tell'
+        )
+        try:
+            res = subprocess.run(["osascript", "-e", script], capture_output=True, text=True, timeout=2, check=False)
+            if "OK" in (res.stdout or ""):
+                return
+        except (OSError, subprocess.SubprocessError):
+            pass
+    preview_targets = [cur_term] if cur_term in targets else [t for t in targets if t != "terminal-app"]
+    if preview_targets:
+        sync_terminals(root, theme_id, preview_targets, hook=False)
+    if cur_term not in ("ghostty", "kitty", "wezterm") and not os.environ.get("TMUX"):
         os.write(tty_fd, emit_osc_palette(root, theme_id).encode("utf-8"))
+
+
+ANSI_CSI_RE = re.compile(r"\033\[[0-9;?]*[A-Za-z]")
+
+
+def _char_display_width(ch: str) -> int:
+    if unicodedata.combining(ch):
+        return 0
+    return 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+
+
+def _truncate_ansi(text: str, max_cols: int) -> str:
+    """Truncate an ANSI-colored string cleanly to at most max_cols terminal display columns."""
+    if max_cols <= 1:
+        return ""
+    out: list[str] = []
+    width = 0
+    idx = 0
+    n = len(text)
+    truncated = False
+    while idx < n:
+        if text[idx] == "\033":
+            m = ANSI_CSI_RE.match(text, idx)
+            if m:
+                out.append(m.group(0))
+                idx = m.end()
+                continue
+        ch = text[idx]
+        cw = _char_display_width(ch)
+        if width + cw > max_cols:
+            truncated = True
+            break
+        out.append(ch)
+        width += cw
+        idx += 1
+    if truncated:
+        # Reserve 2 cols for ellipsis so even ambiguous-width=wide terminals never overflow max_cols
+        while out and width > max_cols - 2:
+            tok = out.pop()
+            if not tok.startswith("\033"):
+                width -= _char_display_width(tok)
+        out.append("…\033[0m")
+    return "".join(out)
+
+
+def _get_tty_cols(fd: int) -> int:
+    try:
+        cols = os.get_terminal_size(fd).columns
+    except OSError:
+        cols = shutil.get_terminal_size((80, 24)).columns
+    return max(36, cols)
 
 
 def cmd_pick(root: Path, terminals: str) -> int:
@@ -1604,12 +2205,21 @@ def cmd_pick(root: Path, terminals: str) -> int:
 
     def render() -> None:
         nonlocal drawn
-        buf: list[str] = []
+        cols = _get_tty_cols(out_fd)
+        max_w = max(24, cols - 2)
+        compact = cols < 100
+
+        buf: list[str] = ["\033[?7l"]
         if drawn:
             buf.append(f"\033[{total_lines}A\r")
+        hint = (
+            "  ↑/↓ 选择 · Enter 切换 · Space 预览 · q/Esc 退出"
+            if compact
+            else "  ↑/↓ (j/k) 选择  ·  Enter 切换  ·  Space 实时预览  ·  1-9 快捷  ·  q/Esc 退出"
+        )
         lines = [
             f"\033[1;36m★ Kiseki Anime Terminal Themes {ver_tag} [{mode_tag}]\033[0m",
-            "\033[90m  ↑/↓ (j/k) 选择  ·  Enter 切换  ·  Space 实时预览  ·  1-9 快捷  ·  q/Esc 退出\033[0m",
+            f"\033[90m{hint}\033[0m",
             "",
         ]
         for idx, (tid, meta) in enumerate(zip(ids, metas)):
@@ -1619,25 +2229,40 @@ def cmd_pick(root: Path, terminals: str) -> int:
             act_dot = "\033[32m●\033[0m" if is_act else " "
             if is_sel:
                 accent = hex_to_ansi_fg(meta["scheme"]["cursorColor"])
-                lines.append(
-                    f"  {accent}\033[1m❯\033[0m {act_dot} "
-                    f"{accent}\033[1m{tid:<16}\033[0m {sw}  "
-                    f"\033[1;97m[{meta['style']:<25}]\033[0m \033[97m{meta['subtitle']}\033[0m"
-                )
+                if compact:
+                    lines.append(
+                        f"  {accent}\033[1m❯\033[0m {act_dot} "
+                        f"{accent}\033[1m{tid:<15}\033[0m {sw}  "
+                        f"\033[97m{meta['subtitle']}\033[0m"
+                    )
+                else:
+                    lines.append(
+                        f"  {accent}\033[1m❯\033[0m {act_dot} "
+                        f"{accent}\033[1m{tid:<16}\033[0m {sw}  "
+                        f"\033[1;97m[{meta['style']:<25}]\033[0m \033[97m{meta['subtitle']}\033[0m"
+                    )
             else:
-                lines.append(
-                    f"    {act_dot} \033[37m{tid:<16}\033[0m {sw}  "
-                    f"\033[90m[{meta['style']:<25}] {meta['subtitle']}\033[0m"
-                )
+                if compact:
+                    lines.append(
+                        f"    {act_dot} \033[37m{tid:<15}\033[0m {sw}  "
+                        f"\033[90m{meta['subtitle']}\033[0m"
+                    )
+                else:
+                    lines.append(
+                        f"    {act_dot} \033[37m{tid:<16}\033[0m {sw}  "
+                        f"\033[90m[{meta['style']:<25}] {meta['subtitle']}\033[0m"
+                    )
         status = (
-            f"  \033[35m✦ 正在预览: {previewed_id}（按 Enter 确认，Esc 恢复 {initial_active}）\033[0m"
+            f"  \033[35m✦ 正在预览: {previewed_id}（Enter 确认 / Esc 恢复 {initial_active}）\033[0m"
             if previewed_id
             else ""
         )
         lines.append(status)
 
         for line in lines:
-            buf.append(f"\033[2K{line}\r\n")
+            clipped = _truncate_ansi(line, max_w) if line else ""
+            buf.append(f"\033[2K{clipped}\033[0m\r\n")
+        buf.append("\033[J\033[?7h")
         os.write(out_fd, "".join(buf).encode("utf-8"))
         drawn = True
 
@@ -1675,7 +2300,7 @@ def cmd_pick(root: Path, terminals: str) -> int:
     finally:
         if drawn:
             os.write(out_fd, f"\033[{total_lines}A\r\033[J".encode("utf-8"))
-        os.write(out_fd, b"\033[?25h")
+        os.write(out_fd, b"\033[?7h\033[?25h")
         termios.tcsetattr(in_fd, termios.TCSADRAIN, old_attrs)
         if opened_tty_fd is not None:
             os.close(opened_tty_fd)
@@ -1859,12 +2484,24 @@ def cmd_switch(root: Path, args: argparse.Namespace) -> int:
     if not args.quiet:
         meta = load_theme(root, tid)
         cur_term = detect_current_terminal()
+        if cur_term == "iterm2":
+            # Switch iTerm2 profile before clearing/printing so banner renders in the new theme
+            try:
+                with open("/dev/tty", "wb", buffering=0) as tty_out:
+                    tty_out.write(f"\033]1337;SetProfile=Kiseki: {meta['name']}\007".encode("utf-8"))
+            except OSError:
+                pass
+        if sys.stdout.isatty():
+            sys.stdout.write("\033[H\033[2J")
+            sys.stdout.flush()
         if get_crt_mode(root):
             mode_tag = "CRT"
         elif get_live_mode(root) and cur_term == "ghostty":
             mode_tag = "LIVE 60FPS GLSL"
         elif get_live_mode(root) and cur_term == "iterm2":
             mode_tag = "STATIC (iTerm2)"
+        elif get_live_mode(root) and cur_term == "terminal-app":
+            mode_tag = "STATIC (Terminal.app)"
         elif get_live_mode(root):
             mode_tag = "LIVE 60FPS"
         else:
@@ -1991,6 +2628,22 @@ def cmd_unhook(root: Path) -> int:
         iterm_dyn.unlink()
         removed.append(str(iterm_dyn))
 
+    iterm_prev = root / "iterm2-prev-default-guid.txt"
+    if iterm_prev.is_file():
+        prev_guid = read_text_trimmed(iterm_prev)
+        if prev_guid and platform.system() == "Darwin" and _is_real_user_home():
+            subprocess.run(
+                ["defaults", "write", "com.googlecode.iterm2", "Default Bookmark Guid", prev_guid],
+                capture_output=True,
+                timeout=3,
+                check=False,
+            )
+            removed.append("iTerm2 Default Bookmark Guid (restored)")
+        iterm_prev.unlink()
+
+    if unhook_terminal_app(root):
+        removed.append("macOS Terminal.app (Kiseki profiles removed & default restored)")
+
     # Remove only shims that contain our marker
     shims_manifest = root / "installed-shims.txt"
     shim_candidates: set[Path] = set()
@@ -2045,7 +2698,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_sw = sub.add_parser("switch")
     p_sw.add_argument("theme")
     p_sw.add_argument("--static", action="store_true")
-    p_sw.add_argument("--quiet", action="store_true")
+    p_sw.add_argument("-q", "--quiet", action="store_true")
     p_sw.add_argument("--hook", action="store_true")
     p_sw.add_argument("--bg-opacity", type=float, default=None)
     p_sw.add_argument("--terminals", default="auto")

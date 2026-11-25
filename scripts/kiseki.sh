@@ -259,6 +259,7 @@ fi
 # --- Apply Active Theme to Current Shell Session ---
 
 _kiseki_apply_shell_theme
+_kiseki_apply_terminal_runtime "${KISEKI_ACTIVE_THEME:-}"
 
 # --- Auto-Greeting & Zero-Lag Update Notice (Top-Level Interactive Terminals) ---
 

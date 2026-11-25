@@ -94,8 +94,9 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 [-Theme nerv-eva] [-Stati
 | **Windows Terminal 1.21+** | ✅ | ✅ | ✅ (`HLSL`) | ✅ 自动 |
 | **Ghostty 1.2+ (推荐 1.3+)** | ✅ | ✅ | ✅ (`GLSL`) | ✅ `SIGUSR2` |
 | **iTerm2** | ✅ | ✅ | — | ✅ OSC 1337 |
+| **macOS Terminal.app** | ✅ | ✅ | — | ✅ Profile + OSC |
 | **Kitty / WezTerm** | ✅ | ✅ | — | ✅ 自动 |
-| **Terminal.app / Warp / 其他** | ✅ Shell + OSC | — | — | ✅ |
+| **Warp / 其他** | ✅ Shell + OSC | — | — | ✅ |
 
 ---
 

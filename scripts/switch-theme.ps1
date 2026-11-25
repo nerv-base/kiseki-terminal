@@ -259,6 +259,9 @@ function Switch-KisekiTheme {
     Apply-KisekiShellTheme -ThemeId $Name
 
     if (-not $Quiet) {
+        if (-not [Console]::IsOutputRedirected) {
+            Clear-Host
+        }
         $meta = Get-KisekiThemeData -ThemeId $Name
         $modeTag = if (Get-KisekiLiveMode) { 'LIVE 60FPS' } else { 'STATIC' }
         Write-Host "✦ Switched to [$($meta.name)] ($modeTag) — $($meta.subtitle)" -ForegroundColor Cyan
@@ -306,6 +309,51 @@ function Get-KisekiThemeSwatch {
     $cols = @($s.cursorColor, $s.red, $s.yellow, $s.green)
     $blocks = ($cols | ForEach-Object { "$(ConvertTo-KisekiAnsiFg $_)█" }) -join ''
     return "${blocks}${esc}[0m"
+}
+
+function Format-KisekiAnsiLine {
+    param([string]$Text, [int]$MaxCols)
+    if ($MaxCols -le 1) { return '' }
+    $esc = [char]27
+    $out = [System.Collections.Generic.List[string]]::new()
+    $w = 0
+    $i = 0
+    $n = $Text.Length
+    $truncated = $false
+    while ($i -lt $n) {
+        if ($Text[$i] -eq $esc -and ($i + 1) -lt $n -and $Text[$i + 1] -eq '[') {
+            $j = $i + 2
+            while ($j -lt $n -and -not (($Text[$j] -ge 'A' -and $Text[$j] -le 'Z') -or ($Text[$j] -ge 'a' -and $Text[$j] -le 'z'))) {
+                $j++
+            }
+            if ($j -lt $n) { $j++ }
+            $out.Add($Text.Substring($i, $j - $i))
+            $i = $j
+            continue
+        }
+        $ch = $Text[$i]
+        $code = [int][char]$ch
+        $cw = if (($code -ge 0x2E80 -and $code -le 0x9FFF) -or ($code -ge 0xF900 -and $code -le 0xFAFF) -or ($code -ge 0xFE10 -and $code -le 0xFE6F) -or ($code -ge 0xFF00 -and $code -le 0xFF60) -or ($code -ge 0x3000 -and $code -le 0x303F)) { 2 } else { 1 }
+        if (($w + $cw) -gt $MaxCols) {
+            $truncated = $true
+            break
+        }
+        $out.Add([string]$ch)
+        $w += $cw
+        $i++
+    }
+    if ($truncated) {
+        while ($out.Count -gt 0 -and $w -gt ($MaxCols - 2)) {
+            $last = $out[$out.Count - 1]
+            $out.RemoveAt($out.Count - 1)
+            if (-not $last.StartsWith($esc)) {
+                $code = [int][char]$last[0]
+                $w -= if (($code -ge 0x2E80 -and $code -le 0x9FFF) -or ($code -ge 0xF900 -and $code -le 0xFAFF) -or ($code -ge 0xFE10 -and $code -le 0xFE6F) -or ($code -ge 0xFF00 -and $code -le 0xFF60) -or ($code -ge 0x3000 -and $code -le 0x303F)) { 2 } else { 1 }
+            }
+        }
+        $out.Add("…${esc}[0m")
+    }
+    return ($out -join '')
 }
 
 function Get-KisekiThemes {
@@ -358,13 +406,22 @@ function Get-KisekiThemes {
     $chosen     = $null
 
     $render = {
-        $sb = [System.Text.StringBuilder]::new()
+        $cols    = [Math]::Max(36, [Console]::WindowWidth)
+        $maxW    = [Math]::Max(24, $cols - 2)
+        $compact = $cols -lt 100
+        $sb      = [System.Text.StringBuilder]::new()
+        [void]$sb.Append("${esc}[?7l")
         if ($drawn) {
             [void]$sb.Append("${esc}[${totalLines}A`r")
         }
+        $hint = if ($compact) {
+            "  ↑/↓ 选择 · Enter 切换 · Space 预览 · q/Esc 退出"
+        } else {
+            "  ↑/↓ (j/k) 选择  ·  Enter 切换  ·  Space 实时预览  ·  1-9 快捷  ·  q/Esc 退出"
+        }
         $lines = @(
             "${esc}[1;36m★ Kiseki Anime Terminal Themes $verTag [$modeTag]${esc}[0m",
-            "${esc}[90m  ↑/↓ (j/k) 选择  ·  Enter 切换  ·  Space 实时预览  ·  1-9 快捷  ·  q/Esc 退出${esc}[0m",
+            "${esc}[90m$hint${esc}[0m",
             ""
         )
         for ($i = 0; $i -lt $items.Count; $i++) {
@@ -373,19 +430,29 @@ function Get-KisekiThemes {
             $dot  = if ($meta.id -eq $activeId) { "${esc}[32m●${esc}[0m" } else { ' ' }
             if ($i -eq $selectedIdx) {
                 $accent = ConvertTo-KisekiAnsiFg $meta.scheme.cursorColor
-                $lines += ("  ${accent}${esc}[1m❯${esc}[0m $dot ${accent}${esc}[1m{0,-16}${esc}[0m $sw  ${esc}[1;97m[{1,-25}]${esc}[0m ${esc}[97m{2}${esc}[0m" -f $meta.id, $meta.style, $meta.subtitle)
+                if ($compact) {
+                    $lines += ("  ${accent}${esc}[1m❯${esc}[0m $dot ${accent}${esc}[1m{0,-15}${esc}[0m $sw  ${esc}[97m{1}${esc}[0m" -f $meta.id, $meta.subtitle)
+                } else {
+                    $lines += ("  ${accent}${esc}[1m❯${esc}[0m $dot ${accent}${esc}[1m{0,-16}${esc}[0m $sw  ${esc}[1;97m[{1,-25}]${esc}[0m ${esc}[97m{2}${esc}[0m" -f $meta.id, $meta.style, $meta.subtitle)
+                }
             } else {
-                $lines += ("    $dot ${esc}[37m{0,-16}${esc}[0m $sw  ${esc}[90m[{1,-25}] {2}${esc}[0m" -f $meta.id, $meta.style, $meta.subtitle)
+                if ($compact) {
+                    $lines += ("    $dot ${esc}[37m{0,-15}${esc}[0m $sw  ${esc}[90m{1}${esc}[0m" -f $meta.id, $meta.subtitle)
+                } else {
+                    $lines += ("    $dot ${esc}[37m{0,-16}${esc}[0m $sw  ${esc}[90m[{1,-25}] {2}${esc}[0m" -f $meta.id, $meta.style, $meta.subtitle)
+                }
             }
         }
         if ($previewedId) {
-            $lines += "  ${esc}[35m✦ 正在预览: $previewedId（按 Enter 确认，Esc 恢复 $initialActive）${esc}[0m"
+            $lines += "  ${esc}[35m✦ 正在预览: $previewedId（Enter 确认 / Esc 恢复 $initialActive）${esc}[0m"
         } else {
             $lines += ""
         }
         foreach ($ln in $lines) {
-            [void]$sb.Append("${esc}[2K${ln}`r`n")
+            $clipped = if ($ln) { Format-KisekiAnsiLine -Text $ln -MaxCols $maxW } else { '' }
+            [void]$sb.Append("${esc}[2K${clipped}${esc}[0m`r`n")
         }
+        [void]$sb.Append("${esc}[J${esc}[?7h")
         [Console]::Write($sb.ToString())
         $drawn = $true
     }
@@ -433,7 +500,7 @@ function Get-KisekiThemes {
         if ($drawn) {
             [Console]::Write("${esc}[${totalLines}A`r${esc}[J")
         }
-        [Console]::Write("${esc}[?25h")
+        [Console]::Write("${esc}[?7h${esc}[?25h")
     }
 
     if ($chosen) {
