@@ -46,20 +46,30 @@
 
 ## Quick Install / 一键安装
 
-在 PowerShell 中运行：
+> 环境要求：Windows 10 / 11 + [Windows Terminal](https://aka.ms/terminal) + PowerShell（推荐 PowerShell 7+）
+
+### 方式一：一行命令直接安装（推荐，无需先 clone）
+
+打开 PowerShell，直接粘贴运行：
+
+```powershell
+irm https://raw.githubusercontent.com/nerv-base/kiseki-terminal/main/install.ps1 | iex
+```
+
+### 方式二：Git Clone 本地安装（支持自定义参数）
 
 ```powershell
 git clone https://github.com/nerv-base/kiseki-terminal.git
 cd kiseki-terminal
-.\install.ps1
+powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
 可选参数：
-- `.\install.ps1 -Theme nerv-eva` — 指定默认启用的主题
-- `.\install.ps1 -SkipTools` — 跳过 `winget` 工具安装（已安装 `oh-my-posh` / `eza` / `bat` / `fzf` / `zoxide` / `fastfetch` 时使用）
-- `.\install.ps1 -SkipFonts` — 跳过字体自动下载
+- `-Theme nerv-eva` — 指定默认启用的主题（`starlight-8bit` / `nerv-eva` / `shinkai-rain` / `kyoto-sakura`）
+- `-SkipTools` — 跳过 `winget` 工具安装（已安装 `oh-my-posh` / `eza` / `bat` / `fzf` / `zoxide` / `fastfetch` 时使用）
+- `-SkipFonts` — 跳过字体自动下载
 
-安装前会自动备份你原有的 Windows Terminal `settings.json` 与 PowerShell `$PROFILE` 到 `~/.config/kiseki-backup-*`。
+安装前会自动备份原有 Windows Terminal `settings.json` 与 PowerShell `$PROFILE` 到 `~/.config/kiseki-backup-*`；安装完成后重开一个 Windows Terminal 窗口即可生效。
 
 ---
 

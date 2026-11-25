@@ -93,8 +93,10 @@ function Sync-KisekiWindowsTerminal {
     }
 
     $wt = Get-Content $wtPath -Raw -Encoding utf8 | ConvertFrom-Json
-    if (-not $wt.schemes) { $wt | Add-Member -NotePropertyName schemes -NotePropertyValue @() -Force }
-    if (-not $wt.themes)  { $wt | Add-Member -NotePropertyName themes  -NotePropertyValue @() -Force }
+    if (-not $wt.schemes)  { $wt | Add-Member -NotePropertyName schemes  -NotePropertyValue @() -Force }
+    if (-not $wt.themes)   { $wt | Add-Member -NotePropertyName themes   -NotePropertyValue @() -Force }
+    if (-not $wt.profiles) { $wt | Add-Member -NotePropertyName profiles -NotePropertyValue ([PSCustomObject]@{ defaults = [PSCustomObject]@{} }) -Force }
+    if (-not $wt.profiles.defaults) { $wt.profiles | Add-Member -NotePropertyName defaults -NotePropertyValue ([PSCustomObject]@{}) -Force }
 
     # Upsert all themes in themes/ so user can also browse them inside WT Settings UI
     $allThemes = Get-ChildItem (Join-Path $script:KisekiRoot 'themes') -Directory | Sort-Object Name
