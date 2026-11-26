@@ -784,6 +784,15 @@ impl App {
                 .resolve(&loaded, &state, profile)
                 .unwrap_or_else(|_| ResolvedTheme::from_pack(&loaded.pack, profile));
             self.ui.use_report(&report, &resolved, self.dry_run);
+            // In interactive TTY terminals, show the themed Fastfetch system-info
+            // banner right after switching (matching v1; opt-out via KISEKI_NO_FETCH=1).
+            if !self.dry_run
+                && !self.ui.quiet()
+                && std::io::stdout().is_terminal()
+                && self.platform.env_var("KISEKI_NO_FETCH").as_deref() != Some("1")
+            {
+                let _ = self.exec_fastfetch_interactive();
+            }
         }
         Ok(())
     }
@@ -1981,26 +1990,70 @@ impl App {
             }
             return Ok(());
         };
-        let output = self
-            .platform
-            .run(&binary.to_string_lossy(), &["--config", &config.to_string_lossy()])?;
         if self.json {
+            let output = self
+                .platform
+                .run(&binary.to_string_lossy(), &["--config", &config.to_string_lossy()])?;
             self.emit_json(json!({
                 "status": output.status,
                 "stdout": output.stdout,
                 "stderr": output.stderr,
             }));
-        } else {
-            print!("{}", output.stdout);
-            if !output.success() {
+            return Ok(());
+        }
+        // Interactive TTY: replace the process via `exec` on Unix so Fastfetch
+        // inherits the real TTY (full TrueColor) AND real parent shell (`zsh`
+        // instead of `kiseki`).
+        let _ = std::io::stdout().flush();
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            let err = std::process::Command::new(&binary)
+                .args(["--config", &config.to_string_lossy()])
+                .exec();
+            Err(KisekiError::io(binary, err))
+        }
+        #[cfg(not(unix))]
+        {
+            let status = std::process::Command::new(&binary)
+                .args(["--config", &config.to_string_lossy()])
+                .status()
+                .map_err(|error| KisekiError::io(&binary, error))?;
+            if !status.success() {
                 return Err(KisekiError::other(format!(
-                    "fastfetch exited with {}: {}",
-                    output.status,
-                    output.stderr.trim()
+                    "fastfetch exited with {}",
+                    status.code().unwrap_or(-1)
                 )));
             }
+            Ok(())
         }
-        Ok(())
+    }
+
+    fn exec_fastfetch_interactive(&self) -> Result<()> {
+        let config = self.paths.generated(kiseki_compiler::artifact_names::FASTFETCH);
+        if !self.platform.exists(&config) {
+            return Ok(());
+        }
+        let Some(binary) = self.platform.which("fastfetch") else {
+            return Ok(());
+        };
+        println!();
+        let _ = std::io::stdout().flush();
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            let _ = std::process::Command::new(&binary)
+                .args(["--config", &config.to_string_lossy()])
+                .exec();
+            Ok(())
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = std::process::Command::new(&binary)
+                .args(["--config", &config.to_string_lossy()])
+                .status();
+            Ok(())
+        }
     }
 
     fn detect_all(&self) -> Vec<(String, DetectionReport)> {

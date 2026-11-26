@@ -8,12 +8,24 @@
 use std::path::Path;
 
 use kiseki_schema::{FastfetchFieldLabels, ResolvedTheme};
+use kiseki_types::Color;
 use serde_json::{json, Map, Value};
 
 use crate::escape::sanitize_text;
 
+fn fg(color: Color) -> String {
+    let (r, g, b) = color.rgb();
+    format!("\x1b[38;2;{r};{g};{b}m")
+}
+
+fn fg_bold(color: Color) -> String {
+    let (r, g, b) = color.rgb();
+    format!("\x1b[1;38;2;{r};{g};{b}m")
+}
+
 /// Renders the JSONC file, header comment included.
 pub fn render(theme: &ResolvedTheme, logo: Option<&Path>) -> String {
+    let p = &theme.palette;
     let overrides = theme
         .overrides
         .as_ref()
@@ -24,21 +36,108 @@ pub fn render(theme: &ResolvedTheme, logo: Option<&Path>) -> String {
         .map(|title| sanitize_text(&title, 48))
         .filter(|title| !title.is_empty());
 
+    let bar = fg(p.accents.secondary);
+    let border = fg(p.surfaces.surface2);
+    let primary = fg(p.accents.primary);
+    let bold_text = fg_bold(p.text.primary);
+    let body_text = fg(p.text.secondary);
+    let reset = "\x1b[0m";
+
     let mut modules = Vec::new();
     if let Some(title) = header_title.as_ref() {
         // Fastfetch has no top-level `title` key; a header is a declarative
         // `custom` module prepended to the list.
-        modules.push(json!({ "type": "custom", "format": title }));
+        modules.push(json!({
+            "type": "custom",
+            "format": format!("{bar}▛─ {bold_text}{title} {border}─────────{reset}")
+        }));
     }
-    modules.extend([
-        module("title", labels.and_then(|labels| labels.title.as_deref())),
-        module("os", labels.and_then(|labels| labels.os.as_deref())),
-        module("shell", labels.and_then(|labels| labels.shell.as_deref())),
-        module("terminal", labels.and_then(|labels| labels.terminal.as_deref())),
-        module("cpu", labels.and_then(|labels| labels.cpu.as_deref())),
-        module("memory", labels.and_then(|labels| labels.memory.as_deref())),
-        module("uptime", labels.and_then(|labels| labels.uptime.as_deref())),
-    ]);
+
+    let rows: [(&str, Option<&str>, &str, Color, String); 7] = [
+        (
+            "title",
+            labels.and_then(|l| l.title.as_deref()),
+            "USER",
+            p.accents.primary,
+            format!("{bold_text}{{user-name}}{bar}@{primary}{{host-name}}{reset}"),
+        ),
+        (
+            "os",
+            labels.and_then(|l| l.os.as_deref()),
+            "OS",
+            p.semantic.warning,
+            format!("{body_text}{{pretty-name}}{reset}"),
+        ),
+        (
+            "shell",
+            labels.and_then(|l| l.shell.as_deref()),
+            "SHELL",
+            p.semantic.success,
+            format!("{body_text}{{pretty-name}} {{version}}{reset}"),
+        ),
+        (
+            "terminal",
+            labels.and_then(|l| l.terminal.as_deref()),
+            "TERM",
+            p.accents.primary,
+            format!("{body_text}{{pretty-name}}{reset}"),
+        ),
+        (
+            "cpu",
+            labels.and_then(|l| l.cpu.as_deref()),
+            "CPU",
+            p.semantic.hint,
+            format!("{body_text}{{name}} ({{cores-logical}}T){reset}"),
+        ),
+        (
+            "memory",
+            labels.and_then(|l| l.memory.as_deref()),
+            "MEM",
+            p.semantic.error,
+            format!("{body_text}{{used}} / {{total}} ({{percentage}}){reset}"),
+        ),
+        (
+            "uptime",
+            labels.and_then(|l| l.uptime.as_deref()),
+            "UPTIME",
+            p.semantic.success,
+            format!("{body_text}{{days}}d {{hours}}h {{minutes}}m{reset}"),
+        ),
+    ];
+
+    for (kind, custom_label, fallback_label, key_color, format_str) in rows {
+        let label = custom_label
+            .map(|raw| sanitize_text(raw, 24))
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| fallback_label.to_string());
+        let padded = format!("{label:<6}");
+        modules.push(json!({
+            "type": kind,
+            "key": format!("{bar}┃ {}{padded}{reset}", fg(key_color)),
+            "format": format_str,
+        }));
+    }
+
+    // Bottom palette swatch bar built directly from the theme's L1 palette.
+    let swatch_colors = [
+        p.ansi.red,
+        p.accents.secondary,
+        p.accents.primary,
+        p.ansi.cyan,
+        p.semantic.warning,
+        p.semantic.success,
+        p.text.primary,
+    ];
+    let mut swatch_bar = format!("{bar}▙─ ");
+    for color in swatch_colors {
+        swatch_bar.push_str(&fg(color));
+        swatch_bar.push_str("██");
+    }
+    swatch_bar.push_str(&format!(" {border}─────────────────────{reset}"));
+    modules.push(json!({
+        "type": "custom",
+        "format": swatch_bar,
+    }));
 
     let mut root = Map::new();
     root.insert(
@@ -51,14 +150,15 @@ pub fn render(theme: &ResolvedTheme, logo: Option<&Path>) -> String {
             "source".to_string(),
             json!(logo.to_string_lossy().to_string()),
         );
-        logo_object.insert("type".to_string(), json!("file"));
-        logo_object.insert("padding".to_string(), json!({ "top": 1, "left": 1 }));
+        // `file-raw` preserves TrueColor SGR escapes authored in `logo.txt`.
+        logo_object.insert("type".to_string(), json!("file-raw"));
+        logo_object.insert(
+            "padding".to_string(),
+            json!({ "top": 0, "left": 1, "right": 3 }),
+        );
         root.insert("logo".to_string(), Value::Object(logo_object));
     }
-    root.insert(
-        "display".to_string(),
-        json!({ "separator": "  ", "color": { "keys": theme.palette.accents.primary.to_hex() } }),
-    );
+    root.insert("display".to_string(), json!({ "separator": "  " }));
     root.insert("modules".to_string(), Value::Array(modules));
 
     let mut out = String::from(
@@ -71,18 +171,6 @@ pub fn render(theme: &ResolvedTheme, logo: Option<&Path>) -> String {
     );
     out.push('\n');
     out
-}
-
-fn module(kind: &str, label: Option<&str>) -> Value {
-    let mut object = Map::new();
-    object.insert("type".to_string(), json!(kind));
-    if let Some(label) = label {
-        let label = sanitize_text(label, 24);
-        if !label.is_empty() {
-            object.insert("key".to_string(), json!(label));
-        }
-    }
-    Value::Object(object)
 }
 
 /// True when a rendered config contains no executable module.
@@ -158,16 +246,16 @@ mod tests {
         let parsed = parse_body(&raw).unwrap();
         assert!(is_declarative(&parsed));
         assert_eq!(parsed["logo"]["source"], logo.to_string_lossy().as_ref());
-        assert_eq!(parsed["logo"]["type"], "file");
-        // 7 static modules plus the declarative header title (nerv-eva sets one).
-        assert_eq!(parsed.get("modules").unwrap().as_array().unwrap().len(), 8);
+        assert_eq!(parsed["logo"]["type"], "file-raw");
+        // 7 static modules + header + bottom palette swatch bar = 9.
+        assert_eq!(parsed.get("modules").unwrap().as_array().unwrap().len(), 9);
         assert!(!parsed.to_string().contains("command"));
         assert!(parsed.get("title").is_none(), "fastfetch has no top-level title key");
         assert_eq!(parsed["modules"][0]["type"], "custom");
-        assert_eq!(
-            parsed["modules"][0]["format"],
-            "EVANGELION UNIT-02 // 弐号機"
-        );
+        assert!(parsed["modules"][0]["format"]
+            .as_str()
+            .unwrap()
+            .contains("EVANGELION UNIT-02 // 弐号機"));
     }
 
     #[test]
@@ -179,14 +267,17 @@ mod tests {
             .iter()
             .filter_map(|module| module.get("key").and_then(Value::as_str))
             .collect();
-        assert!(labels.contains(&"PILOT"));
-        assert!(labels.contains(&"MAGI"));
-        assert!(labels.contains(&"LCL"));
-        assert!(labels.contains(&"POWER"));
+        assert!(labels.iter().any(|l| l.contains("PILOT")));
+        assert!(labels.iter().any(|l| l.contains("MAGI")));
+        assert!(labels.iter().any(|l| l.contains("LCL")));
+        assert!(labels.iter().any(|l| l.contains("POWER")));
         // The header is prepended as a declarative custom module, not a key.
         let header = &modules[0];
         assert_eq!(header["type"], "custom");
-        assert_eq!(header["format"], "EVANGELION UNIT-02 // 弐号機");
+        assert!(header["format"]
+            .as_str()
+            .unwrap()
+            .contains("EVANGELION UNIT-02 // 弐号機"));
         assert!(header.get("command").is_none());
     }
 
@@ -210,9 +301,10 @@ mod tests {
         let parsed = parse_body(&render(&theme, None)).unwrap();
         let text = parsed.to_string();
         // Labels are inert text: no control characters, no command
-        // substitution and no template metacharacters survive.
+        // substitution and no hostile semicolons survive (only SGR escapes
+        // generated by Kiseki itself contain `;`).
         assert!(!text.contains("$("));
-        assert!(!text.contains(';'));
+        assert!(!text.contains("CPU;"));
         assert!(!text.contains("\\n"));
         assert!(is_declarative(&parsed));
     }

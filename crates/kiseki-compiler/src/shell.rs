@@ -195,6 +195,17 @@ pub fn env_zsh(theme: &ResolvedTheme, config_dir: &Path, policy: PromptPolicy, a
         out.push_str("alias themes='kiseki pick'\n");
     }
 
+    // One-time Fastfetch system-info greeting on fresh interactive terminal tabs
+    // (never inside VS Code, non-TTY subshells, KISEKI_NO_FETCH=1, or precmd).
+    out.push_str("\n# Auto-greeting once per new interactive terminal session.\n");
+    out.push_str("if [[ -t 1 ]] && [[ -z \"${KISEKI_NO_FETCH:-}\" ]] && [[ -z \"${KISEKI_GREETED:-}\" ]] \\\n");
+    out.push_str("  && [[ -z \"${VSCODE_INJECTION:-}\" ]] && [[ \"${TERM_PROGRAM:-}\" != \"vscode\" ]]; then\n");
+    out.push_str("  export KISEKI_GREETED=1\n");
+    out.push_str("  if (( $+commands[fastfetch] )) && [[ -r \"$KISEKI_CONFIG_DIR/generated/fastfetch.jsonc\" ]]; then\n");
+    out.push_str("    fastfetch --config \"$KISEKI_CONFIG_DIR/generated/fastfetch.jsonc\"\n");
+    out.push_str("  fi\n");
+    out.push_str("fi\n");
+
     out
 }
 
