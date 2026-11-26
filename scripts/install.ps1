@@ -157,6 +157,8 @@ namespace Kiseki {
     public static class NativeFonts {
         [DllImport("gdi32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
         public static extern int AddFontResourceW(string path);
+        [DllImport("user32.dll", CharSet = CharSet.Auto)]
+        public static extern System.IntPtr SendMessageTimeout(System.IntPtr hWnd, uint Msg, System.IntPtr wParam, System.IntPtr lParam, uint fuFlags, uint uTimeout, out System.IntPtr lpdwResult);
     }
 }
 '@
@@ -169,7 +171,8 @@ namespace Kiseki {
     $existing = Get-ItemProperty -LiteralPath $key -Name $displayName -ErrorAction SilentlyContinue
     if ($changed -or -not $existing -or $existing.$displayName -ne $destination) {
         if ([Kiseki.NativeFonts]::AddFontResourceW($destination) -eq 0) { throw "Could not load font $destination" }
-        New-Item -Path $key -Force | Out-Null
+        # Never recreate an existing key: `New-Item -Force` clears every registered per-user font.
+        if (-not (Test-Path -LiteralPath $key)) { New-Item -Path $key -Force | Out-Null }
         New-ItemProperty -LiteralPath $key -Name $displayName -Value $destination -PropertyType String -Force | Out-Null
     }
 }
@@ -264,6 +267,11 @@ function Install-Dependencies {
         if ($SkipFonts -and $fields[0] -in 'font', 'font-raw') { continue }
         try { Install-Dependency $fields $fontPatterns $fontDir }
         catch { Write-Warning "Could not install $($fields[4]). $remedy $($_.Exception.Message)" }
+    }
+    if (-not $SkipFonts -and ('Kiseki.NativeFonts' -as [type])) {
+        # Tell already-running terminal hosts that the font set changed (WM_FONTCHANGE).
+        $ignored = [IntPtr]::Zero
+        try { [Kiseki.NativeFonts]::SendMessageTimeout([IntPtr]0xffff, 0x001D, [IntPtr]::Zero, [IntPtr]::Zero, 2, 1000, [ref]$ignored) | Out-Null } catch { }
     }
 }
 

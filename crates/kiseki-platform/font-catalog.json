@@ -55,18 +55,18 @@
     },
     {
       "id": "fusion-pixel-12-zh",
-      "displayName": "Fusion Pixel 12px Monospaced zh_hans",
+      "displayName": "Fusion Pixel 12px Mono zh-Hans",
       "license": "OFL-1.1",
-      "version": "2025.03.14",
+      "version": "2026.11.10",
       "families": {
-        "macos": ["Fusion Pixel 12px Monospaced zh_hans", "Fusion Pixel 12px Monospaced"],
-        "windows": ["Fusion Pixel 12px Monospaced zh_hans", "Fusion Pixel 12px Monospaced"],
-        "linux": ["Fusion Pixel 12px Monospaced zh_hans", "Fusion Pixel 12px Monospaced"]
+        "macos": ["Fusion Pixel 12px Mono zh-Hans", "Fusion Pixel 12px Mono ja", "Fusion Pixel 12px Monospaced zh_hans", "Fusion Pixel 12px Monospaced"],
+        "windows": ["Fusion Pixel 12px Mono zh-Hans", "Fusion Pixel 12px Mono ja", "Fusion Pixel 12px Monospaced zh_hans", "Fusion Pixel 12px Monospaced"],
+        "linux": ["Fusion Pixel 12px Mono zh-Hans", "Fusion Pixel 12px Mono ja", "Fusion Pixel 12px Monospaced zh_hans", "Fusion Pixel 12px Monospaced"]
       },
-      "postScriptNames": ["FusionPixel12pxMonospacedzh_hans"],
+      "postScriptNames": ["Fusion-Pixel-12px-Mono-zh-Hans-Regular", "FusionPixel12pxMonospacedzh_hans"],
       "download": {
-        "url": "https://github.com/TakWolf/fusion-pixel-font/releases/download/2025.03.14/fusion-pixel-font-12px-monospaced-zh_hans.zip",
-        "fileName": "fusion-pixel-font-12px-monospaced-zh_hans.zip",
+        "url": "https://github.com/TakWolf/fusion-pixel-font/releases/download/2026.11.10/fusion-pixel-font-12px-monospaced-ttf-v2026.11.10.zip",
+        "fileName": "fusion-pixel-font-12px-monospaced-ttf-v2026.11.10.zip",
         "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
       }
     }
