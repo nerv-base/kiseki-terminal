@@ -161,6 +161,34 @@ fn render_only_use_compiles_every_artifact_without_touching_hosts() {
 }
 
 #[test]
+fn generation_repairs_bundled_zsh_plugins_without_rewriting_matching_files() {
+    let sandbox = Sandbox::new();
+    let root = sandbox.kiseki_home().join("vendor/share/zsh");
+    sandbox.run_ok(&["use", "nerv-eva", "--render-only", "--dry-run"]);
+    assert!(!root.exists());
+
+    let generate = || sandbox.run_ok(&["use", "nerv-eva", "--render-only"]);
+    generate();
+    let highlighted = root.join("zsh-syntax-highlighting/zsh-syntax-highlighting.zsh");
+    let suggestions = root.join("zsh-autosuggestions/zsh-autosuggestions.zsh");
+    assert!(root.join("LICENSE.zsh-syntax-highlighting").is_file());
+    assert!(root.join("LICENSE.zsh-autosuggestions").is_file());
+    assert!(root.join("NOTICE").is_file());
+    assert!(highlighted.is_file());
+    let old = std::time::UNIX_EPOCH + std::time::Duration::from_secs(946_684_800);
+    fs::File::options()
+        .write(true)
+        .open(&highlighted)
+        .unwrap()
+        .set_times(fs::FileTimes::new().set_modified(old))
+        .unwrap();
+    fs::remove_file(&suggestions).unwrap();
+    generate();
+    assert!(suggestions.is_file());
+    assert_eq!(highlighted.metadata().unwrap().modified().unwrap(), old);
+}
+
+#[test]
 fn full_use_mounts_hosts_and_rollback_restores_them() {
     let sandbox = Sandbox::new();
     let json = sandbox.json(&["use", "nerv-eva", "--json"]);

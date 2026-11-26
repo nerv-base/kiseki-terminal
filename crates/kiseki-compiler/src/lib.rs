@@ -14,6 +14,7 @@ pub mod marker;
 pub mod prompt;
 pub mod shell;
 pub mod windows_terminal;
+pub mod zsh_assets;
 
 use std::path::PathBuf;
 
