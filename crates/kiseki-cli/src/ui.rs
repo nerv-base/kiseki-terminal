@@ -280,10 +280,6 @@ impl Ui {
                 }
                 self.kv("渲染档位", profile_label(state.rendering.profile));
                 self.kv(
-                    "CRT 叠加",
-                    if state.rendering.crt { "开启" } else { "关闭" },
-                );
-                self.kv(
                     "壁纸透明度",
                     &state
                         .rendering

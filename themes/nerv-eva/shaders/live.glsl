@@ -115,15 +115,7 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
     col += mix(KISEKI_ACCENT_SECONDARY, KISEKI_ACCENT_PRIMARY, hexWave)
         * hexLine * hexZone * (0.055 * hexWave) * bgMask;
 
-    // --- 5. Tactical CRT phosphor scanlines & gentle vignette -------------
-#if KISEKI_ENABLE_CRT
-    float scanline = 0.88 + 0.12 * (0.5 + 0.5 * sin(fragCoord.y * 0.78539816));
-    vec2 vigUv = uv * 2.0 - 1.0;
-    float vignette = 1.0 - 0.18 * dot(vigUv, vigUv) * 0.5;
-    col *= mix(1.0, scanline * vignette, 0.55 + 0.45 * bgMask);
-#endif
-
-    // --- 6. Porter-Duff Source-Over against the terminal's own alpha -------
+    // --- 5. Porter-Duff Source-Over against the terminal's own alpha -------
     vec3 outRgb = clamp(col, 0.0, 1.0);
     fragColor = vec4(outRgb * term.a, term.a);
 }

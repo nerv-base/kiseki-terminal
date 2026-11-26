@@ -85,7 +85,8 @@ pub enum Command {
     },
     /// 开关动态 Shader（balanced ↔ static）
     Live { action: Option<String> },
-    /// 开关 CRT 扫描线叠加效果（on / off / toggle）
+    /// 开关 CRT 扫描线叠加效果（已从官方主题移除，仅保留状态兼容）
+    #[command(hide = true)]
     Crt { action: Option<String> },
     /// 调整壁纸透明度（0.0..1.0 / off / reset）
     Bg { value: String },

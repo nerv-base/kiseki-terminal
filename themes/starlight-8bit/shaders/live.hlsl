@@ -115,13 +115,7 @@ float4 main(float4 pos : SV_POSITION, float2 tex : TEXCOORD) : SV_TARGET {
     }
 #endif
 
-    // --- 5. Optional retro CRT scanlines ------------------------------------
-#if KISEKI_ENABLE_CRT
-    float microScan = 0.94 + 0.06 * (0.5 + 0.5 * sin(pos.y * 1.5707963));
-    animBg *= microScan;
-#endif
-
-    // --- 6. Exact Porter-Duff Source-Over compositing -----------------------
+    // --- 5. Exact Porter-Duff Source-Over compositing -----------------------
     float4 bgPremul = float4(saturate(animBg) * KISEKI_WINDOW_ALPHA, KISEKI_WINDOW_ALPHA);
     float4 outColor;
     outColor.rgb = term.rgb + bgPremul.rgb * (1.0 - term.a);

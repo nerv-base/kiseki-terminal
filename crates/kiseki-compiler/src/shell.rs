@@ -176,26 +176,57 @@ pub fn env_zsh(theme: &ResolvedTheme, config_dir: &Path, policy: PromptPolicy, a
     }
 
     out.push('\n');
-    out.push_str("# zsh-syntax-highlighting: only recolour, never rebind.\n");
-    out.push_str("if (( ${+ZSH_HIGHLIGHT_STYLES} )); then\n");
-    for (slot, color) in [
-        ("command", theme.syntax.function),
-        ("builtin", theme.syntax.function),
-        ("alias", theme.syntax.string),
-        ("function", theme.syntax.function),
-        ("path", theme.syntax.property),
-        ("comment", theme.syntax.comment),
-        ("string", theme.syntax.string),
-        ("unknown-token", theme.syntax.invalid),
-        ("reserved-word", theme.syntax.keyword),
-        ("redirection", theme.syntax.operator),
+    out.push_str("# zsh-syntax-highlighting: visual recolouring only, never rebind keys.\n");
+    out.push_str("(( ${+ZSH_HIGHLIGHT_HIGHLIGHTERS} )) || ZSH_HIGHLIGHT_HIGHLIGHTERS=(main brackets)\n");
+    out.push_str("if [[ -o interactive ]] && (( ! ${+functions[_zsh_highlight]} )); then\n");
+    out.push_str("  for _kiseki_zhl in \\\n");
+    out.push_str("    /opt/homebrew/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh \\\n");
+    out.push_str("    /usr/local/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh \\\n");
+    out.push_str("    /usr/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh \\\n");
+    out.push_str("    /usr/share/zsh/plugins/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh; do\n");
+    out.push_str("    if [[ -r \"$_kiseki_zhl\" ]]; then\n");
+    out.push_str("      source \"$_kiseki_zhl\"\n");
+    out.push_str("      break\n");
+    out.push_str("    fi\n");
+    out.push_str("  done\n");
+    out.push_str("  unset _kiseki_zhl\n");
+    out.push_str("fi\n");
+    out.push_str("typeset -gA ZSH_HIGHLIGHT_STYLES\n");
+    for (slot, style) in [
+        ("default", format!("fg={}", theme.palette.text.primary)),
+        ("command", format!("fg={},bold", theme.syntax.function)),
+        ("builtin", format!("fg={},bold", theme.syntax.function)),
+        ("alias", format!("fg={},bold", theme.syntax.string)),
+        ("function", format!("fg={},bold", theme.syntax.function)),
+        ("arg0", format!("fg={}", theme.syntax.function)),
+        ("precommand", format!("fg={},bold", theme.syntax.keyword)),
+        ("reserved-word", format!("fg={},bold", theme.syntax.keyword)),
+        ("single-hyphen-option", format!("fg={}", theme.syntax.parameter)),
+        ("double-hyphen-option", format!("fg={}", theme.syntax.parameter)),
+        ("single-quoted-argument", format!("fg={}", theme.syntax.string)),
+        ("double-quoted-argument", format!("fg={}", theme.syntax.string)),
+        ("dollar-quoted-argument", format!("fg={}", theme.syntax.string)),
+        ("path", format!("fg={}", theme.syntax.property)),
+        ("globbing", format!("fg={}", theme.syntax.type_)),
+        ("assign", format!("fg={}", theme.syntax.variable)),
+        ("comment", format!("fg={}", theme.syntax.comment)),
+        ("unknown-token", format!("fg={},bold", theme.syntax.invalid)),
+        ("redirection", format!("fg={}", theme.syntax.operator)),
+        ("commandseparator", format!("fg={}", theme.syntax.operator)),
+        ("bracket-level-1", format!("fg={}", theme.palette.accents.primary)),
+        ("bracket-level-2", format!("fg={}", theme.palette.accents.secondary)),
+        ("bracket-level-3", format!("fg={}", theme.palette.accents.tertiary)),
+        ("bracket-error", format!("fg={},bold", theme.syntax.invalid)),
     ] {
         out.push_str(&format!(
-            "  ZSH_HIGHLIGHT_STYLES[{slot}]={}\n",
-            shell_single_quote(&format!("fg={color}"))
+            "ZSH_HIGHLIGHT_STYLES[{slot}]={}\n",
+            shell_single_quote(&style)
         ));
     }
-    out.push_str("fi\n");
+    out.push_str(&format!(
+        "export ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE={}\n",
+        shell_single_quote(&format!("fg={}", theme.syntax.comment))
+    ));
 
     if aliases {
         out.push_str("\n# Opt-in `--aliases`: new commands only, nothing is shadowed.\n");
@@ -444,6 +475,9 @@ mod tests {
         assert!(content.contains("export POSH_SESSION_ID=\"kiseki-${$}-${_KISEKI_LOADED_GEN:-$RANDOM}\""));
         assert!(content.contains("export STARSHIP_CONFIG="));
         assert!(content.contains("ZSH_HIGHLIGHT_STYLES[command]"));
+        assert!(content.contains("ZSH_HIGHLIGHT_STYLES[double-hyphen-option]"));
+        assert!(content.contains("ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE="));
+        assert!(content.contains("zsh-syntax-highlighting.zsh"));
         assert!(!content.contains("alias cat"));
         assert!(!content.contains("alias ls"));
         assert!(!content.contains("alias grep"));

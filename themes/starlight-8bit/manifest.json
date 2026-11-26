@@ -4,7 +4,7 @@
   "id": "starlight-8bit",
   "name": "Starlight 8-Bit",
   "subtitle": "星屑 8-Bit · 复古二次元像素夜空",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "appearance": "dark",
   "pairedTheme": null,
   "tags": ["anime", "pixel-art", "retro", "8bit", "dark", "live-shader"],

@@ -122,13 +122,7 @@ float4 main(float4 pos : SV_POSITION, float2 tex : TEXCOORD) : SV_TARGET {
     animBg += lerp(KISEKI_ACCENT_SECONDARY, KISEKI_ACCENT_PRIMARY, hexWave)
         * hexLine * hexZone * (0.05 * hexWave);
 
-    // --- 5. Whisper-soft tactical CRT micro-scanlines ---------------------
-#if KISEKI_ENABLE_CRT
-    float microScan = 0.97 + 0.03 * (0.5 + 0.5 * sin(pos.y * 3.14159265));
-    animBg *= microScan;
-#endif
-
-    // --- 6. Exact Porter-Duff Source-Over (t0 premultiplied, empty = 0) ---
+    // --- 5. Exact Porter-Duff Source-Over (t0 premultiplied, empty = 0) ---
     float4 bgPremul = float4(saturate(animBg) * KISEKI_WINDOW_ALPHA, KISEKI_WINDOW_ALPHA);
     float4 outColor;
     outColor.rgb = term.rgb + bgPremul.rgb * (1.0 - term.a);
