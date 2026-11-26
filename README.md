@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./assets/banner.svg" alt="Kiseki Terminal — Universal Terminal Theming Engine" width="100%" />
+  <img src="./assets/hero-v2.png" alt="Kiseki Terminal v2 — Universal Anime Terminal Theming Engine" width="100%" />
 </p>
 
 <p align="center">
@@ -86,8 +86,8 @@ kiseki init
 
 ## 架构文档与 Schema
 
-- 架构 RFC：[docs/rfc/0001-architecture-and-workspace.md](./docs/rfc/0001-architecture-and-workspace.md) · [0002-theme-schema-and-tokens.md](./docs/rfc/0002-theme-schema-and-tokens.md) · [0003-adapter-contract-and-transactions.md](./docs/rfc/0003-adapter-contract-and-transactions.md) · [0004-shader-pipeline-and-security.md](./docs/rfc/0004-shader-pipeline-and-security.md) · [0005-distribution-and-roadmap.md](./docs/rfc/0005-distribution-and-roadmap.md)
-- JSON Schemas：[schemas/manifest.v1.schema.json](./schemas/manifest.v1.schema.json) · [schemas/tokens.v1.schema.json](./schemas/tokens.v1.schema.json) · [schemas/state.v1.schema.json](./schemas/state.v1.schema.json) · [schemas/config.v1.schema.json](./schemas/config.v1.schema.json)
+- 架构 RFC：[docs/rfc/README.md](./docs/rfc/README.md) · [0001-architecture-and-workspace.md](./docs/rfc/0001-architecture-and-workspace.md) · [0002-theme-schema-and-tokens.md](./docs/rfc/0002-theme-schema-and-tokens.md) · [0003-adapter-contract-and-capabilities.md](./docs/rfc/0003-adapter-contract-and-capabilities.md) · [0004-shader-pipeline-and-security.md](./docs/rfc/0004-shader-pipeline-and-security.md)
+- JSON Schemas：[schemas/manifest.v1.schema.json](./schemas/manifest.v1.schema.json) · [schemas/tokens.v1.schema.json](./schemas/tokens.v1.schema.json)
 
 ---
 
