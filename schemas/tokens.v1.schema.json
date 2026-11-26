@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://kiseki.dev/schemas/tokens.v1.schema.json",
+  "$id": "https://kisekiterm.dev/schemas/tokens.v1.schema.json",
   "title": "Kiseki Theme Tokens v1",
   "description": "5-layer declarative semantic design tokens and zero-code-execution safe overrides.",
   "type": "object",

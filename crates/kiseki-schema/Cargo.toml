@@ -1,0 +1,17 @@
+[package]
+name = "kiseki-schema"
+description = "5-layer theme manifest/token parsing, zero-code-execution validation, L1→L2 derivation, WCAG lint."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+kiseki-types.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

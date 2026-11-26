@@ -1,0 +1,74 @@
+{
+  "version": 1,
+  "generatedAt": "2026-11-26",
+  "fonts": [
+    {
+      "id": "jetbrains-mono-nf",
+      "displayName": "JetBrainsMono Nerd Font",
+      "license": "OFL-1.1",
+      "version": "3.3.0",
+      "families": {
+        "macos": ["JetBrainsMono Nerd Font", "JetBrainsMonoNF"],
+        "windows": ["JetBrainsMono Nerd Font", "JetBrainsMonoNF"],
+        "linux": ["JetBrainsMono Nerd Font", "JetBrainsMonoNF"]
+      },
+      "postScriptNames": ["JetBrainsMonoNF-Regular"],
+      "download": {
+        "url": "https://github.com/ryanoasis/nerd-fonts/releases/download/v3.3.0/JetBrainsMono.zip",
+        "fileName": "JetBrainsMono.zip",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    {
+      "id": "maple-mono-nf-cn",
+      "displayName": "Maple Mono NF CN",
+      "license": "OFL-1.1",
+      "version": "7.5",
+      "families": {
+        "macos": ["Maple Mono NF CN", "Maple Mono NF"],
+        "windows": ["Maple Mono NF CN", "Maple Mono NF"],
+        "linux": ["Maple Mono NF CN", "Maple Mono NF"]
+      },
+      "postScriptNames": ["MapleMonoNF-CN-Regular"],
+      "download": {
+        "url": "https://github.com/subframe7536/maple-font/releases/download/v7.5/MapleMono-NF-CN.zip",
+        "fileName": "MapleMono-NF-CN.zip",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    {
+      "id": "departure-mono-nf",
+      "displayName": "DepartureMono Nerd Font",
+      "license": "OFL-1.1",
+      "version": "1.1.0",
+      "families": {
+        "macos": ["DepartureMono Nerd Font", "Departure Mono"],
+        "windows": ["DepartureMono Nerd Font", "Departure Mono"],
+        "linux": ["DepartureMono Nerd Font", "Departure Mono"]
+      },
+      "postScriptNames": ["DepartureMonoNF-Regular"],
+      "download": {
+        "url": "https://github.com/ryanoasis/nerd-fonts/releases/download/v3.3.0/DepartureMono.zip",
+        "fileName": "DepartureMono.zip",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    {
+      "id": "fusion-pixel-12-zh",
+      "displayName": "Fusion Pixel 12px Monospaced zh_hans",
+      "license": "OFL-1.1",
+      "version": "2025.03.14",
+      "families": {
+        "macos": ["Fusion Pixel 12px Monospaced zh_hans", "Fusion Pixel 12px Monospaced"],
+        "windows": ["Fusion Pixel 12px Monospaced zh_hans", "Fusion Pixel 12px Monospaced"],
+        "linux": ["Fusion Pixel 12px Monospaced zh_hans", "Fusion Pixel 12px Monospaced"]
+      },
+      "postScriptNames": ["FusionPixel12pxMonospacedzh_hans"],
+      "download": {
+        "url": "https://github.com/TakWolf/fusion-pixel-font/releases/download/2025.03.14/fusion-pixel-font-12px-monospaced-zh_hans.zip",
+        "fileName": "fusion-pixel-font-12px-monospaced-zh_hans.zip",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    }
+  ]
+}

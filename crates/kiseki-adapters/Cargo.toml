@@ -1,0 +1,21 @@
+[package]
+name = "kiseki-adapters"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+kiseki-types.workspace = true
+kiseki-schema.workspace = true
+kiseki-compiler.workspace = true
+kiseki-platform.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+jsonc-parser.workspace = true
+toml.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

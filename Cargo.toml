@@ -1,0 +1,62 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/kiseki-types",
+    "crates/kiseki-schema",
+    "crates/kiseki-shader",
+    "crates/kiseki-compiler",
+    "crates/kiseki-platform",
+    "crates/kiseki-adapters",
+    "crates/kiseki-tx",
+    "crates/kiseki-state",
+    "crates/kiseki-pkg",
+    "crates/kiseki-tui",
+    "crates/kiseki-cli",
+]
+
+[workspace.package]
+version = "2.0.0"
+edition = "2021"
+rust-version = "1.85"
+license = "MIT"
+repository = "https://github.com/nerv-base/kiseki-terminal"
+authors = ["Kiseki Terminal Contributors"]
+
+[workspace.dependencies]
+kiseki-types = { path = "crates/kiseki-types" }
+kiseki-schema = { path = "crates/kiseki-schema" }
+kiseki-shader = { path = "crates/kiseki-shader" }
+kiseki-compiler = { path = "crates/kiseki-compiler" }
+kiseki-platform = { path = "crates/kiseki-platform" }
+kiseki-adapters = { path = "crates/kiseki-adapters" }
+kiseki-tx = { path = "crates/kiseki-tx" }
+kiseki-state = { path = "crates/kiseki-state" }
+kiseki-pkg = { path = "crates/kiseki-pkg" }
+kiseki-tui = { path = "crates/kiseki-tui" }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "1"
+regex = "1"
+bitflags = "2"
+thiserror = "2"
+semver = "1"
+sha2 = "0.11"
+tempfile = "3"
+jsonc-parser = { version = "0.34", features = ["cst", "serde", "serde_json"] }
+naga = { version = "30", features = ["glsl-in"] }
+ttf-parser = "0.25"
+clap = { version = "4", features = ["derive", "wrap_help"] }
+clap_complete = "4"
+ratatui = "0.30"
+crossterm = "0.29"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
+
+[profile.dev]
+debug = 1

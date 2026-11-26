@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://kiseki.dev/schemas/manifest.v1.schema.json",
+  "$id": "https://kisekiterm.dev/schemas/manifest.v1.schema.json",
   "title": "Kiseki Theme Manifest v1",
   "description": "Package metadata, appearance mode, declared layers, and asset provenance for a Kiseki v2 theme pack.",
   "type": "object",

@@ -1,0 +1,18 @@
+[package]
+name = "kiseki-types"
+description = "Core domain types for Kiseki Terminal: colors, appearance, capabilities, diagnostics."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+bitflags = { workspace = true, features = ["serde"] }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

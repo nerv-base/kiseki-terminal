@@ -1,0 +1,21 @@
+[package]
+name = "kiseki-pkg"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+kiseki-types.workspace = true
+kiseki-schema.workspace = true
+kiseki-shader.workspace = true
+kiseki-platform.workspace = true
+kiseki-compiler.workspace = true
+kiseki-state.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
