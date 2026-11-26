@@ -139,11 +139,34 @@ impl FontInventory {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct CacheEntry {
-    modified: Option<std::time::SystemTime>,
+    modified_secs: Option<u64>,
+    modified_nanos: Option<u32>,
     faces: Vec<FontFaceInfo>,
 }
+
+impl CacheEntry {
+    fn stamp(time: Option<std::time::SystemTime>) -> (Option<u64>, Option<u32>) {
+        let Some(duration) = time.and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()) else {
+            return (None, None);
+        };
+        (Some(duration.as_secs()), Some(duration.subsec_nanos()))
+    }
+
+    fn matches(&self, time: Option<std::time::SystemTime>) -> bool {
+        let (secs, nanos) = Self::stamp(time);
+        self.modified_secs == secs && self.modified_nanos == nanos
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct DiskFontCache {
+    version: u32,
+    entries: BTreeMap<PathBuf, CacheEntry>,
+}
+
+const FONT_CACHE_VERSION: u32 = 1;
 
 /// Caches parsed faces per directory.
 ///
@@ -160,6 +183,41 @@ pub struct FontScanner {
 impl FontScanner {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Loads a previously persisted directory-mtime font cache from disk.
+    ///
+    /// Missing or corrupt cache files fall back silently to an empty scanner.
+    pub fn load_cache(path: &Path) -> Self {
+        let Ok(raw) = std::fs::read_to_string(path) else {
+            return Self::default();
+        };
+        let Ok(disk) = serde_json::from_str::<DiskFontCache>(&raw) else {
+            return Self::default();
+        };
+        if disk.version != FONT_CACHE_VERSION {
+            return Self::default();
+        }
+        Self {
+            cache: Mutex::new(disk.entries),
+            parses: std::sync::atomic::AtomicUsize::new(0),
+            hits: std::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+
+    /// Persists the current directory-mtime font cache atomically to disk.
+    pub fn save_cache(&self, path: &Path) {
+        let entries = self.cache.lock().unwrap().clone();
+        let disk = DiskFontCache {
+            version: FONT_CACHE_VERSION,
+            entries,
+        };
+        if let Ok(encoded) = serde_json::to_vec(&disk) {
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let _ = crate::fs::write_preserving_symlinks(path, &encoded);
+        }
     }
 
     /// Number of font files actually parsed (test/diagnostic hook).
@@ -198,7 +256,7 @@ impl FontScanner {
         {
             let cache = self.cache.lock().unwrap();
             if let Some(entry) = cache.get(dir) {
-                if entry.modified == modified {
+                if entry.matches(modified) {
                     self.hits.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     return entry.faces.clone();
                 }
@@ -230,10 +288,12 @@ impl FontScanner {
             }
         }
 
+        let (modified_secs, modified_nanos) = CacheEntry::stamp(modified);
         self.cache.lock().unwrap().insert(
             dir.to_path_buf(),
             CacheEntry {
-                modified,
+                modified_secs,
+                modified_nanos,
                 faces: faces.clone(),
             },
         );

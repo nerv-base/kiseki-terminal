@@ -725,7 +725,7 @@ impl Ui {
         }
     }
 
-    fn print_reloads(&self, report: &TransactionReport) {
+    pub fn print_reloads(&self, report: &TransactionReport) {
         for (adapter, detail) in &report.reload {
             // Suppress verbose steady-state auto-reload notes for passive adapters.
             let passive = detail.contains("on the next prompt")

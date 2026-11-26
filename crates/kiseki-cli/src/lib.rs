@@ -9,6 +9,7 @@ pub mod ui;
 use std::io::{IsTerminal, Write};
 use std::path::PathBuf;
 
+use clap::builder::styling::{AnsiColor, Effects, Styles};
 use clap::{CommandFactory, Parser, Subcommand};
 use kiseki_adapters::{AdapterRegistry, DetectionReport, PlanOptions};
 use kiseki_compiler::{compile, CompileInput, CompileOptions};
@@ -31,26 +32,35 @@ use serde_json::json;
 
 use ui::Ui;
 
+const CLI_STYLES: Styles = Styles::styled()
+    .header(AnsiColor::BrightCyan.on_default().effects(Effects::BOLD))
+    .usage(AnsiColor::BrightCyan.on_default().effects(Effects::BOLD))
+    .literal(AnsiColor::BrightYellow.on_default().effects(Effects::BOLD))
+    .placeholder(AnsiColor::Cyan.on_default())
+    .valid(AnsiColor::BrightGreen.on_default())
+    .invalid(AnsiColor::BrightRed.on_default().effects(Effects::BOLD));
+
 /// Top-level CLI.
 #[derive(Debug, Parser)]
 #[command(
     name = "kiseki",
     version,
+    styles = CLI_STYLES,
     about = "Kiseki Terminal — 终端生态统一视觉与沉浸式主题引擎 (https://kisekiterm.dev)",
     after_help = "快速开始:\n  kiseki init              一键初始化向导（选主题 + 回车即用）\n  kiseki pick              交互式主题选择器\n  kiseki use nerv-eva      切换至指定主题\n  kiseki doctor            诊断终端、字体、Shader 与配置冲突\n  kiseki rollback          回滚到上一次快照\n\n官网与文档: https://kisekiterm.dev",
     disable_help_subcommand = true
 )]
 pub struct Cli {
-    /// Machine-readable JSON output.
+    /// 以机器可读 JSON 格式输出
     #[arg(long, global = true)]
     pub json: bool,
-    /// Suppress human-readable output.
+    /// 静默模式（隐藏常规提示输出）
     #[arg(long, short, global = true)]
     pub quiet: bool,
-    /// Compile artefacts only; never modify host config files.
+    /// 仅生成配置产物，绝不修改任何宿主配置文件
     #[arg(long, global = true)]
     pub render_only: bool,
-    /// Show the change plan without writing anything.
+    /// 预览变更计划，不写入磁盘
     #[arg(long, global = true)]
     pub dry_run: bool,
     #[command(subcommand)]
@@ -60,54 +70,54 @@ pub struct Cli {
 /// Every subcommand.
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// Switch the active theme.
+    /// 切换当前主题
     Use(UseArgs),
-    /// Interactive theme picker.
+    /// 打开交互式主题选择器（TUI）
     Pick,
-    /// Show the current theme, environment and adapter status.
+    /// 查看当前主题、环境与适配器状态
     Status,
-    /// Mix layers from several themes.
+    /// 按层混搭多个主题的配色、氛围、字体或覆盖项
     Compose(ComposeArgs),
-    /// Show or set the rendering profile.
+    /// 查看或切换渲染档位（static / eco / balanced / ultra / accessibility）
     Profile {
         /// static | eco | balanced | ultra | accessibility
         profile: Option<String>,
     },
-    /// Toggle dynamic shaders (balanced <-> static).
+    /// 开关动态 Shader（balanced ↔ static）
     Live { action: Option<String> },
-    /// Toggle the CRT post-processing overlay.
+    /// 开关 CRT 扫描线叠加效果（on / off / toggle）
     Crt { action: Option<String> },
-    /// Override wallpaper opacity, or `off` / `reset`.
+    /// 调整壁纸透明度（0.0..1.0 / off / reset）
     Bg { value: String },
-    /// Override the font stack or point size.
+    /// 覆盖终端字体栈或字号
     Font(FontArgs),
-    /// Initialise Kiseki (detect, migrate v1, mount adapters).
+    /// 一键初始化向导（环境探测、v1 迁移与宿主挂载）
     Init(InitArgs),
-    /// Diagnose the environment, configuration and adapters.
+    /// 诊断终端、字体、Shader 与配置冲突
     Doctor(DoctorArgs),
-    /// Roll back a transaction.
+    /// 回滚到历史事务快照
     Rollback(RollbackArgs),
-    /// Emergency recovery: force static, no shader, clear previews.
+    /// 安全逃生恢复：强制静态模式、关闭 Shader 并清理预览残留
     Recover(RecoverArgs),
-    /// Inspect, validate and install theme packs.
+    /// 查看、校验、安装或移除主题包
     Theme(ThemeArgs),
-    /// Check font availability.
+    /// 检查主题字体安装状态
     Fonts(FontsArgs),
-    /// Detect and import a v1 installation.
+    /// 探测并迁移 v1 旧版安装
     Migrate(MigrateArgs),
-    /// Remove Kiseki's host integrations.
+    /// 撤销所有宿主挂载（加 --purge 彻底清理）
     Uninstall(UninstallArgs),
-    /// Print the zero-fork shell integration hook.
+    /// 输出零 fork Shell 初始化脚本
     ShellInit {
         /// zsh | pwsh
         shell: String,
     },
-    /// Print shell completions.
+    /// 输出 Shell 自动补全脚本
     Completions {
         /// bash | zsh | fish | powershell | elvish
         shell: String,
     },
-    /// Run fastfetch with the generated theme config.
+    /// 使用当前主题配置运行 Fastfetch
     Fetch,
 }
 
@@ -488,8 +498,12 @@ impl App {
             .or_else(|| self.platform.env_var("USERPROFILE"))
             .map(PathBuf::from);
         let dirs = default_font_dirs(self.platform.os(), home.as_deref(), &|key| self.platform.env_var(key));
-        let scanner = FontScanner::new();
+        let cache_file = self.paths.cache_dir().join("font-cache.json");
+        let scanner = FontScanner::load_cache(&cache_file);
         let inventory = scanner.scan(&dirs);
+        if !self.dry_run && scanner.parses() > 0 {
+            scanner.save_cache(&cache_file);
+        }
         let statuses = font_status(&theme.typography.families, &inventory, self.platform.os());
         kiseki_platform::config_families(&statuses)
     }
@@ -887,7 +901,7 @@ impl App {
             None,
             false,
         )?;
-        self.after_simple(&report);
+        self.after_simple(&report, &format!("渲染档位：{}", ui::profile_label(profile)));
         Ok(())
     }
 
@@ -910,31 +924,58 @@ impl App {
         let id = state.active_theme.clone();
         let loaded = self.load_theme(&id)?;
         let report = self.apply(&loaded, state, target, "live", None, false)?;
-        self.after_simple(&report);
+        let label = if target == RenderingProfile::Static {
+            "动态 Shader：关闭（已切至 Static 纯静态）".to_string()
+        } else {
+            format!("动态 Shader：开启（{}）", ui::profile_label(target))
+        };
+        self.after_simple(&report, &label);
         Ok(())
     }
 
     fn crt(&mut self, action: Option<String>) -> Result<()> {
         let mut state = self.state_or_initial();
-        state.rendering.crt = match action.as_deref().unwrap_or("toggle") {
+        let enable = match action.as_deref().unwrap_or("toggle") {
             "on" | "enable" => true,
             "off" | "disable" => false,
             "toggle" => !state.rendering.crt,
             other => return Err(KisekiError::other(format!("invalid crt action {other:?}; use on|off|toggle"))),
         };
+        state.rendering.crt = enable;
+        let mut auto_promoted = false;
+        if enable && state.rendering.profile.quality_level() == 0 {
+            state.rendering.profile = RenderingProfile::Balanced;
+            auto_promoted = true;
+        }
         let id = state.active_theme.clone();
         let profile = state.rendering.profile;
         let loaded = self.load_theme(&id)?;
         let report = self.apply(&loaded, state, profile, "crt", None, false)?;
-        self.after_simple(&report);
+        let label = if enable {
+            if auto_promoted {
+                "CRT 叠加：开启（已自动切至 Balanced 档位）"
+            } else {
+                "CRT 叠加：开启"
+            }
+        } else {
+            "CRT 叠加：关闭"
+        };
+        self.after_simple(&report, label);
         Ok(())
     }
 
     fn bg(&mut self, value: String) -> Result<()> {
         let mut state = self.state_or_initial();
+        let bg_label;
         state.rendering.bg_opacity_override = match value.trim() {
-            "off" | "none" => Some(0.0),
-            "reset" | "default" => None,
+            "off" | "none" => {
+                bg_label = "壁纸透明度：关闭 (0.00)".to_string();
+                Some(0.0)
+            }
+            "reset" | "default" => {
+                bg_label = "壁纸透明度：恢复主题默认".to_string();
+                None
+            }
             raw => {
                 let parsed: f64 = raw
                     .parse()
@@ -944,6 +985,7 @@ impl App {
                         "opacity {parsed} is outside 0.0..=1.0"
                     )));
                 }
+                bg_label = format!("壁纸透明度：{parsed:.2}");
                 Some(parsed)
             }
         };
@@ -951,7 +993,7 @@ impl App {
         let profile = state.rendering.profile;
         let loaded = self.load_theme(&id)?;
         let report = self.apply(&loaded, state, profile, "bg", None, false)?;
-        self.after_simple(&report);
+        self.after_simple(&report, &bg_label);
         Ok(())
     }
 
@@ -974,10 +1016,11 @@ impl App {
             // `kiseki use` would still treat the font as locked.
             state.typography.locked = false;
         }
-        if args.style == "reset" {
+        let font_label = if args.style == "reset" {
             state.typography.style_override = None;
             state.typography.size_override_pt = None;
             state.typography.locked = false;
+            "字体设置：恢复主题默认".to_string()
         } else {
             state.typography.style_override = Some(args.style.clone());
             if let Some(size) = args.size {
@@ -989,32 +1032,34 @@ impl App {
             if self.config.font_locked {
                 state.typography.locked = true;
             }
-        }
+            match state.typography.size_override_pt {
+                Some(size) => format!("字体设置：{} · {size:.1}pt", args.style),
+                None => format!("字体设置：{}", args.style),
+            }
+        };
         let id = state.active_theme.clone();
         let profile = state.rendering.profile;
         let loaded = self.load_theme(&id)?;
         let report = self.apply(&loaded, state, profile, "font", None, false)?;
-        self.after_simple(&report);
+        self.after_simple(&report, &font_label);
         Ok(())
     }
 
-    fn after_simple(&mut self, report: &TransactionReport) {
+    fn after_simple(&mut self, report: &TransactionReport, summary: &str) {
         if self.json {
             self.emit_json(transaction_json(report));
         } else if self.dry_run {
             self.ui.info(&format!(
-                "预览变更（未写入）：{} · {} · 将影响 {} 个目标",
+                "预览变更（未写入）：{summary} · {} · 将影响 {} 个目标",
                 report.state.active_theme,
-                ui::profile_label(report.state.rendering.profile),
                 report.targets.len()
             ));
         } else {
             self.ui.success(&format!(
-                "已更新 · {} · {} · gen {}",
-                report.state.active_theme,
-                ui::profile_label(report.state.rendering.profile),
-                report.state.generation
+                "{summary} · {}",
+                report.state.active_theme
             ));
+            self.ui.print_reloads(report);
         }
     }
 

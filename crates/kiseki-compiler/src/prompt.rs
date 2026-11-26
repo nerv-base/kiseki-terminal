@@ -110,16 +110,35 @@ fn console_title(theme: &ResolvedTheme) -> String {
 /// Builds a complete, safe Oh My Posh v3 configuration.
 pub fn omp_config(theme: &ResolvedTheme) -> Value {
     let colors = prompt_colors(theme);
+    let p = &theme.palette;
     let badge = badge_text(theme);
     let ok = ok_label(theme);
     let error = error_label(theme);
     let symbol = prompt_symbol(theme);
+
+    let accent = p.accents.primary.to_hex();
+    let accent2 = p.accents.secondary.to_hex();
+    let canvas = p.surfaces.base.to_hex();
+    let surface0 = p.surfaces.surface0.to_hex();
+    let border = p.surfaces.surface2.to_hex();
+    let success = p.semantic.success.to_hex();
+    let warning = p.semantic.warning.to_hex();
+    let info = p.semantic.info.to_hex();
+    let err_hex = colors.error.to_hex();
+    let badge_bg = colors.badge_bg.to_hex();
+    let badge_fg = colors.badge_fg.to_hex();
+    let muted = colors.muted.to_hex();
 
     json!({
         "$schema": "https://raw.githubusercontent.com/JanDeDobbeleer/oh-my-posh/main/themes/schema.json",
         "version": 3,
         "final_space": true,
         "console_title_template": console_title(theme),
+        "transient_prompt": {
+            "foreground": muted,
+            "background": "transparent",
+            "template": format!("{symbol} ")
+        },
         "blocks": [
             {
                 "type": "prompt",
@@ -129,20 +148,21 @@ pub fn omp_config(theme: &ResolvedTheme) -> Value {
                     {
                         "type": "text",
                         "style": "plain",
-                        "foreground": colors.badge_fg.to_hex(),
-                        "background": colors.badge_bg.to_hex(),
-                        "template": format!(" {badge} ")
+                        "foreground": badge_fg,
+                        "background": badge_bg,
+                        "template": format!("<{badge_bg},transparent>▛</> <b>{badge}</b> <{badge_bg},transparent>▟</>")
                     },
                     {
                         "type": "path",
-                        "style": "folder",
+                        "style": "plain",
                         "foreground": colors.path_fg.to_hex(),
                         "background": colors.path_bg.to_hex(),
-                        "template": " {{ .Path }} ",
+                        "template": format!("<{canvas},transparent> </><{accent}>┃</> <b>{{{{ .Path }}}}</b> "),
                         "properties": {
-                            "style": "folder",
+                            "style": "agnoster_short",
                             "folder_separator_icon": "/",
-                            "home_icon": "~"
+                            "home_icon": "~",
+                            "max_depth": 2
                         }
                     },
                     {
@@ -150,28 +170,110 @@ pub fn omp_config(theme: &ResolvedTheme) -> Value {
                         "style": "plain",
                         "foreground": colors.git_fg.to_hex(),
                         "background": colors.git_bg.to_hex(),
-                        "template": " {{ .HEAD }}{{ if .Staging.Changed }} *{{ end }} "
+                        "template": format!(
+                            "<{canvas},transparent> </><{accent2}>┃</> {{{{ .HEAD }}}}{{{{ if .BranchStatus }}}} <{info}>{{{{ .BranchStatus }}}}</>{{{{ end }}}}{{{{ if .Working.Changed }}}} <{warning}>*{{{{ .Working.String }}}}</>{{{{ end }}}}{{{{ if .Staging.Changed }}}} <{success}>+{{{{ .Staging.String }}}}</>{{{{ end }}}} "
+                        ),
+                        "properties": {
+                            "branch_icon": "",
+                            "fetch_status": true,
+                            "fetch_upstream_icon": false
+                        }
                     },
                     {
-                        "type": "status",
+                        "type": "rust",
                         "style": "plain",
-                        "foreground": colors.muted.to_hex(),
-                        "background": "transparent",
-                        "template": format!("{{{{ if eq .Code 0 }}}}{ok}{{{{ else }}}}{error}{{{{ end }}}} ")
+                        "foreground": accent,
+                        "background": surface0,
+                        "template": format!("<{canvas},transparent> </><{accent}>┃</> rs {{{{ .Major }}}}.{{{{ .Minor }}}} "),
+                        "properties": {
+                            "fetch_version": true,
+                            "display_mode": "files"
+                        }
+                    },
+                    {
+                        "type": "node",
+                        "style": "plain",
+                        "foreground": success,
+                        "background": surface0,
+                        "template": format!("<{canvas},transparent> </><{success}>┃</> node {{{{ .Major }}}}.{{{{ .Minor }}}} "),
+                        "properties": {
+                            "fetch_version": true,
+                            "display_mode": "files"
+                        }
+                    },
+                    {
+                        "type": "python",
+                        "style": "plain",
+                        "foreground": success,
+                        "background": surface0,
+                        "template": format!("<{canvas},transparent> </><{success}>┃</> py {{{{ if .Venv }}}}{{{{ .Venv }}}} {{{{ end }}}}{{{{ .Major }}}}.{{{{ .Minor }}}} "),
+                        "properties": {
+                            "fetch_version": true,
+                            "display_mode": "files"
+                        }
+                    },
+                    {
+                        "type": "go",
+                        "style": "plain",
+                        "foreground": info,
+                        "background": surface0,
+                        "template": format!("<{canvas},transparent> </><{info}>┃</> go {{{{ .Major }}}}.{{{{ .Minor }}}} "),
+                        "properties": {
+                            "fetch_version": true,
+                            "display_mode": "files"
+                        }
+                    }
+                ]
+            },
+            {
+                "type": "prompt",
+                "alignment": "right",
+                "segments": [
+                    {
+                        "type": "executiontime",
+                        "style": "plain",
+                        "foreground": warning,
+                        "background": surface0,
+                        "template": format!("<{warning}>┃ {{{{ .FormattedMs }}}} </>"),
+                        "properties": {
+                            "threshold": 1500,
+                            "style": "roundrock"
+                        }
                     },
                     {
                         "type": "time",
                         "style": "plain",
-                        "foreground": colors.muted.to_hex(),
+                        "foreground": p.text.secondary.to_hex(),
+                        "background": surface0,
+                        "template": format!("<{canvas},transparent> </><{accent}>┃</> {{{{ .CurrentDate | date .Format }}}} <{badge_bg},transparent>▜</>"),
+                        "properties": {
+                            "time_format": "15:04"
+                        }
+                    }
+                ]
+            },
+            {
+                "type": "prompt",
+                "alignment": "left",
+                "newline": true,
+                "segments": [
+                    {
+                        "type": "status",
+                        "style": "plain",
+                        "foreground": accent,
                         "background": "transparent",
-                        "time_format": "15:04",
-                        "template": "{{ .CurrentDate | date .Format }}"
+                        "template": format!(
+                            "<{border}>┗━</>{{{{ if gt .Code 0 }}}}<{err_hex}>{error} // ERR:{{{{ .Code }}}} {symbol}</>{{{{ else }}}}<{accent2}>{ok}</> <{accent}>{symbol}</>{{{{ end }}}}"
+                        ),
+                        "properties": {
+                            "always_enabled": true
+                        }
                     }
                 ]
             }
         ],
         "secondary_prompt": {
-            "foreground": colors.muted.to_hex(),
+            "foreground": muted,
             "background": "transparent",
             "template": format!("{symbol} ")
         }
@@ -345,10 +447,16 @@ mod tests {
         assert!(!text.contains("\"type\":\"command\""));
         assert_eq!(config["version"], 3);
         assert_eq!(config["blocks"][0]["type"], "prompt");
-        let segments = config["blocks"][0]["segments"].as_array().unwrap();
-        assert_eq!(segments.len(), 5);
-        for segment in segments {
-            assert_ne!(segment["type"], "command");
+        let blocks = config["blocks"].as_array().unwrap();
+        assert_eq!(blocks.len(), 3);
+        let segments = blocks[0]["segments"].as_array().unwrap();
+        assert_eq!(segments.len(), 7);
+        for block in blocks {
+            for segment in block["segments"].as_array().unwrap() {
+                assert_ne!(segment["type"], "command");
+                // Every OMP segment style must be a valid rendering style.
+                assert_eq!(segment["style"], "plain");
+            }
         }
     }
 
