@@ -44,23 +44,9 @@ float4 main(float4 pos : SV_POSITION, float2 tex : TEXCOORD) : SV_TARGET {
     float2 imgUV = kiseki_cover_uv(tex, Resolution, float2(max(imgW, 1.0), max(imgH, 1.0)));
 
     float narrow = kiseki_narrow_factor(Resolution);
-
-    // --- 1. Subtle pixel-stepped ocean wave shimmer -------------------------
-#if KISEKI_QUALITY_LEVEL >= 2
-    float oceanMask = smoothstep(0.54, 0.61, imgUV.y)
-        * (1.0 - smoothstep(0.76, 0.85, imgUV.y))
-        * smoothstep(0.32, 0.48, imgUV.x)
-        * (1.0 - smoothstep(0.76, 0.86, imgUV.x))
-        * narrow;
-    float pixRow = floor(pos.y / 3.0);
-    float waveShift = sin(pixRow * 0.65 + Time * KISEKI_PARAM_WAVE_SPEED) * 0.0022 * oceanMask;
-    float2 warpedUV = saturate(imgUV + float2(waveShift, 0.0));
-    float3 wall = imageTexture.Sample(samplerState, warpedUV).rgb;
-#else
     float3 wall = imageTexture.Sample(samplerState, imgUV).rgb;
-#endif
 
-    // --- 2. Cozy breathing pulse on glowing cyan CRT monitor & moon ---------
+    // --- 1. Cozy breathing pulse on glowing cyan monitor & moon highlights --
     float rightZone = smoothstep(0.58, 0.78, imgUV.x) * narrow;
     float cyanGlow = saturate(wall.g * 0.6 + wall.b * 0.6 - wall.r * 0.5);
     float crtPulse = 0.5 + 0.5 * sin(Time * KISEKI_PARAM_CRT_PULSE_HZ);

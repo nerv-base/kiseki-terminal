@@ -2,7 +2,7 @@
 // Kiseki Terminal — Starlight 8-Bit Live Pixel Shader (Ghostty postprocess)
 //
 // Real-time pixel-quantized twinkling stars, periodic diagonal shooting stars,
-// shimmering pixel ocean reflection, and cozy CRT/moonlight pulse.
+// and cozy moonlight / pixel-monitor breathing pulse.
 //
 // Parameterized template: kiseki-shader injects KISEKI_* macros and shared
 // helpers (`kiseki_bg_mask`, `kiseki_narrow_factor`).
@@ -28,26 +28,13 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
     float narrow = kiseki_narrow_factor(res);
     float scale = max(1.0, round(min(res.x, res.y) / 720.0));
 
-    // --- 1. Subtle pixel-stepped ocean wave shimmer -------------------------
-    vec3 oceanShimmer = vec3(0.0);
-#if KISEKI_QUALITY_LEVEL >= 2
-    float oceanMask = smoothstep(0.54, 0.61, uv.y)
-        * (1.0 - smoothstep(0.76, 0.85, uv.y))
-        * smoothstep(0.32, 0.48, uv.x)
-        * (1.0 - smoothstep(0.76, 0.86, uv.x))
-        * narrow;
-    float pixRow = floor(fragCoord.y / (3.0 * scale));
-    float wavePhase = sin(pixRow * 0.65 + iTime * KISEKI_PARAM_WAVE_SPEED);
-    oceanShimmer = KISEKI_ACCENT_PRIMARY * max(0.0, wavePhase) * 0.055 * oceanMask * bgMask;
-#endif
-
-    // --- 2. Cozy breathing pulse on glowing cyan CRT monitor & moon ---------
+    // --- 1. Cozy breathing pulse on glowing cyan monitor & moon highlights --
     float rightZone = smoothstep(0.58, 0.78, uv.x) * narrow;
     float cyanGlow = clamp(col.g * 0.6 + col.b * 0.6 - col.r * 0.5, 0.0, 1.0);
     float crtPulse = 0.5 + 0.5 * sin(iTime * KISEKI_PARAM_CRT_PULSE_HZ);
     vec3 glowAdd = col * cyanGlow * rightZone * (0.14 * crtPulse) * bgMask;
 
-    // --- 3. Crisp 3x3 pixel-grid twinkling stars in upper midnight sky ------
+    // --- 2. Crisp 3x3 pixel-grid twinkling stars in upper midnight sky ------
     float pixSize = max(2.0, round(3.0 * scale));
     vec2 pixCoord = floor(fragCoord / max(pixSize, 1.0));
     vec2 cell = floor(pixCoord / 18.0);
@@ -68,7 +55,7 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
         }
     }
 
-    // --- 4. Periodic 8-bit diagonal pixel shooting star ---------------------
+    // --- 3. Periodic 8-bit diagonal pixel shooting star ---------------------
     vec3 meteorAdd = vec3(0.0);
 #if KISEKI_QUALITY_LEVEL >= 2
     float cycle = max(KISEKI_PARAM_METEOR_CYCLE_SEC, 1.0);
@@ -96,8 +83,6 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
     }
 #endif
 
-    vec3 outCol = col + oceanShimmer + glowAdd + starAdd + meteorAdd;
-
-    vec3 outRgb = clamp(outCol, 0.0, 1.0);
+    vec3 outRgb = clamp(col + glowAdd + starAdd + meteorAdd, 0.0, 1.0);
     fragColor = vec4(outRgb * term.a, term.a);
 }

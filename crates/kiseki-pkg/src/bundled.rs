@@ -193,7 +193,7 @@ const STARLIGHT_8BIT_FILES: &[BundledFile] = &[
 
 const STARLIGHT_8BIT: BundledTheme = BundledTheme {
     id: "starlight-8bit",
-    version: "2.0.1",
+    version: "2.0.2",
     name: "Starlight 8-Bit",
     tagline: "星屑 8-Bit · 复古二次元像素夜空",
     files: STARLIGHT_8BIT_FILES,
