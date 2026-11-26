@@ -1,8 +1,8 @@
 {
-  "version": "1.0.0",
-  "tag": "v1.0.0",
-  "releasedAt": "2026-11-25",
-  "changelog": "4 curated anime themes (Starlight 8-Bit, NERV UNIT-02, Shinkai Rain, Kyoto Sakura), 60fps HLSL live shaders, and built-in `theme update` notifier.",
+  "version": "1.1.0",
+  "tag": "v1.1.0",
+  "releasedAt": "2026-11-26",
+  "changelog": "macOS support (Ghostty/iTerm2/Kitty/WezTerm/Terminal.app + 60fps GLSL shaders), responsive interactive `themes` picker, 8-bit pixel logo & banner, and full Windows PowerShell 5.1 / pwsh 7 compatibility fixes.",
   "themes": [
     "starlight-8bit",
     "nerv-eva",
