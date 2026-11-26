@@ -27,7 +27,6 @@ pub enum WizardEvent {
     CycleProfile,
     CyclePromptPolicy,
     ToggleAliases,
-    ToggleFonts,
     ToggleRenderOnly,
     Confirm,
     Cancel,
@@ -50,7 +49,6 @@ pub struct InitWizardSession {
     pub prompt_policy: PromptPolicy,
     pub render_only: bool,
     pub aliases: bool,
-    pub install_fonts: bool,
     pub customize_open: bool,
 }
 
@@ -65,7 +63,6 @@ impl InitWizardSession {
         Self {
             // Interactive init defaults to full aesthetic experience (ADR-007):
             // prompt/enable curated font installation unless user toggles off.
-            install_fonts: true,
             profile: defaults.profile,
             prompt_policy: defaults.prompt_policy,
             render_only: defaults.render_only,
@@ -92,7 +89,6 @@ impl InitWizardSession {
             prompt_policy: self.prompt_policy,
             render_only: self.render_only,
             aliases: self.aliases,
-            install_fonts: self.install_fonts,
         }
     }
 
@@ -128,10 +124,6 @@ impl InitWizardSession {
             }
             WizardEvent::ToggleAliases => {
                 self.aliases = !self.aliases;
-                WizardOutcome::Continue
-            }
-            WizardEvent::ToggleFonts => {
-                self.install_fonts = !self.install_fonts;
                 WizardOutcome::Continue
             }
             WizardEvent::ToggleRenderOnly => {
@@ -189,7 +181,6 @@ pub(crate) fn run(input: InitWizardInput) -> Result<Option<InitWizardChoices>> {
             KeyCode::Char('p') | KeyCode::Tab => Some(WizardEvent::CyclePromptPolicy),
             KeyCode::Char('m') => Some(WizardEvent::CycleProfile),
             KeyCode::Char('a') => Some(WizardEvent::ToggleAliases),
-            KeyCode::Char('f') => Some(WizardEvent::ToggleFonts),
             KeyCode::Char('r') => Some(WizardEvent::ToggleRenderOnly),
             _ => None,
         };
@@ -226,8 +217,11 @@ fn draw_wizard(frame: &mut Frame<'_>, session: &InitWizardSession, ascii_only: b
             Span::styled(" · 一键初始化 ", Style::default().fg(swatch.r_fg())),
         ]))
         .title_bottom(
-            Line::from(Span::styled(" kisekiterm.dev ", Style::default().fg(swatch.r_muted())))
-                .alignment(Alignment::Right),
+            Line::from(Span::styled(
+                " kisekiterm.dev ",
+                Style::default().fg(swatch.r_muted()),
+            ))
+            .alignment(Alignment::Right),
         );
 
     let inner = outer.inner(area);
@@ -260,7 +254,7 @@ fn draw_wizard(frame: &mut Frame<'_>, session: &InitWizardSession, ascii_only: b
     }
 
     let hint = if session.customize_open {
-        "↑/↓ 选主题 · Enter 立即应用 · m 档位 · p Prompt · f 字体 · a 别名 · r 只读 · c 收起"
+        "↑/↓ 选主题 · Enter 立即应用 · m 档位 · p Prompt · a 别名 · r 只读 · c 收起"
     } else if session.input.user_prompt_config {
         "↑/↓ 选主题 · p 切换 Prompt 策略 · Enter 立即开始 · c 自定义选项 · Esc 取消"
     } else {
@@ -347,7 +341,7 @@ fn draw_setup_column(
     } else {
         0
     };
-    let custom_height = if session.customize_open { 7 } else { 0 };
+    let custom_height = if session.customize_open { 6 } else { 0 };
 
     let sections = Layout::default()
         .direction(Direction::Vertical)
@@ -449,7 +443,10 @@ fn draw_setup_column(
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
                 .border_style(Style::default().fg(swatch.r_surface()))
-                .title(Span::styled(" 智能默认 ", Style::default().fg(swatch.r_muted()))),
+                .title(Span::styled(
+                    " 智能默认 ",
+                    Style::default().fg(swatch.r_muted()),
+                )),
         )
         .wrap(Wrap { trim: true });
     frame.render_widget(summary, sections[1]);
@@ -475,18 +472,16 @@ fn draw_setup_column(
             Line::from(vec![
                 Span::styled(" [m] ", Style::default().fg(swatch.r_accent())),
                 Span::styled("渲染档位: ", Style::default().fg(swatch.r_muted())),
-                Span::styled(profile_label(session.profile), Style::default().fg(swatch.r_fg())),
+                Span::styled(
+                    profile_label(session.profile),
+                    Style::default().fg(swatch.r_fg()),
+                ),
             ]),
             Line::from(vec![
                 Span::styled(" [p] ", Style::default().fg(swatch.r_accent())),
                 Span::styled("Prompt : ", Style::default().fg(swatch.r_muted())),
-                Span::styled(prompt_label(session.prompt_policy), Style::default().fg(swatch.r_fg())),
-            ]),
-            Line::from(vec![
-                Span::styled(" [f] ", Style::default().fg(swatch.r_accent())),
-                Span::styled("推荐字体: ", Style::default().fg(swatch.r_muted())),
                 Span::styled(
-                    if session.install_fonts { "缺失时提示安装" } else { "跳过，仅用本机字体" },
+                    prompt_label(session.prompt_policy),
                     Style::default().fg(swatch.r_fg()),
                 ),
             ]),
@@ -494,7 +489,11 @@ fn draw_setup_column(
                 Span::styled(" [a] ", Style::default().fg(swatch.r_accent())),
                 Span::styled("短别名  : ", Style::default().fg(swatch.r_muted())),
                 Span::styled(
-                    if session.aliases { "开启 theme / themes" } else { "关闭（推荐，仅用 kiseki）" },
+                    if session.aliases {
+                        "开启 theme / themes"
+                    } else {
+                        "关闭（推荐，仅用 kiseki）"
+                    },
                     Style::default().fg(swatch.r_fg()),
                 ),
             ]),
@@ -502,7 +501,11 @@ fn draw_setup_column(
                 Span::styled(" [r] ", Style::default().fg(swatch.r_accent())),
                 Span::styled("写入模式: ", Style::default().fg(swatch.r_muted())),
                 Span::styled(
-                    if session.render_only { "render-only（不改宿主配置）" } else { "正常托管（自动兼容软链接）" },
+                    if session.render_only {
+                        "render-only（不改宿主配置）"
+                    } else {
+                        "正常托管（自动兼容软链接）"
+                    },
                     Style::default().fg(swatch.r_fg()),
                 ),
             ]),
@@ -531,7 +534,10 @@ fn prompt_policy_line(policy: PromptPolicy, swatch: &ThemeSwatch) -> Line<'stati
                     .add_modifier(Modifier::BOLD),
             )
         } else {
-            Span::styled(format!("○ {label}  "), Style::default().fg(swatch.r_muted()))
+            Span::styled(
+                format!("○ {label}  "),
+                Style::default().fg(swatch.r_muted()),
+            )
         }
     };
     Line::from(vec![
@@ -593,7 +599,6 @@ mod tests {
         let mut session = InitWizardSession::new(sample_input(true));
         assert!(!session.customize_open);
         assert_eq!(session.prompt_policy, PromptPolicy::PaletteOnly);
-        assert!(session.install_fonts);
         let outcome = session.handle(WizardEvent::Confirm);
         match outcome {
             WizardOutcome::Confirm(choices) => {
@@ -601,7 +606,6 @@ mod tests {
                 assert_eq!(choices.profile, RenderingProfile::Balanced);
                 assert_eq!(choices.prompt_policy, PromptPolicy::PaletteOnly);
                 assert!(!choices.aliases);
-                assert!(choices.install_fonts);
             }
             other => panic!("expected Confirm, got {other:?}"),
         }
@@ -617,7 +621,6 @@ mod tests {
         session.handle(WizardEvent::CycleProfile);
         session.handle(WizardEvent::CyclePromptPolicy);
         session.handle(WizardEvent::ToggleAliases);
-        session.handle(WizardEvent::ToggleFonts);
         session.handle(WizardEvent::ToggleRenderOnly);
 
         let choices = session.to_choices();
@@ -625,7 +628,6 @@ mod tests {
         assert_eq!(choices.profile, RenderingProfile::Eco);
         assert_eq!(choices.prompt_policy, PromptPolicy::Disabled);
         assert!(choices.aliases);
-        assert!(!choices.install_fonts);
         assert!(choices.render_only);
     }
 

@@ -301,7 +301,6 @@ pub struct InitWizardChoices {
     pub prompt_policy: PromptPolicy,
     pub render_only: bool,
     pub aliases: bool,
-    pub install_fonts: bool,
 }
 
 impl InitWizardChoices {
@@ -312,11 +311,13 @@ impl InitWizardChoices {
             .clone()
             .or_else(|| input.themes.first().map(|item| item.id.clone()))
             .unwrap_or_else(|| "nerv-eva".to_string());
-        let profile = input.default_profile.unwrap_or(if input.default_render_only {
-            RenderingProfile::Static
-        } else {
-            RenderingProfile::Balanced
-        });
+        let profile = input
+            .default_profile
+            .unwrap_or(if input.default_render_only {
+                RenderingProfile::Static
+            } else {
+                RenderingProfile::Balanced
+            });
         Self {
             theme,
             profile,
@@ -328,7 +329,6 @@ impl InitWizardChoices {
             },
             render_only: input.default_render_only,
             aliases: false,
-            install_fonts: false,
         }
     }
 }
@@ -445,7 +445,6 @@ mod tests {
         assert!(choices.render_only);
         assert_eq!(choices.profile, RenderingProfile::Static);
         assert!(!choices.aliases);
-        assert!(!choices.install_fonts);
     }
 
     #[test]

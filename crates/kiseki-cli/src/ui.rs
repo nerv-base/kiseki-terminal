@@ -9,7 +9,10 @@ use std::io::IsTerminal;
 use kiseki_adapters::DetectionReport;
 use kiseki_compiler::ArtifactMap;
 use kiseki_pkg::{MigrationPlan, MigrationReport, ThemeEntry, ThemeSource, ThemeValidation};
-use kiseki_platform::{FontStatus, KisekiPaths};
+use kiseki_platform::{
+    deps::{Summary, ToolProbe, ToolStatus},
+    FontStatus, KisekiPaths,
+};
 use kiseki_schema::{ContrastReport, ResolvedTheme};
 use kiseki_state::{Config, State};
 use kiseki_tui::{render_mini_cli_logo, ThemeSwatch};
@@ -29,7 +32,9 @@ impl Ui {
         let color = !quiet
             && std::io::stdout().is_terminal()
             && std::env::var_os("NO_COLOR").is_none()
-            && std::env::var("TERM").map(|term| term != "dumb").unwrap_or(true);
+            && std::env::var("TERM")
+                .map(|term| term != "dumb")
+                .unwrap_or(true);
         Self { color, quiet }
     }
 
@@ -48,7 +53,10 @@ impl Ui {
     fn paint_rgb(&self, rgb: (u8, u8, u8), text: &str, bold: bool) -> String {
         if self.color {
             let prefix = if bold { "1;" } else { "" };
-            format!("\x1b[{prefix}38;2;{};{};{}m{text}\x1b[0m", rgb.0, rgb.1, rgb.2)
+            format!(
+                "\x1b[{prefix}38;2;{};{};{}m{text}\x1b[0m",
+                rgb.0, rgb.1, rgb.2
+            )
         } else {
             text.to_string()
         }
@@ -199,7 +207,11 @@ impl Ui {
             "{} 已切换至 {} {}  {}{sub}",
             self.paint_rgb(swatch.accent, "✦", true),
             self.paint_rgb(swatch.accent, &theme.name, true),
-            self.dim(&format!("({} · {})", theme.id, profile_label(theme.profile))),
+            self.dim(&format!(
+                "({} · {})",
+                theme.id,
+                profile_label(theme.profile)
+            )),
             self.swatch_strip(&swatch)
         );
     }
@@ -210,7 +222,11 @@ impl Ui {
             return;
         }
         let swatch = swatch_from_resolved(theme);
-        let verb = if dry_run { "预览变更（未写入）" } else { "已切换至" };
+        let verb = if dry_run {
+            "预览变更（未写入）"
+        } else {
+            "已切换至"
+        };
         println!();
         println!(
             "{} {} {} {}  {}",
@@ -234,7 +250,9 @@ impl Ui {
             .filter(|diagnostic| diagnostic.severity == DiagnosticSeverity::Warning)
             .count();
         if warnings > 0 {
-            self.warn(&format!("有 {warnings} 条提醒，运行 `kiseki doctor` 查看详情"));
+            self.warn(&format!(
+                "有 {warnings} 条提醒，运行 `kiseki doctor` 查看详情"
+            ));
         }
         if !dry_run {
             let snapshot_path = report.journal_dir.join(&report.tx_id);
@@ -259,6 +277,7 @@ impl Ui {
         artifacts: Option<&ArtifactMap>,
         adapters: &[(String, DetectionReport)],
         paths: &KisekiPaths,
+        deps: &Summary,
     ) {
         let swatch = theme.map(swatch_from_resolved);
         self.banner(swatch.as_ref());
@@ -272,7 +291,11 @@ impl Ui {
                         &format!(
                             "{} {}",
                             self.brand(&theme.name),
-                            self.dim(&format!("({}, {})", state.active_theme, appearance_label(theme.appearance)))
+                            self.dim(&format!(
+                                "({}, {})",
+                                state.active_theme,
+                                appearance_label(theme.appearance)
+                            ))
                         ),
                     );
                 } else {
@@ -293,9 +316,24 @@ impl Ui {
                         "按层混搭",
                         &format!(
                             "palette={} · atmosphere={} · typography={}",
-                            state.composition.palette.as_ref().map(|id| id.as_str()).unwrap_or("base"),
-                            state.composition.atmosphere.as_ref().map(|id| id.as_str()).unwrap_or("base"),
-                            state.composition.typography.as_ref().map(|id| id.as_str()).unwrap_or("base"),
+                            state
+                                .composition
+                                .palette
+                                .as_ref()
+                                .map(|id| id.as_str())
+                                .unwrap_or("base"),
+                            state
+                                .composition
+                                .atmosphere
+                                .as_ref()
+                                .map(|id| id.as_str())
+                                .unwrap_or("base"),
+                            state
+                                .composition
+                                .typography
+                                .as_ref()
+                                .map(|id| id.as_str())
+                                .unwrap_or("base"),
                         ),
                     );
                 }
@@ -306,11 +344,15 @@ impl Ui {
         }
 
         self.header("运行环境");
-        self.kv("系统 / 终端", &format!(
-            "{} · {}",
-            env.os.as_str(),
-            env.current_terminal.as_deref().unwrap_or("未识别")
-        ));
+        self.kv("主题依赖", &deps.to_string());
+        self.kv(
+            "系统 / 终端",
+            &format!(
+                "{} · {}",
+                env.os.as_str(),
+                env.current_terminal.as_deref().unwrap_or("未识别")
+            ),
+        );
         let mut flags = Vec::new();
         if env.is_ssh {
             flags.push("SSH");
@@ -375,6 +417,40 @@ impl Ui {
     }
 
     // ------------------------------------------------------------- doctor
+    pub fn deps(&self, probes: &[ToolProbe]) {
+        if self.quiet {
+            return;
+        }
+        self.header("主题能力清单");
+        println!(
+            "  {}",
+            self.dim(&format!(
+                "{}  {}  {:<8}  {:<14}  修复命令",
+                pad_display_width("工具", 26),
+                pad_display_width("状态", 10),
+                "来源",
+                "版本"
+            ))
+        );
+        for probe in probes {
+            let (mark, status, remedy) = match (probe.status, probe.compatible) {
+                (ToolStatus::Missing, _) => (self.red("✗"), "缺失", probe.remedy.as_str()),
+                (_, Some(false)) => (self.yellow("!"), "不兼容", probe.remedy.as_str()),
+                _ => (self.green("✓"), "已就绪", "—"),
+            };
+            println!(
+                "  {:<26}  {mark} {}  {:<8}  {:<14}  {remedy}",
+                probe.tool_id,
+                pad_display_width(status, 8),
+                probe.status.as_str(),
+                probe.version.as_deref().unwrap_or("—")
+            );
+            if probe.status == ToolStatus::Missing || probe.compatible == Some(false) {
+                self.bullet(&self.dim(&format!("受影响能力：{}", probe.capability)));
+            }
+        }
+    }
+
     pub fn doctor(&self, report: &DoctorReport) {
         self.header("环境诊断 · DOCTOR");
         for check in &report.checks {
@@ -444,7 +520,12 @@ impl Ui {
         );
     }
 
-    pub fn theme_info(&self, theme: &ResolvedTheme, contrast: &ContrastReport, root: &std::path::Path) {
+    pub fn theme_info(
+        &self,
+        theme: &ResolvedTheme,
+        contrast: &ContrastReport,
+        root: &std::path::Path,
+    ) {
         let swatch = swatch_from_resolved(theme);
         self.header(&format!("{}  {}", theme.name, self.swatch_strip(&swatch)));
         self.kv("主题 ID", theme.id.as_str());
@@ -458,14 +539,25 @@ impl Ui {
                 "L2 syntax/ui",
                 "L3 atmosphere",
                 "L4 typography",
-                if theme.overrides.is_some() { "L5 overrides" } else { "" },
+                if theme.overrides.is_some() {
+                    "L5 overrides"
+                } else {
+                    ""
+                },
             ]
             .into_iter()
             .filter(|layer| !layer.is_empty())
             .collect::<Vec<_>>()
             .join(" · "),
         );
-        self.kv("动态 Shader", if theme.shader_enabled { "已启用" } else { "关闭" });
+        self.kv(
+            "动态 Shader",
+            if theme.shader_enabled {
+                "已启用"
+            } else {
+                "关闭"
+            },
+        );
         self.kv("壁纸资源", theme.wallpaper_path().unwrap_or("无"));
 
         self.header("WCAG 可读性对比度");
@@ -504,7 +596,11 @@ impl Ui {
         if let Some(contrast) = &validation.contrast {
             self.kv(
                 "WCAG 检查",
-                if contrast.is_compliant() { "通过" } else { "未通过" },
+                if contrast.is_compliant() {
+                    "通过"
+                } else {
+                    "未通过"
+                },
             );
         }
         let mut diagnostics: Vec<&Diagnostic> = validation.diagnostics.iter().collect();
@@ -564,7 +660,7 @@ impl Ui {
         }
         if statuses.iter().any(|status| !status.installed) {
             println!();
-            self.warn("部分推荐字体尚未安装（将在 Milestone 2 支持 `kiseki fonts install` 校验下载）");
+            self.warn("部分推荐字体尚未安装，可运行 `kiseki fonts install` 查看修复方式");
             println!(
                 "  {}",
                 self.dim("当前将自动回退到本机已安装的等宽与 CJK 字体，不影响正常使用")
@@ -628,7 +724,10 @@ impl Ui {
     pub fn migration_report(&self, report: &MigrationReport) {
         self.header("v1 → v2 迁移完成");
         self.kv("完整备份", &report.backup_dir.display().to_string());
-        self.kv("清理旧钩子", &format!("{} 处", report.removed_marker_blocks.len()));
+        self.kv(
+            "清理旧钩子",
+            &format!("{} 处", report.removed_marker_blocks.len()),
+        );
         self.kv("清理旧 shim", &format!("{} 个", report.deleted_shims.len()));
         for path in &report.removed_marker_blocks {
             self.bullet(&path.display().to_string());
@@ -650,10 +749,18 @@ impl Ui {
 
     // ----------------------------------------------------------- uninstall
     pub fn uninstall(&self, report: &TransactionReport, purged: bool, incomplete: bool) {
-        self.header(if incomplete { "卸载未完全完成" } else { "卸载完成" });
+        self.header(if incomplete {
+            "卸载未完全完成"
+        } else {
+            "卸载完成"
+        });
         for target in &report.targets {
             let (marker, status_label) = target_badge(self, target.status);
-            println!("  {marker} {:<32} {}", target.adapter, self.dim(status_label));
+            println!(
+                "  {marker} {:<32} {}",
+                target.adapter,
+                self.dim(status_label)
+            );
         }
         if incomplete {
             self.warn("部分宿主配置未能撤销，已保留 generated/、journal/ 与 wt-baseline.json 以便修复权限后重试 `kiseki uninstall`");
@@ -677,6 +784,7 @@ impl Ui {
         paths: &KisekiPaths,
         on_path: bool,
         current_exe: Option<&std::path::Path>,
+        deps: &[ToolProbe],
     ) {
         let swatch = theme.map(swatch_from_resolved);
         self.banner(swatch.as_ref());
@@ -757,6 +865,7 @@ impl Ui {
             };
             println!("  {}", self.dim(reload_hint));
         }
+        self.deps(deps);
     }
 
     pub fn print_reloads(&self, report: &TransactionReport) {
@@ -770,7 +879,9 @@ impl Ui {
             }
             let pretty = match detail.as_str() {
                 "sent SIGUSR2 to ghostty" => "已发送 SIGUSR2 实时热重载",
-                "no running ghostty process found" => "未检测到运行中的 Ghostty 进程（下次启动生效）",
+                "no running ghostty process found" => {
+                    "未检测到运行中的 Ghostty 进程（下次启动生效）"
+                }
                 other => other,
             };
             println!("  {} {:<16} {}", self.cyan("↻"), adapter, self.dim(pretty));
@@ -809,7 +920,11 @@ impl Ui {
                 self.green("✓"),
                 "generated",
                 self.dim(&format!("{label} ({generated_ok} 项产物)")),
-                self.dim(if report.dry_run { "预览 (dry-run)" } else { "已生成" })
+                self.dim(if report.dry_run {
+                    "预览 (dry-run)"
+                } else {
+                    "已生成"
+                })
             );
         }
         for target in generated_failed.into_iter().chain(host_targets) {
@@ -848,23 +963,48 @@ impl Ui {
         self.kv("基础主题", state.active_theme.as_str());
         self.kv(
             "L1 配色",
-            state.composition.palette.as_ref().map(|id| id.as_str()).unwrap_or("跟随基础主题"),
+            state
+                .composition
+                .palette
+                .as_ref()
+                .map(|id| id.as_str())
+                .unwrap_or("跟随基础主题"),
         );
         self.kv(
             "L2 语法",
-            state.composition.syntax.as_ref().map(|id| id.as_str()).unwrap_or("自动推导"),
+            state
+                .composition
+                .syntax
+                .as_ref()
+                .map(|id| id.as_str())
+                .unwrap_or("自动推导"),
         );
         self.kv(
             "L3 氛围/Shader",
-            state.composition.atmosphere.as_ref().map(|id| id.as_str()).unwrap_or("跟随基础主题"),
+            state
+                .composition
+                .atmosphere
+                .as_ref()
+                .map(|id| id.as_str())
+                .unwrap_or("跟随基础主题"),
         );
         self.kv(
             "L4 字体",
-            state.composition.typography.as_ref().map(|id| id.as_str()).unwrap_or("跟随基础主题"),
+            state
+                .composition
+                .typography
+                .as_ref()
+                .map(|id| id.as_str())
+                .unwrap_or("跟随基础主题"),
         );
         self.kv(
             "L5 覆盖项",
-            state.composition.overrides.as_ref().map(|id| id.as_str()).unwrap_or("跟随基础主题"),
+            state
+                .composition
+                .overrides
+                .as_ref()
+                .map(|id| id.as_str())
+                .unwrap_or("跟随基础主题"),
         );
         self.success("混搭组合已保存并应用");
     }
@@ -980,5 +1120,9 @@ fn char_display_width(ch: char) -> usize {
             | 0xFF00..=0xFF60
             | 0xFFE0..=0xFFE6
     );
-    if wide { 2 } else { 1 }
+    if wide {
+        2
+    } else {
+        1
+    }
 }
