@@ -57,12 +57,12 @@ cargo binstall --git https://github.com/nerv-base/kiseki-terminal kiseki-cli
 
 ```bash
 # macOS / Linux
-curl -fsSL https://raw.githubusercontent.com/nerv-base/kiseki-terminal/v2/scripts/install.sh | sh
+curl -fsSL https://kisekiterm.dev/install.sh | sh
 ```
 
 ```powershell
 # Windows PowerShell
-irm https://raw.githubusercontent.com/nerv-base/kiseki-terminal/v2/scripts/install.ps1 | iex
+irm https://kisekiterm.dev/install.ps1 | iex
 ```
 
 ### 从源码构建（需要 Rust 1.85+）
@@ -86,7 +86,9 @@ Homebrew 会安装 Oh My Posh、Fastfetch、Zsh 语法高亮和 Zsh 自动建议
 
 `cargo binstall` 和源码构建不会自动安装外部依赖或字体。运行 `kiseki deps` 查看主题能力、版本和修复方式。Linux musl ARM64 当前没有上游 Fastfetch 二进制，已有的系统版本仍可使用。
 
-独立安装脚本同时下载 JetBrains Mono Nerd Font、Departure Mono Nerd Font、Maple Mono NF CN 和 Fusion Pixel 12px。当前上游压缩包合计约 350 MB，脚本只安装主题需要的字体文件。安装目录为 macOS 的 `~/Library/Fonts`、Linux 的 `~/.local/share/fonts/kiseki` 和 Windows 的 `%LOCALAPPDATA%\Microsoft\Windows\Fonts`。运行 `kiseki fonts status` 检查当前主题字体，或运行 `kiseki fonts install` 查看重新运行安装脚本的方法。
+独立安装脚本默认安装 JetBrains Mono Nerd Font、Departure Mono Nerd Font、Maple Mono NF CN 和 Fusion Pixel 12px，当前下载量合计约 212 MiB。JetBrains Mono 按文件下载，其余三族从 ZIP 选取主题所需字形。macOS 和 Linux 解压 ZIP 需要 `unzip`。已有字体时，可将上面的 `| sh` 改成 `| sh -s -- --skip-fonts`，或在 PowerShell 通过 `[scriptblock]::Create` 调用安装脚本并传入 `-SkipFonts`。
+
+安装目录为 macOS 的 `~/Library/Fonts`、Linux 的 `~/.local/share/fonts/kiseki` 和 Windows 的 `%LOCALAPPDATA%\Microsoft\Windows\Fonts`。运行 `kiseki fonts status` 检查当前主题字体，或运行 `kiseki fonts install` 查看重新运行安装脚本的方法。
 
 ---
 

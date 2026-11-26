@@ -16,7 +16,7 @@
 | **RFC-0002** | [0002-theme-schema-and-tokens.md](./0002-theme-schema-and-tokens.md) | 5 层可组合 Theme Schema（`manifest.json` + `tokens.json`）、Semantic Tokens 体系、L1→L2 确定性推导、WCAG/APCA 对比度校验、明暗配对、混搭合成与 `nerv-eva` 完整示例 |
 | **RFC-0003** | [0003-adapter-contract-and-capabilities.md](./0003-adapter-contract-and-capabilities.md) | Adapter 契约与 Capability Model（Rust Trait 定义）、25+ 应用三层集成矩阵、Dotfiles/Symlink 与 `render-only` 兼容、Windows Terminal JSONC 保留注释局部 Patch、iTerm2 父 Profile 继承、分目标事务日志与回滚 |
 | **RFC-0004** | [0004-shader-pipeline-and-security.md](./0004-shader-pipeline-and-security.md) | 参数化单模板 Shader 管线（1 GLSL + 1 HLSL + 编译期宏）、Rendering Profile、窄分屏长宽比自适应、Ghostty vs WT 渲染边界、内嵌 `naga` 静态校验与复杂度预算、零代码执行白名单沙箱、版权与字体授权规范 |
-| **RFC-0005** | [0005-dependency-and-asset-policy.md](./0005-dependency-and-asset-policy.md) | 外部依赖供给边界（`kiseki` 本体零网络、零包管理器调用）、按渠道分流（Homebrew `depends_on` / 安装器下载到私有 vendor 目录 / 纯文本资产编译进二进制）、依赖清单单一来源与 `deps.tsv` 分发格式、OMP 模板 API 版本兼容契约、字体因 OFL 再分发义务而一律安装时下载、npm 与 Scoop 渠道移除 |
+| **RFC-0005** | [0005-dependency-and-asset-policy.md](./0005-dependency-and-asset-policy.md) | 外部依赖供给边界（`kiseki` 本体零网络、零包管理器调用）、按渠道分流（Homebrew `depends_on` / 安装器下载到私有 vendor 目录 / 纯文本资产编译进二进制）、依赖清单单一来源与 `deps.tsv` 分发格式、OMP 真实二进制渲染验证、字体因 OFL 再分发义务而一律安装时下载、npm 与 Scoop 渠道移除 |
 
 ### 配套机器可读 Schema
 
@@ -43,7 +43,7 @@
 | **ADR-012** | 安全红线 | 严格零代码执行白名单沙箱：强类型与正则防配置注入；禁止第三方包携带原始 Lua/Shell/Vimscript；Prompt 严禁 OMP `command` 与 Starship `[custom.*]`；Shader 过 `naga` 复杂度预算；提供 `kiseki recover --safe` |
 | **ADR-013** | 打包分发与更新 | 单仓 `cargo-dist` 双通道分发（Homebrew/Scoop/Winget + 一键脚本）；4 个官方主题随发行版内置离线可用 + `kiseki theme install/update`；独立安装走 SHA256 事务自更新（严禁回退 `main`） |
 | **ADR-014** | 迁移与版权 | `kiseki init` 内置一键自动迁移（快照备份、干净卸载旧钩子与 8 个 shim、迁入偏好，补齐 Windows 完整卸载）；引擎 MIT + 主题包强制 `LICENSE`/`CREDITS.md` 来源元数据 + 严禁再分发第三方受限字体 |
-| **ADR-015**（提案） | 依赖供给与资产边界 | `kiseki` 本体永不执行包管理器、永不发起网络请求；依赖按渠道原生机制供给（Homebrew `depends_on` / 安装器下载至私有 vendor 目录 / 体积允许的纯文本资产编译进二进制）；字体因 OFL 再分发义务一律安装时从上游下载；版本确定性由 CI 滚动的 `deps.tsv` 与 OMP 模板 API 版本契约共同保证（见 [RFC-0005](./0005-dependency-and-asset-policy.md)） |
+| **ADR-015**（提案） | 依赖供给与资产边界 | `kiseki` 本体永不执行包管理器、永不发起网络请求；依赖按渠道原生机制供给（Homebrew `depends_on` / 安装器下载至私有 vendor 目录 / 体积允许的纯文本资产编译进二进制）；字体因 OFL 再分发义务一律安装时从上游下载；版本确定性由 CI 滚动的 `deps.tsv` 与 OMP 真实二进制渲染验证共同保证（见 [RFC-0005](./0005-dependency-and-asset-policy.md)） |
 
 ---
 

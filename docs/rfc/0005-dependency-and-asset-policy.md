@@ -98,21 +98,22 @@ pub enum ProbeKind {
 }
 ```
 
-字体表并列存放（族 id → 上游 release 资产正则 → 落盘文件名 → 各平台目标目录），见第 7 节。
+字体表并列存放。每个字体族记录上游仓库、平台目录，以及一种来源。release ZIP 来源记录资产和文件名过滤规则，raw 来源记录固定 tag、目录和字体文件列表。详见第 7 节。
 
 所有探测只通过 `Platform` trait（`which` / `exists` / `run` / `env_var`）完成，因此可由 `FakePlatform::set_command_output` 完整驱动，无需真实安装任何工具即可测试。
 
 ### 3.2 机器生成层：`dist/deps.tsv`
 
-发布时由 `scripts/release/render-deps.mjs` 按 3.1 中钉住的版本号向上游取资产并校验，产出 TSV 清单供安装器消费：
+发布时由 `scripts/release/render-deps.mjs` 按 3.1 中的版本和来源获取上游资产，生成带 SHA-256 的 TSV 清单供安装器消费。
 
 ```
-kind    platform    url    sha256    dest    mode
-tool    darwin-arm64    https://…/posh-darwin-arm64    <sha>    vendor/bin/oh-my-posh    0755
-font    darwin-arm64    https://…/JetBrainsMono.zip    <sha>    fonts/jetbrains-mono-nf  0644
+kind	platform	url	sha256	dest	mode
+tool	darwin-arm64	https://…/posh-darwin-arm64	<sha>	vendor/bin/oh-my-posh	0755
+font	darwin-arm64	https://…/DepartureMono.zip	<sha>	fonts/departure-mono-nf	0644
+font-raw	darwin-arm64	https://…/JetBrainsMonoNerdFont-Regular.ttf	<sha>	fonts/JetBrainsMonoNerdFont-Regular.ttf	0644
 ```
 
-**为何是 TSV 而非 JSON**：`scripts/install.sh` 是 POSIX `sh`（`#!/usr/bin/env sh`），既无数组也无 JSON 解析器。`awk` + `IFS=$'\t'` 读取 TSV 是唯一不引入额外依赖的可靠方案。`install.ps1` 侧同样可用 `-split "`t"` 处理，无需 `ConvertFrom-Json`。
+**为何是 TSV 而非 JSON**。`scripts/install.sh` 是 POSIX `sh`（`#!/usr/bin/env sh`），可直接用 `awk` 和 `IFS=$(printf '\t') read` 处理 TSV。`install.ps1` 可用 `-split "`t"` 处理。
 
 `kiseki deps --json` 的 JSON 输出由 Rust 直接序列化，不走这份文件，二者无漂移风险。
 
@@ -140,15 +141,13 @@ font    darwin-arm64    https://…/JetBrainsMono.zip    <sha>    fonts/jetbrain
 
 ## 5. 版本兼容契约
 
-### 5.1 OMP：以模板 API 版本判定，而非工具版本
+### 5.1 OMP 兼容性以真实二进制渲染为准
 
-`doctor` **不**直接比较 `oh-my-posh --version`。真正的兼容边界是我们生成的 `prompt.omp.json` 的 `"version": 3` 字段——OMP 的 minor 版本更新不改变该字段，而该字段变化才意味着渲染必然跑偏。
+Oh My Posh 33.4.1 的原生模板 API 已是 v4，仍可迁移并渲染 Kiseki 生成的 `version: 3` 配置。配置的 `version` 字段用于提示和告警，兼容性以真实二进制的渲染结果为准。
 
-因此：
-
-- `deps.tsv` 钉住一个已验证的具体版本（安装器装它）
-- `doctor` 检查"已装 OMP 是否支持我们生成的模板 API 版本"，仅在**跨 major**时告警
-- Homebrew 渠道无法指定 `depends_on` 的版本（机制上不可行），上述判定正好覆盖它，不会产生"brew 一升级就天天告警"的噪声
+- `deps.tsv` 固定经过验收的安装器版本。CI 更新版本时，用该版本的真实二进制渲染四个官方 Prompt 预设，并比对生成配置的快照。
+- `doctor` 用本地 Oh My Posh 回读生成的配置、核对 segment 类型，将发现的兼容问题汇入 `deps.summary`。
+- Homebrew 随包管理器更新 Oh My Posh，可通过诊断发现当前安装的版本能否读取生成的配置。
 
 ### 5.2 fastfetch：严格范围锁
 
@@ -195,21 +194,21 @@ BSD-3-Clause 要求在**二进制分发**时复现版权声明。因此 vendor �
 
 4 个官方主题的 `typography.families` 并集正好是 4 个族，其中 `jetbrains-mono-nf` 被全部主题引用：
 
-| 族 | 引用者 | 上游 zip 粗估 |
+| 族 | 引用者 | 上游下载资产与实测体积 |
 | :--- | :--- | :--- |
-| `jetbrains-mono-nf` | 全部 4 个主题 | ≈30MB（仅取 3 个 ttf） |
-| `maple-mono-nf-cn` | nerv-eva / kyoto-sakura / shinkai-rain | 含全 CJK，≈40–50MB |
-| `departure-mono-nf` | starlight-8bit | ≈2MB |
-| `fusion-pixel-12-zh` | starlight-8bit | ≈15MB |
+| `jetbrains-mono-nf` | 全部 4 个主题 | Nerd Fonts `v3.5.1` 的 Regular、Bold、Italic 三个原始 TTF，约 7.4 MiB |
+| `maple-mono-nf-cn` | nerv-eva / kyoto-sakura / shinkai-rain | `MapleMono-NF-CN.zip`，152.1 MiB |
+| `departure-mono-nf` | starlight-8bit | `DepartureMono.zip`，3.9 MiB |
+| `fusion-pixel-12-zh` | starlight-8bit | `fusion-pixel-font-12px-monospaced-ttf-v2026.11.10.zip`，48.5 MiB |
 
-安装器全量预装这 4 族（对齐 v1 `install.sh` 的行为）：下载总量 60–100MB，落盘约 20MB。
+独立安装器默认安装全部四族，让四个官方主题开箱即用。Nerd Fonts 仓库直接保存了已打补丁的 JetBrains Mono TTF，从固定 tag 下载三个文件可将该族下载量从 127.8 MiB 降至约 7.4 MiB，并免去下载及解压 ZIP 所需的 `unzip`。其余三族继续从各自的 release ZIP 安装所需字形。
 
 ### 7.2 必须是"安装时下载"，不能进发行包
 
 这 4 族均为 **OFL**。OFL 的义务是"再分发时附带许可证文本"：
 
 - 将字体 vendor 进 release 归档 = 构成再分发 → 触发 OFL 义务
-- 在用户机器上从上游 release 下载安装 = **不构成再分发** → 义务不触发
+- 在用户机器上直接从上游下载安装 = **不构成再分发** → 义务不触发
 
 因此字体一律走安装器下载。这不是体积取舍，是许可证约束决定的形态。
 
@@ -231,11 +230,12 @@ BSD-3-Clause 要求在**二进制分发**时复现版权声明。因此 vendor �
 
 两个安装器在依赖与字体安装阶段遵循同一组语义：
 
-1. **单段失败不中断**：每个资产的下载 + 校验独立包裹（`sh` 侧在 `set -eu` 下显式 `if ! ...; then FAILED+=...; fi`），失败项记入清单
+1. **单段失败不中断**。独立下载、校验并安装每个资产，记录失败项并继续处理。
 2. **退出码 0**：仅当 `kiseki` 本体安装失败时才非 0。依赖缺失属于可降级状态，主题与语法高亮仍然可用
-3. **末尾能力清单**：逐项标注 `✓ 已就绪` / `✗ 缺失 → 修复命令`，字段与 `kiseki deps` 对齐
+3. **末尾能力清单**。逐项显示工具与字体安装结果。使用 `--skip-fonts`（Windows 使用 `-SkipFonts`）时，跳过全部四族字体并明确显示本次未安装字体。
 4. **幂等**：重复运行不产生重复文件、不破坏已有安装
 5. **不进 `PATH`**：vendor 二进制落在 `$KISEKI_HOME/vendor/bin`，由 `env.zsh` / `env.ps1` 以绝对路径调用。避免与用户已有的 `oh-my-posh` / `fastfetch` 冲突，也让 `kiseki uninstall` 能只删除自己那份
+6. **ZIP 解压**。macOS 和 Linux 的 ZIP 资产需要 `unzip`，Windows 使用系统自带的 .NET ZIP 组件。安装器在下载 ZIP 前检查所需组件。缺失时明确提示安装或修复方式，并继续处理其余资产。
 
 ---
 
@@ -265,6 +265,8 @@ BSD-3-Clause 要求在**二进制分发**时复现版权声明。因此 vendor �
 | `env.zsh` 生成 | 若系统路径不存在则引用 vendor 副本；若系统路径存在则不引用 vendor；Linuxbrew 路径出现在候选列表 |
 | 渲染冒烟 | 4 个 prompt 预设生成结果的快照比对（CI 滚版本时必跑） |
 | 渠道 | Homebrew（macOS arm/intel、Linux）、`install.sh`（macOS arm/intel、Linux glibc/musl）、`install.ps1`（Win x64/arm64）、binstall、源码构建，各自按第 8 节契约验收 |
+| Linux musl ARM64 | Fastfetch 上游仅发布依赖 glibc 的 ARM64 `polyfilled` 资产。`linux-musl-arm64` 验收要求明确报告缺项，其余资产正常安装 |
+| 字体 | 默认安装四族，跳过选项不下载任何字体资产，缺少解压组件时仍能安装三个 JetBrains Mono TTF 并报告 ZIP 资产失败 |
 | 断网重跑 | `install.sh` 断网运行：主题与语法高亮仍可用、退出码 0、能力清单标红并给出修复命令 |
 | macOS 公证 | release 包在干净机器上首次运行 vendor 二进制无 Gatekeeper 拦截（`curl` 不写 `com.apple.quarantine`，但此结论须真机验证，不接受推断） |
 
@@ -284,9 +286,9 @@ BSD-3-Clause 要求在**二进制分发**时复现版权声明。因此 vendor �
 ## 12. 已知代价
 
 - 二进制增长约 190KB（两个 zsh 插件源码）
-- "一键安装"需多下载 60–100MB（4 族字体）
+- 独立安装默认下载约 212 MiB 的四族字体。按当前上游 ZIP 目录中选中字形的解压大小与三个原始 TTF 计算，字体文件落盘约 107 MiB。已有字体时可用 `--skip-fonts`（Windows 使用 `-SkipFonts`）。
 - OMP / fastfetch 的版本由 CI 定时滚动，安全修复需跟随一次 kiseki 发版
-- Homebrew 渠道无法锁定 OMP 版本，只能靠第 5.1 节的模板 API 版本判定兜底
+- Homebrew 渠道随包管理器更新 OMP，兼容性按第 5.1 节使用真实二进制验证
 - 删除 npm / Scoop 会缩小分发面
 
 ---
@@ -295,4 +297,4 @@ BSD-3-Clause 要求在**二进制分发**时复现版权声明。因此 vendor �
 
 | ADR | 维度 | 结论 |
 | :--- | :--- | :--- |
-| **ADR-015**（提案） | 依赖供给与资产边界 | `kiseki` 本体永不执行包管理器、永不发起网络请求。依赖按渠道原生机制供给（Homebrew `depends_on` / 安装器下载到私有 vendor 目录 / 体积允许的纯文本资产编译进二进制）。字体因 OFL 再分发义务而一律在安装时从上游下载。版本确定性由 CI 滚动的 `deps.tsv` 与"模板 API 版本"契约共同保证。 |
+| **ADR-015**（提案） | 依赖供给与资产边界 | `kiseki` 本体永不执行包管理器、永不发起网络请求。依赖按渠道原生机制供给（Homebrew `depends_on` / 安装器下载到私有 vendor 目录 / 体积允许的纯文本资产编译进二进制）。字体因 OFL 再分发义务而一律在安装时从上游下载。版本确定性由 CI 滚动的 `deps.tsv` 与真实二进制渲染验证共同保证。 |
