@@ -105,6 +105,41 @@ fn version_and_help_are_available() {
 }
 
 #[test]
+fn dependencies_have_one_doctor_check_and_a_status_summary() {
+    let sandbox = Sandbox::new();
+    let deps = sandbox.json(&["deps", "--json"]);
+    let tools = deps["tools"].as_array().unwrap();
+    assert_eq!(tools.len(), 8);
+    let missing = tools
+        .iter()
+        .filter(|tool| tool["status"] == "missing")
+        .count();
+    let incompatible = tools
+        .iter()
+        .filter(|tool| tool["compatible"] == false)
+        .count();
+    let status = sandbox.json(&["status", "--json"]);
+    assert_eq!(status["deps"]["missing"], missing);
+    assert_eq!(status["deps"]["incompatible"], incompatible);
+    assert_eq!(
+        status["deps"]["ready"],
+        tools.len() - missing - incompatible
+    );
+    let doctor = sandbox.json(&["doctor", "--json"]);
+    let checks = doctor["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|check| check["name"].as_str().unwrap().starts_with("deps."))
+        .collect::<Vec<_>>();
+    assert_eq!(checks.len(), 1);
+    assert_eq!(checks[0]["name"], "deps.summary");
+    assert!(checks[0]["hint"].as_str().unwrap().contains("kiseki deps"));
+    let fonts = sandbox.json(&["fonts", "install", "--json"]);
+    assert!(fonts["remedy"].as_str().unwrap().contains("重跑安装脚本"));
+}
+
+#[test]
 fn theme_list_works_before_initialisation() {
     let sandbox = Sandbox::new();
     let json = sandbox.json(&["theme", "list", "--json"]);
@@ -158,6 +193,34 @@ fn render_only_use_compiles_every_artifact_without_touching_hosts() {
     assert_eq!(status["state"]["activeTheme"], "nerv-eva");
     assert_eq!(status["theme"]["id"], "nerv-eva");
     assert!(status["artifacts"].as_array().unwrap().iter().any(|value| value == "shaders/active.glsl"));
+}
+
+#[test]
+fn generation_repairs_bundled_zsh_plugins_without_rewriting_matching_files() {
+    let sandbox = Sandbox::new();
+    let root = sandbox.kiseki_home().join("vendor/share/zsh");
+    sandbox.run_ok(&["use", "nerv-eva", "--render-only", "--dry-run"]);
+    assert!(!root.exists());
+
+    let generate = || sandbox.run_ok(&["use", "nerv-eva", "--render-only"]);
+    generate();
+    let highlighted = root.join("zsh-syntax-highlighting/zsh-syntax-highlighting.zsh");
+    let suggestions = root.join("zsh-autosuggestions/zsh-autosuggestions.zsh");
+    assert!(root.join("LICENSE.zsh-syntax-highlighting").is_file());
+    assert!(root.join("LICENSE.zsh-autosuggestions").is_file());
+    assert!(root.join("NOTICE").is_file());
+    assert!(highlighted.is_file());
+    let old = std::time::UNIX_EPOCH + std::time::Duration::from_secs(946_684_800);
+    fs::File::options()
+        .write(true)
+        .open(&highlighted)
+        .unwrap()
+        .set_times(fs::FileTimes::new().set_modified(old))
+        .unwrap();
+    fs::remove_file(&suggestions).unwrap();
+    generate();
+    assert!(suggestions.is_file());
+    assert_eq!(highlighted.metadata().unwrap().modified().unwrap(), old);
 }
 
 #[test]

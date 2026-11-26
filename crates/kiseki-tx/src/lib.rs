@@ -229,7 +229,7 @@ impl<'a> TransactionManager<'a> {
         // --- 1. Detect + plan ------------------------------------------------
         let plan_options = request.options.plan_options();
         let detections = self.detect(&request, &plan_options);
-        let (mut plans, diagnostics) = self.plan(&request, &detections, &plan_options);
+        let (mut plans, mut diagnostics) = self.plan(&request, &detections, &plan_options);
         // Every compiled artefact must reach `generated/`, even when the host
         // that consumes it is not detected (cross-platform packs, `--only`,
         // `--render-only`). Adapters may already declare some of these; the
@@ -312,6 +312,15 @@ impl<'a> TransactionManager<'a> {
             &plans,
         )?;
         journal::write_manifest(self.platform, paths, &manifest)?;
+
+        // Pinned runtime assets are shared across themes and transactions.
+        // Refresh them under the generation lock before emitting shell hooks.
+        if request
+            .artifacts
+            .contains(kiseki_compiler::artifact_names::ENV_ZSH)
+        {
+            self.stage_zsh_assets(&mut diagnostics);
+        }
 
         // --- 4. Apply: generated first, then host targets --------------------
         let mut targets = Vec::new();
@@ -561,6 +570,37 @@ impl<'a> TransactionManager<'a> {
             }
         }
         (plans, diagnostics)
+    }
+
+    fn stage_zsh_assets(&self, diagnostics: &mut DiagnosticReport) {
+        let root = self.platform.paths().vendor_zsh();
+        for &(relative, contents) in kiseki_compiler::zsh_assets::ASSETS {
+            let path = root.join(relative);
+            let update = (|| -> Result<()> {
+                let desired = Sha256::digest(contents.as_bytes());
+                if self
+                    .platform
+                    .read_bytes(&path)?
+                    .is_some_and(|current| Sha256::digest(&current) == desired)
+                {
+                    return Ok(());
+                }
+                match self
+                    .platform
+                    .write_preserving_symlinks(&path, contents.as_bytes())?
+                {
+                    WriteOutcome::Written { .. } => Ok(()),
+                    WriteOutcome::SkippedReadOnly { reason, .. } => Err(KisekiError::other(reason)),
+                }
+            })();
+            if let Err(error) = update {
+                diagnostics.push(Diagnostic::warning(
+                    "deps.vendor-zsh",
+                    format!("无法写入 Zsh 插件资源 {}（{error}）", path.display()),
+                ));
+                break;
+            }
+        }
     }
 
     fn apply_generated(&self, operation: &FileOperation) -> (TargetStatus, Vec<String>) {

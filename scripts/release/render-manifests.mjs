@@ -1,14 +1,12 @@
 #!/usr/bin/env node
 /**
- * Render Homebrew Formula (`kiseki.rb`) and Scoop bucket manifest (`kiseki.json`)
- * directly from a release `checksums.txt` file.
+ * Render the Homebrew formula (`kiseki.rb`) from a release `checksums.txt`.
  *
  * Usage:
  *   node scripts/release/render-manifests.mjs \
  *     --version 2.0.0-alpha.1 \
  *     --checksums dist/checksums.txt \
  *     --brew-out packaging/homebrew/kiseki.rb \
- *     --scoop-out bucket/kiseki.json \
  *     [--repo nerv-base/kiseki-terminal] \
  *     [--allow-partial]
  */
@@ -21,7 +19,6 @@ function parseArgs(argv) {
     version: "",
     checksums: "",
     brewOut: "",
-    scoopOut: "",
     repo: "nerv-base/kiseki-terminal",
     allowPartial: false,
   };
@@ -30,7 +27,6 @@ function parseArgs(argv) {
     if (arg === "--version") opts.version = (argv[++i] || "").replace(/^v/, "");
     else if (arg === "--checksums") opts.checksums = argv[++i] || "";
     else if (arg === "--brew-out") opts.brewOut = argv[++i] || "";
-    else if (arg === "--scoop-out") opts.scoopOut = argv[++i] || "";
     else if (arg === "--repo") opts.repo = argv[++i] || opts.repo;
     else if (arg === "--allow-partial") opts.allowPartial = true;
     else throw new Error(`Unknown argument: ${arg}`);
@@ -131,10 +127,16 @@ class Kiseki < Formula
   version "${version}"
   license "MIT"
 
+  depends_on "oh-my-posh"
+  depends_on "fastfetch"
+  depends_on "zsh-syntax-highlighting"
+  depends_on "zsh-autosuggestions"
+
 ${blocks.join("\n\n")}
 
   def install
     bin.install "kiseki"
+    pkgshare.install "NOTICE", "LICENSE.zsh-syntax-highlighting", "LICENSE.zsh-autosuggestions"
     generate_completions_from_executable(bin/"kiseki", "completions")
   end
 
@@ -142,9 +144,6 @@ ${blocks.join("\n\n")}
     <<~EOS
       Run the interactive setup wizard to attach Kiseki to your terminal and shell:
         kiseki init
-
-      Optional companion tools for full prompt, showcase, and command highlighting:
-        brew install oh-my-posh fastfetch zsh-syntax-highlighting
     EOS
   end
 
@@ -153,69 +152,6 @@ ${blocks.join("\n\n")}
   end
 end
 `;
-}
-
-function renderScoopManifest({ version, repo, sums, allowPartial }) {
-  const tag = `v${version}`;
-  const baseUrl = `https://github.com/${repo}/releases/download/${tag}`;
-  const win64File = `kiseki-${tag}-x86_64-pc-windows-msvc.zip`;
-  const winArmFile = `kiseki-${tag}-aarch64-pc-windows-msvc.zip`;
-
-  const win64Sha = sums.get(win64File);
-  const winArmSha = sums.get(winArmFile);
-
-  if (!allowPartial && (!win64Sha || !winArmSha)) {
-    const missing = [!win64Sha && win64File, !winArmSha && winArmFile].filter(Boolean);
-    throw new Error(`Missing checksum for Scoop asset(s): ${missing.join(", ")}`);
-  }
-
-  const architecture = {};
-  if (win64Sha) {
-    architecture["64bit"] = {
-      url: `${baseUrl}/${win64File}`,
-      hash: win64Sha,
-      extract_dir: `kiseki-${tag}-x86_64-pc-windows-msvc`,
-    };
-  }
-  if (winArmSha) {
-    architecture["arm64"] = {
-      url: `${baseUrl}/${winArmFile}`,
-      hash: winArmSha,
-      extract_dir: `kiseki-${tag}-aarch64-pc-windows-msvc`,
-    };
-  }
-
-  const manifest = {
-    version,
-    description: "Universal anime-aesthetic terminal theming engine (Rust single binary)",
-    homepage: "https://kisekiterm.dev",
-    license: "MIT",
-    architecture,
-    bin: "kiseki.exe",
-    checkver: {
-      github: `https://github.com/${repo}`,
-    },
-    autoupdate: {
-      architecture: {
-        "64bit": {
-          url: `https://github.com/${repo}/releases/download/v$version/kiseki-v$version-x86_64-pc-windows-msvc.zip`,
-          extract_dir: "kiseki-v$version-x86_64-pc-windows-msvc",
-        },
-        arm64: {
-          url: `https://github.com/${repo}/releases/download/v$version/kiseki-v$version-aarch64-pc-windows-msvc.zip`,
-          extract_dir: "kiseki-v$version-aarch64-pc-windows-msvc",
-        },
-      },
-      hash: {
-        url: "$baseurl/checksums.txt",
-      },
-    },
-    notes: [
-      "Run `kiseki init` to attach Kiseki to Windows Terminal and PowerShell.",
-    ],
-  };
-
-  return JSON.stringify(manifest, null, 2) + "\n";
 }
 
 function main() {
@@ -234,26 +170,6 @@ function main() {
       })
     );
     console.log(`Wrote Homebrew formula: ${opts.brewOut}`);
-  }
-
-  if (opts.scoopOut) {
-    const win64 = sums.get(`kiseki-v${opts.version}-x86_64-pc-windows-msvc.zip`);
-    const winArm = sums.get(`kiseki-v${opts.version}-aarch64-pc-windows-msvc.zip`);
-    if (win64 || winArm || !opts.allowPartial) {
-      fs.mkdirSync(path.dirname(opts.scoopOut), { recursive: true });
-      fs.writeFileSync(
-        opts.scoopOut,
-        renderScoopManifest({
-          version: opts.version,
-          repo: opts.repo,
-          sums,
-          allowPartial: opts.allowPartial,
-        })
-      );
-      console.log(`Wrote Scoop manifest: ${opts.scoopOut}`);
-    } else {
-      console.log("Skipped Scoop manifest (no Windows checksums in partial mode)");
-    }
   }
 }
 

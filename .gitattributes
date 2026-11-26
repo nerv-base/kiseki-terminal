@@ -1,0 +1,12 @@
+# Byte-exact line endings for anything that is embedded into a shell, executed
+# as a POSIX script, or compared byte-for-byte by a test.
+#
+# The two bundled Zsh plugins are compiled into the binary with `include_str!`
+# and later written to the user's config directory, so a CRLF checkout would
+# ship a broken plugin on Windows. The prompt snapshots are compared verbatim
+# against generated output, which always uses LF.
+*.sh                                      text eol=lf
+*.zsh                                     text eol=lf
+scripts/install.sh                        text eol=lf
+crates/kiseki-compiler/tests/snapshots/** text eol=lf
+tests/snapshots/**                        text eol=lf

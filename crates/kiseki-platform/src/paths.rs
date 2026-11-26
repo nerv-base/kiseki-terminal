@@ -21,7 +21,11 @@ pub struct KisekiPaths {
 
 impl KisekiPaths {
     /// Builds the layout from explicit roots.
-    pub fn new(config: impl Into<PathBuf>, cache: impl Into<PathBuf>, data: impl Into<PathBuf>) -> Self {
+    pub fn new(
+        config: impl Into<PathBuf>,
+        cache: impl Into<PathBuf>,
+        data: impl Into<PathBuf>,
+    ) -> Self {
         Self {
             config: config.into(),
             cache: cache.into(),
@@ -108,6 +112,31 @@ impl KisekiPaths {
         self.config.join(".lock")
     }
 
+    pub fn vendor_zsh(&self) -> PathBuf {
+        self.config.join("vendor/share/zsh")
+    }
+
+    pub fn vendor_bin(
+        &self,
+        os: OsKind,
+        install_dir: Option<&str>,
+        local_app_data: Option<&str>,
+    ) -> PathBuf {
+        let root = if os == OsKind::Windows {
+            install_dir
+                .filter(|dir| !dir.is_empty())
+                .map(PathBuf::from)
+                .or_else(|| {
+                    local_app_data
+                        .filter(|dir| !dir.is_empty())
+                        .map(|dir| Path::new(dir).join("Programs/kiseki"))
+                })
+        } else {
+            None
+        };
+        root.as_deref().unwrap_or(&self.config).join("vendor/bin")
+    }
+
     pub fn generated_dir(&self) -> PathBuf {
         self.config.join("generated")
     }
@@ -185,11 +214,11 @@ mod tests {
         assert_eq!(paths.config_dir(), Path::new("/tmp/kiseki-home"));
         assert_eq!(paths.cache_dir(), Path::new("/tmp/kiseki-home/cache"));
         assert_eq!(paths.data_dir(), Path::new("/tmp/kiseki-home/data"));
+        assert_eq!(paths.state_file(), Path::new("/tmp/kiseki-home/state.json"));
         assert_eq!(
-            paths.state_file(),
-            Path::new("/tmp/kiseki-home/state.json")
+            paths.generated_dir(),
+            Path::new("/tmp/kiseki-home/generated")
         );
-        assert_eq!(paths.generated_dir(), Path::new("/tmp/kiseki-home/generated"));
         assert!(paths.owns(Path::new("/tmp/kiseki-home/generated/env.zsh")));
         assert!(!paths.owns(Path::new("/tmp/other/env.zsh")));
     }
@@ -203,8 +232,14 @@ mod tests {
             ("XDG_DATA_HOME", "/home/zz/.data-custom"),
         ]);
         let paths = KisekiPaths::from_env(OsKind::Linux, &env);
-        assert_eq!(paths.config_dir(), Path::new("/home/zz/.config-custom/kiseki"));
-        assert_eq!(paths.cache_dir(), Path::new("/home/zz/.cache-custom/kiseki"));
+        assert_eq!(
+            paths.config_dir(),
+            Path::new("/home/zz/.config-custom/kiseki")
+        );
+        assert_eq!(
+            paths.cache_dir(),
+            Path::new("/home/zz/.cache-custom/kiseki")
+        );
         assert_eq!(paths.data_dir(), Path::new("/home/zz/.data-custom/kiseki"));
     }
 
@@ -214,10 +249,7 @@ mod tests {
         let paths = KisekiPaths::from_env(OsKind::MacOs, &env);
         assert_eq!(paths.config_dir(), Path::new("/home/zz/.config/kiseki"));
         assert_eq!(paths.cache_dir(), Path::new("/home/zz/.cache/kiseki"));
-        assert_eq!(
-            paths.data_dir(),
-            Path::new("/home/zz/.local/share/kiseki")
-        );
+        assert_eq!(paths.data_dir(), Path::new("/home/zz/.local/share/kiseki"));
     }
 
     #[test]
@@ -229,9 +261,15 @@ mod tests {
         let paths = KisekiPaths::from_env(OsKind::Windows, &env);
         assert_eq!(paths.config_dir().file_name().unwrap(), "kiseki");
         assert_eq!(paths.cache_dir().file_name().unwrap(), "cache");
-        assert_eq!(paths.cache_dir().parent().unwrap().file_name().unwrap(), "kiseki");
+        assert_eq!(
+            paths.cache_dir().parent().unwrap().file_name().unwrap(),
+            "kiseki"
+        );
         assert_eq!(paths.data_dir().file_name().unwrap(), "data");
-        assert_eq!(paths.data_dir().parent().unwrap().file_name().unwrap(), "kiseki");
+        assert_eq!(
+            paths.data_dir().parent().unwrap().file_name().unwrap(),
+            "kiseki"
+        );
     }
 
     #[test]
@@ -243,9 +281,6 @@ mod tests {
         );
         assert_eq!(paths.shaders_dir(), Path::new("/c/generated/shaders"));
         assert_eq!(paths.journal_dir(), Path::new("/d/journal"));
-        assert_eq!(
-            paths.official_themes_dir(),
-            Path::new("/d/themes/official")
-        );
+        assert_eq!(paths.official_themes_dir(), Path::new("/d/themes/official"));
     }
 }

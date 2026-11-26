@@ -49,19 +49,6 @@
 # Homebrew（macOS / Linux）
 brew install nerv-base/tap/kiseki
 
-# npm / bun / pnpm（全平台原生二进制，零 postinstall 脚本）
-npm install -g kiseki-terminal
-bun add -g kiseki-terminal
-pnpm add -g kiseki-terminal
-
-# 免全局安装直接运行
-npx kiseki-terminal init
-bunx kiseki-terminal init
-
-# Scoop（Windows）
-scoop install https://github.com/nerv-base/kiseki-terminal/releases/latest/download/kiseki.json
-# （v2 合并为默认分支后亦支持：scoop bucket add kiseki https://github.com/nerv-base/kiseki-terminal && scoop install kiseki）
-
 # Cargo Binstall（Rust）
 cargo binstall --git https://github.com/nerv-base/kiseki-terminal kiseki-cli
 ```
@@ -70,12 +57,12 @@ cargo binstall --git https://github.com/nerv-base/kiseki-terminal kiseki-cli
 
 ```bash
 # macOS / Linux
-curl -fsSL https://raw.githubusercontent.com/nerv-base/kiseki-terminal/v2/scripts/install.sh | sh
+curl -fsSL https://kisekiterm.dev/install.sh | sh
 ```
 
 ```powershell
 # Windows PowerShell
-irm https://raw.githubusercontent.com/nerv-base/kiseki-terminal/v2/scripts/install.ps1 | iex
+irm https://kisekiterm.dev/install.ps1 | iex
 ```
 
 ### 从源码构建（需要 Rust 1.85+）
@@ -93,7 +80,15 @@ ln -sf "$PWD/target/release/kiseki" ~/.local/bin/kiseki
 kiseki init
 ```
 
-> 可选推荐：macOS 安装 `brew install oh-my-posh fastfetch zsh-syntax-highlighting` 以解锁完整主题 Prompt、置顶系统信息卡与 24 项命令实时语法高亮。
+### 主题依赖与字体
+
+Homebrew 会安装 Oh My Posh、Fastfetch、Zsh 语法高亮和 Zsh 自动建议。独立安装脚本从同一版本发布的 `deps.tsv` 读取资产，校验 SHA-256 后将 Oh My Posh 和 Fastfetch 装到 Kiseki 的私有 `vendor/bin`。Shell 和 `kiseki fetch` 优先使用系统工具。Kiseki 在生成配置时写入两个内置 Zsh 插件，供系统插件缺失时使用。
+
+`cargo binstall` 和源码构建不会自动安装外部依赖或字体。运行 `kiseki deps` 查看主题能力、版本和修复方式。Linux musl ARM64 当前没有上游 Fastfetch 二进制，已有的系统版本仍可使用。
+
+独立安装脚本默认安装 JetBrains Mono Nerd Font、Departure Mono Nerd Font、Maple Mono NF CN 和 Fusion Pixel 12px，当前下载量合计约 212 MiB。JetBrains Mono 按文件下载，其余三族从 ZIP 选取主题所需字形。macOS 和 Linux 解压 ZIP 需要 `unzip`。已有字体时，可将上面的 `| sh` 改成 `| sh -s -- --skip-fonts`，或在 PowerShell 通过 `[scriptblock]::Create` 调用安装脚本并传入 `-SkipFonts`。
+
+安装目录为 macOS 的 `~/Library/Fonts`、Linux 的 `~/.local/share/fonts/kiseki` 和 Windows 的 `%LOCALAPPDATA%\Microsoft\Windows\Fonts`。运行 `kiseki fonts status` 检查当前主题字体，或运行 `kiseki fonts install` 查看重新运行安装脚本的方法。
 
 ---
 
@@ -109,8 +104,9 @@ kiseki init
 | `kiseki live [on\|off]` | 快速开关动态 Shader（`balanced` ↔ `static`） |
 | `kiseki bg <0..1\|off\|reset>` | 调整壁纸透明度、关闭或恢复主题默认 |
 | `kiseki font` | 覆盖终端字体栈、字号或锁定字体不被主题覆盖（`--lock` / `--unlock`） |
-| `kiseki status` | 查看当前主题、环境、适配器与产物状态（支持 `--json`） |
-| `kiseki doctor` | 全链路诊断（路径权限、字体、Shader 校验、Ghostty 配置验证等） |
+| `kiseki status` | 查看当前主题、环境、适配器、产物与依赖摘要（支持 `--json`） |
+| `kiseki deps` | 查看主题能力、工具来源、版本与修复方式（支持 `--json`） |
+| `kiseki doctor` | 全链路诊断（路径权限、字体、依赖摘要、Shader 与 Ghostty 配置验证等） |
 | `kiseki rollback [tx-id]` | 回滚到上一次或指定历史事务快照 |
 | `kiseki recover --safe` | 安全逃生：强制静态模式、关闭 Shader、损坏自动修复 |
 | `kiseki theme list\|info\|validate\|install\|remove` | 管理与安全校验本地/社区主题包 |
@@ -121,7 +117,7 @@ kiseki init
 
 ## 架构文档与 Schema
 
-- 架构 RFC：[docs/rfc/README.md](./docs/rfc/README.md) · [0001-architecture-and-workspace.md](./docs/rfc/0001-architecture-and-workspace.md) · [0002-theme-schema-and-tokens.md](./docs/rfc/0002-theme-schema-and-tokens.md) · [0003-adapter-contract-and-capabilities.md](./docs/rfc/0003-adapter-contract-and-capabilities.md) · [0004-shader-pipeline-and-security.md](./docs/rfc/0004-shader-pipeline-and-security.md)
+- 架构 RFC：[docs/rfc/README.md](./docs/rfc/README.md) · [0001-architecture-and-workspace.md](./docs/rfc/0001-architecture-and-workspace.md) · [0002-theme-schema-and-tokens.md](./docs/rfc/0002-theme-schema-and-tokens.md) · [0003-adapter-contract-and-capabilities.md](./docs/rfc/0003-adapter-contract-and-capabilities.md) · [0004-shader-pipeline-and-security.md](./docs/rfc/0004-shader-pipeline-and-security.md) · [0005-dependency-and-asset-policy.md](./docs/rfc/0005-dependency-and-asset-policy.md)
 - JSON Schemas：[schemas/manifest.v1.schema.json](./schemas/manifest.v1.schema.json) · [schemas/tokens.v1.schema.json](./schemas/tokens.v1.schema.json)
 
 ---

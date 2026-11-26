@@ -621,6 +621,26 @@ mod tests {
         assert!(resolve_font_id("nope").is_none());
     }
 
+    /// Upstream renamed Fusion Pixel's family from "Monospaced" to "Mono" in
+    /// 2026.11.x; the catalog must keep resolving the shipped faces.
+    #[test]
+    fn fusion_catalog_matches_shipped_family_names() {
+        let entry = resolve_font_id("fusion-pixel-12-zh").unwrap();
+        for os in [OsKind::MacOs, OsKind::Windows, OsKind::Linux] {
+            let families = entry.families.for_os(os);
+            assert!(families
+                .iter()
+                .any(|name| name == "Fusion Pixel 12px Mono zh-Hans"));
+            assert!(families
+                .iter()
+                .any(|name| name == "Fusion Pixel 12px Mono ja"));
+        }
+        assert!(entry
+            .post_script_names
+            .iter()
+            .any(|name| name == "Fusion-Pixel-12px-Mono-zh-Hans-Regular"));
+    }
+
     #[test]
     fn scanner_reads_family_and_postscript_names() {
         let dir = tempfile::tempdir().unwrap();

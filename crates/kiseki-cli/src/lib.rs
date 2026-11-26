@@ -15,8 +15,8 @@ use kiseki_adapters::{AdapterRegistry, DetectionReport, PlanOptions};
 use kiseki_compiler::{compile, CompileInput, CompileOptions};
 use kiseki_pkg::{ThemeEntry, ThemeLibrary, ThemeSource};
 use kiseki_platform::{
-    capture_env, default_font_dirs, detect, font_status, fonts::FontScanner, KisekiPaths, Platform,
-    SystemPlatform,
+    capture_env, default_font_dirs, deps, detect, font_status, fonts::FontScanner, KisekiPaths,
+    Platform, SystemPlatform,
 };
 use kiseki_schema::{Composition, ResolvedTheme, ThemePack, UserOverrides};
 use kiseki_state::{AppearanceMode, Config, PreviewSession, State};
@@ -25,8 +25,8 @@ use kiseki_tx::{
     doctor, JournalSummary, TargetStatus, TransactionManager, TransactionOptions, TransactionReport,
 };
 use kiseki_types::{
-    Appearance, Diagnostic, DiagnosticSeverity, EnvContext, KisekiError, PromptPolicy, RenderingProfile, Result,
-    ThemeId,
+    Appearance, Diagnostic, DiagnosticSeverity, EnvContext, KisekiError, PromptPolicy,
+    RenderingProfile, Result, ThemeId,
 };
 use serde_json::json;
 
@@ -104,6 +104,8 @@ pub enum Command {
     Theme(ThemeArgs),
     /// 检查主题字体安装状态
     Fonts(FontsArgs),
+    /// 检查主题依赖、版本及修复方式
+    Deps(DepsArgs),
     /// 探测并迁移 v1 旧版安装
     Migrate(MigrateArgs),
     /// 撤销所有宿主挂载（加 --purge 彻底清理）
@@ -245,11 +247,14 @@ pub struct FontsArgs {
     pub command: FontsCommand,
 }
 
+#[derive(Debug, clap::Args)]
+pub struct DepsArgs {}
+
 #[derive(Debug, Subcommand)]
 pub enum FontsCommand {
-    /// Show font availability and catalog resolution.
+    /// 查看字体可用性和字体目录匹配结果
     Status,
-    /// Download/install fonts (Milestone 2).
+    /// 查看重新运行字体安装脚本的方法
     Install {
         #[arg(default_value = "theme")]
         target: String,
@@ -307,8 +312,11 @@ fn run_tracked(cli: Cli, ui: Ui) -> (Result<()>, bool) {
             Command::Status
         }
     });
-    // Rescue commands must start even when `state.json` is unparseable.
-    let rescue = matches!(command, Command::Rollback(_) | Command::Recover(_));
+    // Rescue and dependency diagnostics can start even when state is unparseable.
+    let rescue = matches!(
+        command,
+        Command::Rollback(_) | Command::Recover(_) | Command::Deps(_)
+    );
     let mut app = match App::new(cli.json, cli.render_only, cli.dry_run, ui, rescue) {
         Ok(app) => app,
         Err(error) => return (Err(error), false),
@@ -329,6 +337,7 @@ fn run_tracked(cli: Cli, ui: Ui) -> (Result<()>, bool) {
         Command::Recover(args) => app.recover(args),
         Command::Theme(args) => app.theme(args),
         Command::Fonts(args) => app.fonts(args),
+        Command::Deps(_) => app.deps(),
         Command::Migrate(args) => app.migrate(args),
         Command::Uninstall(args) => app.uninstall(args),
         Command::ShellInit { shell } => app.shell_init(&shell),
@@ -440,10 +449,7 @@ impl App {
 
     fn state_or_initial(&self) -> State {
         self.state.clone().unwrap_or_else(|| {
-            State::new(
-                kiseki_pkg::default_theme_id(),
-                &self.platform.now_rfc3339(),
-            )
+            State::new(kiseki_pkg::default_theme_id(), &self.platform.now_rfc3339())
         })
     }
 
@@ -499,7 +505,9 @@ impl App {
             .env_var("HOME")
             .or_else(|| self.platform.env_var("USERPROFILE"))
             .map(PathBuf::from);
-        let dirs = default_font_dirs(self.platform.os(), home.as_deref(), &|key| self.platform.env_var(key));
+        let dirs = default_font_dirs(self.platform.os(), home.as_deref(), &|key| {
+            self.platform.env_var(key)
+        });
         let cache_file = self.paths.cache_dir().join("font-cache.json");
         let scanner = FontScanner::load_cache(&cache_file);
         let inventory = scanner.scan(&dirs);
@@ -548,13 +556,16 @@ impl App {
         };
         let macos_font_scale = self.platform.os() == kiseki_types::OsKind::MacOs
             && state.typography.size_override_pt.is_none();
-        let options = CompileOptions::new(self.paths.config_dir(), loaded.root.clone())
+        let mut options = CompileOptions::new(self.paths.config_dir(), loaded.root.clone())
             .with_prompt_policy(self.config.prompt_policy)
             .with_aliases(self.config.shell_aliases)
             .with_font_families(families)
             .with_macos_font_scale(macos_font_scale)
             .with_atmosphere_dir(atmosphere_dir)
             .with_overrides_dir(overrides_dir);
+        if self.platform.os() == kiseki_types::OsKind::Windows {
+            options.windows_vendor_bin = Some(deps::installer_bin(&self.platform));
+        }
         compile(
             &CompileInput::new(theme, options)
                 .with_glsl(glsl.as_deref())
@@ -563,7 +574,12 @@ impl App {
         )
     }
 
-    fn options(&self, command: &str, cli_only: Option<&str>, allow_create: bool) -> TransactionOptions {
+    fn options(
+        &self,
+        command: &str,
+        cli_only: Option<&str>,
+        allow_create: bool,
+    ) -> TransactionOptions {
         let (only, explicit_only) = self.effective_only(cli_only);
         TransactionOptions {
             command: command.to_string(),
@@ -588,7 +604,15 @@ impl App {
         cli_only: Option<&str>,
         allow_create: bool,
     ) -> Result<TransactionReport> {
-        self.apply_inner(loaded, state_after, profile, command, cli_only, allow_create, false)
+        self.apply_inner(
+            loaded,
+            state_after,
+            profile,
+            command,
+            cli_only,
+            allow_create,
+            false,
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -669,6 +693,7 @@ impl App {
 
     // -------------------------------------------------------------- status
     fn status(&mut self) -> Result<()> {
+        let deps = deps::Summary::from_probes(&self.probe_deps());
         let adapters = self.detect_all();
         let theme = self
             .state
@@ -709,6 +734,7 @@ impl App {
                     "notes": detection.notes,
                 })).collect::<Vec<_>>(),
                 "artifacts": artifacts.as_ref().map(|map| map.paths()),
+                "deps": deps,
                 "paths": {
                     "config": self.paths.config_dir(),
                     "cache": self.paths.cache_dir(),
@@ -726,7 +752,18 @@ impl App {
             artifacts.as_ref(),
             &adapters,
             &self.paths,
+            &deps,
         );
+        Ok(())
+    }
+
+    fn deps(&mut self) -> Result<()> {
+        let probes = self.probe_deps();
+        if self.json {
+            self.emit_json(json!({ "tools": probes }));
+        } else {
+            self.ui.deps(&probes);
+        }
         Ok(())
     }
 
@@ -765,8 +802,10 @@ impl App {
             }
             if let (Some(appearance), false) = (persist, self.dry_run) {
                 let appearance_file = self.paths.config_dir().join("appearance");
-                self.platform
-                    .write_preserving_symlinks(&appearance_file, format!("{appearance}\n").as_bytes())?;
+                self.platform.write_preserving_symlinks(
+                    &appearance_file,
+                    format!("{appearance}\n").as_bytes(),
+                )?;
             }
         }
         let profile = self.resolve_profile(args.profile.as_deref())?;
@@ -817,7 +856,10 @@ impl App {
 
     fn pick(&mut self) -> Result<()> {
         let entries = self.library.list(&self.platform)?;
-        let active = self.state.as_ref().map(|state| state.active_theme.as_str().to_string());
+        let active = self
+            .state
+            .as_ref()
+            .map(|state| state.active_theme.as_str().to_string());
         let items = self.build_picker_items(&entries);
         match kiseki_tui::run_picker(items, active.as_deref())? {
             PickerAction::Select(id) => {
@@ -886,14 +928,7 @@ impl App {
         let id = state.active_theme.clone();
         let loaded = self.load_theme(&id)?;
         let profile = state.rendering.profile;
-        let report = self.apply(
-            &loaded,
-            state.clone(),
-            profile,
-            "compose",
-            None,
-            false,
-        )?;
+        let report = self.apply(&loaded, state.clone(), profile, "compose", None, false)?;
         if self.json {
             self.emit_json(json!({
                 "composition": composition_json(&report.state),
@@ -928,7 +963,10 @@ impl App {
             None,
             false,
         )?;
-        self.after_simple(&report, &format!("渲染档位：{}", ui::profile_label(profile)));
+        self.after_simple(
+            &report,
+            &format!("渲染档位：{}", ui::profile_label(profile)),
+        );
         Ok(())
     }
 
@@ -966,7 +1004,11 @@ impl App {
             "on" | "enable" => true,
             "off" | "disable" => false,
             "toggle" => !state.rendering.crt,
-            other => return Err(KisekiError::other(format!("invalid crt action {other:?}; use on|off|toggle"))),
+            other => {
+                return Err(KisekiError::other(format!(
+                    "invalid crt action {other:?}; use on|off|toggle"
+                )))
+            }
         };
         state.rendering.crt = enable;
         let mut auto_promoted = false;
@@ -1004,9 +1046,11 @@ impl App {
                 None
             }
             raw => {
-                let parsed: f64 = raw
-                    .parse()
-                    .map_err(|_| KisekiError::other(format!("invalid opacity {raw:?}; expected 0.0..1.0, off or reset")))?;
+                let parsed: f64 = raw.parse().map_err(|_| {
+                    KisekiError::other(format!(
+                        "invalid opacity {raw:?}; expected 0.0..1.0, off or reset"
+                    ))
+                })?;
                 if !(0.0..=1.0).contains(&parsed) {
                     return Err(KisekiError::other(format!(
                         "opacity {parsed} is outside 0.0..=1.0"
@@ -1026,7 +1070,9 @@ impl App {
 
     fn font(&mut self, args: FontArgs) -> Result<()> {
         if args.lock && args.unlock {
-            return Err(KisekiError::other("--lock and --unlock are mutually exclusive"));
+            return Err(KisekiError::other(
+                "--lock and --unlock are mutually exclusive",
+            ));
         }
         if args.style.is_none() && !args.lock && !args.unlock {
             return Err(KisekiError::other(
@@ -1100,10 +1146,8 @@ impl App {
                 report.targets.len()
             ));
         } else {
-            self.ui.success(&format!(
-                "{summary} · {}",
-                report.state.active_theme
-            ));
+            self.ui
+                .success(&format!("{summary} · {}", report.state.active_theme));
             self.ui.print_reloads(report);
         }
     }
@@ -1241,14 +1285,8 @@ impl App {
         state.active_theme = id;
         state.rendering.profile = choices.profile;
         let profile = choices.profile;
-        let report = self.apply(
-            &loaded,
-            state,
-            profile,
-            "init",
-            None,
-            true,
-        )?;
+        let report = self.apply(&loaded, state, profile, "init", None, true)?;
+        let probes = self.probe_deps();
         if self.json {
             self.emit_json(json!({
                 "choices": {
@@ -1259,6 +1297,7 @@ impl App {
                     "aliases": self.config.shell_aliases,
                 },
                 "transaction": transaction_json(&report),
+                "deps": probes,
             }));
         } else {
             let resolved = self
@@ -1274,6 +1313,7 @@ impl App {
                 &self.paths,
                 on_path,
                 current_exe.as_deref(),
+                &probes,
             );
         }
         Ok(())
@@ -1362,7 +1402,10 @@ impl App {
                 kiseki_tx::DoctorCheck::new(
                     "theme.validate",
                     kiseki_tx::DoctorCheckStatus::Ok,
-                    format!("active theme pack is valid ({} files)", validation.file_count),
+                    format!(
+                        "active theme pack is valid ({} files)",
+                        validation.file_count
+                    ),
                 )
             } else {
                 kiseki_tx::DoctorCheck::new(
@@ -1448,6 +1491,20 @@ impl App {
             }
         }
 
+        let summary = deps::Summary::from_probes(&self.probe_deps());
+        report.push(
+            kiseki_tx::DoctorCheck::new(
+                "deps.summary",
+                if summary.missing + summary.incompatible == 0 {
+                    kiseki_tx::DoctorCheckStatus::Ok
+                } else {
+                    kiseki_tx::DoctorCheckStatus::Warning
+                },
+                summary.to_string(),
+            )
+            .with_hint("运行 `kiseki deps` 查看依赖状态与修复方式"),
+        );
+
         if self.json {
             self.emit_json(json!({
                 "checks": report.checks.iter().map(|check| json!({
@@ -1488,6 +1545,71 @@ impl App {
             ));
         }
         Ok(())
+    }
+
+    fn probe_deps(&self) -> Vec<deps::ToolProbe> {
+        let mut probes = deps::probe_all(&self.platform);
+        if let Some(prompt) = probes.iter_mut().find(|tool| tool.tool_id == "oh-my-posh") {
+            if let Some(binary) = prompt.path.as_deref() {
+                prompt.compatible = self.check_prompt_template(binary);
+                if prompt.compatible == Some(false) && prompt.status == deps::ToolStatus::System {
+                    prompt.remedy =
+                        "更新 PATH 中的 oh-my-posh（Homebrew 使用 `brew upgrade oh-my-posh`）"
+                            .to_owned();
+                }
+            }
+        }
+        probes
+    }
+
+    // Oh My Posh can migrate older config versions. Compare the segment types
+    // to detect rejection even when export exits successfully with defaults.
+    fn check_prompt_template(&self, binary: &std::path::Path) -> Option<bool> {
+        let spec = deps::TOOLS.iter().find(|tool| tool.id == "oh-my-posh")?;
+        let deps::VersionRange::TemplateApi(api) = spec.version_range else {
+            return None;
+        };
+        let path = self.paths.generated("prompt.omp.json");
+        // Oh My Posh resolves `extends` as a local or remote config. Diagnostic
+        // subprocesses only receive an absolute path to a self-contained file.
+        if !path.is_absolute() {
+            return None;
+        }
+        let raw = self.platform.read_to_string(&path).ok()??;
+        let config: serde_json::Value = serde_json::from_str(&raw).ok()?;
+        if config
+            .as_object()?
+            .keys()
+            .any(|key| key.eq_ignore_ascii_case("extends"))
+        {
+            return None;
+        }
+        if config["version"].as_u64()? != api {
+            return Some(false);
+        }
+        let segments = |config: &serde_json::Value| -> Option<Vec<Vec<String>>> {
+            config["blocks"]
+                .as_array()?
+                .iter()
+                .map(|block| {
+                    block["segments"]
+                        .as_array()?
+                        .iter()
+                        .map(|segment| segment["type"].as_str().map(str::to_owned))
+                        .collect()
+                })
+                .collect()
+        };
+        let expected = segments(&config)?;
+        let output = self
+            .platform
+            .run(
+                binary.to_str()?,
+                &["config", "export", "--config", path.to_str()?],
+            )
+            .ok()?;
+        let exported = serde_json::from_str(&output.stdout).ok();
+        Some(output.success() && exported.as_ref().and_then(segments).as_ref() == Some(&expected))
     }
 
     // ------------------------------------------------------------ rollback
@@ -1567,10 +1689,7 @@ impl App {
             }
         }
         .unwrap_or_else(|| {
-            State::new(
-                kiseki_pkg::default_theme_id(),
-                &self.platform.now_rfc3339(),
-            )
+            State::new(kiseki_pkg::default_theme_id(), &self.platform.now_rfc3339())
         });
 
         // Apply the safe profile parameters in memory so both `--dry-run` and
@@ -1580,7 +1699,8 @@ impl App {
         state.rendering.bg_opacity_override = None;
 
         let mut loaded = match if self.dry_run {
-            self.library.load_readonly(&self.platform, &state.active_theme)
+            self.library
+                .load_readonly(&self.platform, &state.active_theme)
         } else {
             self.load_theme(&state.active_theme)
         } {
@@ -1596,7 +1716,8 @@ impl App {
                 if self.dry_run {
                     self.library.load_readonly(&self.platform, &fallback)?
                 } else {
-                    self.library.repair_bundled(&self.platform, fallback.as_str())?
+                    self.library
+                        .repair_bundled(&self.platform, fallback.as_str())?
                 }
             }
         };
@@ -1621,7 +1742,8 @@ impl App {
                 loaded = if self.dry_run {
                     self.library.load_readonly(&self.platform, &fallback)?
                 } else {
-                    self.library.repair_bundled(&self.platform, fallback.as_str())?
+                    self.library
+                        .repair_bundled(&self.platform, fallback.as_str())?
                 };
             }
         }
@@ -1844,10 +1966,13 @@ impl App {
                     .env_var("HOME")
                     .or_else(|| self.platform.env_var("USERPROFILE"))
                     .map(PathBuf::from);
-                let dirs = default_font_dirs(self.platform.os(), home.as_deref(), &|key| self.platform.env_var(key));
+                let dirs = default_font_dirs(self.platform.os(), home.as_deref(), &|key| {
+                    self.platform.env_var(key)
+                });
                 let scanner = FontScanner::new();
                 let inventory = scanner.scan(&dirs);
-                let statuses = font_status(&theme.typography.families, &inventory, self.platform.os());
+                let statuses =
+                    font_status(&theme.typography.families, &inventory, self.platform.os());
                 if self.json {
                     self.emit_json(json!({
                         "families": statuses.iter().map(|status| json!({
@@ -1864,9 +1989,11 @@ impl App {
                 }
             }
             FontsCommand::Install { target } => {
-                return Err(KisekiError::other(format!(
-                    "`kiseki fonts install {target}` lands in Milestone 2 (SHA256-verified font catalog)"
-                )));
+                if self.json {
+                    self.emit_json(json!({ "target": target, "remedy": deps::INSTALLER_REMEDY }));
+                } else {
+                    self.ui.info(deps::INSTALLER_REMEDY);
+                }
             }
         }
         Ok(())
@@ -1953,12 +2080,18 @@ impl App {
             self.platform.remove_file(&self.paths.state_file())?;
             self.platform.remove_file(&self.paths.gen_file())?;
             self.platform.remove_file(&self.paths.config_file())?;
-            self.platform.remove_file(&self.paths.preview_recovery_file())?;
+            self.platform
+                .remove_file(&self.paths.preview_recovery_file())?;
             self.platform.remove_file(&self.paths.preview_lock_file())?;
             self.platform
                 .remove_file(&self.paths.config_dir().join("appearance"))?;
             if !incomplete {
                 remove_dir_all(&self.paths.generated_dir())?;
+                remove_dir_all(&self.paths.vendor_zsh())?;
+                for tool in deps::TOOLS.iter().filter(|tool| tool.installer_asset) {
+                    self.platform
+                        .remove_file(&deps::installed_binary_path(&self.platform, tool.id))?;
+                }
             }
             remove_dir_all(&self.paths.preview_dir())?;
             if args.purge && !incomplete {
@@ -1984,7 +2117,11 @@ impl App {
     fn shell_init(&mut self, shell: &str) -> Result<()> {
         let shell = kiseki_compiler::ShellKind::parse(shell)
             .ok_or_else(|| KisekiError::other("shell must be zsh or pwsh"))?;
-        let script = kiseki_compiler::shell_init_script(shell, self.paths.config_dir(), self.config.shell_aliases);
+        let script = kiseki_compiler::shell_init_script(
+            shell,
+            self.paths.config_dir(),
+            self.config.shell_aliases,
+        );
         if self.json {
             self.emit_json(json!({ "shell": shell.as_str(), "script": script }));
         } else {
@@ -2033,13 +2170,15 @@ impl App {
     }
 
     fn fetch(&mut self) -> Result<()> {
-        let config = self.paths.generated(kiseki_compiler::artifact_names::FASTFETCH);
+        let config = self
+            .paths
+            .generated(kiseki_compiler::artifact_names::FASTFETCH);
         if !self.platform.exists(&config) {
             return Err(KisekiError::other(
                 "no generated fastfetch config yet; run `kiseki use <theme>` first",
             ));
         }
-        let Some(binary) = self.platform.which("fastfetch") else {
+        let Some(binary) = deps::executable(&self.platform, "fastfetch") else {
             if self.json {
                 self.emit_json(json!({ "installed": false, "config": config }));
             } else {
@@ -2049,9 +2188,10 @@ impl App {
             return Ok(());
         };
         if self.json {
-            let output = self
-                .platform
-                .run(&binary.to_string_lossy(), &["--config", &config.to_string_lossy()])?;
+            let output = self.platform.run(
+                &binary.to_string_lossy(),
+                &["--config", &config.to_string_lossy()],
+            )?;
             self.emit_json(json!({
                 "status": output.status,
                 "stdout": output.stdout,
@@ -2088,11 +2228,13 @@ impl App {
     }
 
     fn exec_fastfetch_interactive(&self) -> Result<()> {
-        let config = self.paths.generated(kiseki_compiler::artifact_names::FASTFETCH);
+        let config = self
+            .paths
+            .generated(kiseki_compiler::artifact_names::FASTFETCH);
         if !self.platform.exists(&config) {
             return Ok(());
         }
-        let Some(binary) = self.platform.which("fastfetch") else {
+        let Some(binary) = deps::executable(&self.platform, "fastfetch") else {
             return Ok(());
         };
         println!();

@@ -5,12 +5,15 @@ on:
     branches: ["v2", "main"]
   pull_request:
     branches: ["v2", "main"]
+  schedule:
+    - cron: "23 7 * * 1"
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
   rust:
+    if: github.event_name != 'schedule'
     name: Rust (${{ matrix.os }})
     strategy:
       fail-fast: false
@@ -23,6 +26,14 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
+      - name: Check Windows PowerShell 5.1 installer syntax
+        if: matrix.os == 'windows-latest'
+        shell: powershell
+        run: |
+          $tokens = $null
+          $errors = $null
+          $null = [Management.Automation.Language.Parser]::ParseFile((Resolve-Path scripts/install.ps1), [ref]$tokens, [ref]$errors)
+          if ($errors) { throw ($errors | Out-String) }
       - name: Run workspace tests
         run: cargo test --workspace
       - name: Run clippy
@@ -30,6 +41,7 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
 
   packaging-checks:
+    if: github.event_name != 'schedule'
     name: Packaging & Installers
     runs-on: ubuntu-latest
     steps:
@@ -41,8 +53,89 @@ jobs:
         run: sh -n scripts/install.sh
       - name: Check JS scripts syntax
         run: |
-          node --check npm/kiseki-terminal/bin/kiseki.js
-          node --check scripts/release/stage-npm.mjs
+          node --check scripts/release/render-deps.mjs
           node --check scripts/release/render-manifests.mjs
-      - name: Validate npm package manifest
-        run: node -e "JSON.parse(require('fs').readFileSync('npm/kiseki-terminal/package.json', 'utf8'))"
+      - name: Check release TSV against Rust tool, font, and platform coverage
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/release/render-deps.mjs --metadata-only --out dist/deps.tsv
+          node scripts/release/render-deps.mjs --check dist/deps.tsv
+
+  update-dependency-pins:
+    if: github.event_name == 'schedule'
+    name: Check for newer Oh My Posh and Fastfetch releases
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - id: pins
+        name: Update version constants from upstream tags
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/release/render-deps.mjs --update-pins
+          if git diff --quiet -- crates/kiseki-platform/src/deps.rs; then
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'changed=true' >> "$GITHUB_OUTPUT"
+          fi
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.pins.outputs.changed == 'true'
+      - uses: Swatinem/rust-cache@v2
+        if: steps.pins.outputs.changed == 'true'
+      - name: Compare all four generated prompt snapshots
+        if: steps.pins.outputs.changed == 'true'
+        run: cargo test -p kiseki-compiler prompt_preset_snapshots
+      - name: Verify upstream tool assets and render each prompt with the new pin
+        if: steps.pins.outputs.changed == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/release/render-deps.mjs --metadata-only --out dist/deps.tsv
+          node scripts/release/render-deps.mjs --check dist/deps.tsv
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          while IFS=$'\t' read -r url sha dest; do
+            asset="$tmp/${url##*/}"
+            curl --fail --silent --show-error --location --retry 2 "$url" -o "$asset"
+            printf '%s  %s\n' "$sha" "$asset" | sha256sum --check
+            case "$dest" in
+              vendor/bin/oh-my-posh) install -m 0755 "$asset" "$tmp/oh-my-posh" ;;
+              vendor/bin/fastfetch)
+                unzip -p "$asset" '*/usr/bin/fastfetch' > "$tmp/fastfetch"
+                chmod +x "$tmp/fastfetch"
+                ;;
+            esac
+          done < <(awk -F '\t' '$1 == "tool" && $2 == "linux-amd64" { print $3 "\t" $4 "\t" $5 }' dist/deps.tsv)
+          "$tmp/fastfetch" --version
+          snapshots="$PWD/crates/kiseki-compiler/tests/snapshots"
+          export XDG_CACHE_HOME="$tmp/cache"
+          for pair in 'tactical-bar ▛' 'shrine-ribbon 「' 'cinematic-line ╭─' 'pixel-frame ░▒▓'; do
+            read -r preset marker <<< "$pair"
+            rendered="$(timeout 30 "$tmp/oh-my-posh" print primary --shell zsh --plain --config "$snapshots/$preset.omp.json")"
+            if [[ "$rendered" != *"$marker"* ]]; then
+              printf 'Could not render %s with the pinned Oh My Posh binary\n%s\n' "$preset" "$rendered" >&2
+              exit 1
+            fi
+          done
+      - name: Open a pull request for the new pins
+        if: steps.pins.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          base: v2
+          branch: automation/dependency-pins
+          delete-branch: true
+          add-paths: crates/kiseki-platform/src/deps.rs
+          commit-message: "chore: update standalone installer tool pins"
+          title: "Update standalone installer tool pins"
+          body: |
+            Updated the pinned tools to their latest upstream releases.
+            Verified the release manifest and rendered the four prompt presets with the pinned Oh My Posh executable.

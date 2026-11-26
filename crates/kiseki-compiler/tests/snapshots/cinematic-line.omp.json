@@ -1,0 +1,138 @@
+{
+  "$schema": "https://raw.githubusercontent.com/JanDeDobbeleer/oh-my-posh/main/themes/schema.json",
+  "blocks": [
+    {
+      "alignment": "left",
+      "newline": true,
+      "segments": [
+        {
+          "background": "transparent",
+          "foreground": "#5CE6D0",
+          "properties": {
+            "folder_separator_icon": "/",
+            "home_icon": "~",
+            "max_depth": 2,
+            "style": "agnoster_short"
+          },
+          "style": "plain",
+          "template": "<#214459>╭─</> <#7FB8FF>◦</> <b>{{ .Path }}</b>",
+          "type": "path"
+        },
+        {
+          "background": "transparent",
+          "foreground": "#7FB8FF",
+          "properties": {
+            "branch_icon": "",
+            "fetch_status": true,
+            "fetch_upstream_icon": false
+          },
+          "style": "plain",
+          "template": " <#214459>·</> {{ .HEAD }}{{ if .BranchStatus }} <#5CE6D0>{{ .BranchStatus }}</>{{ end }}{{ if .Working.Changed }} <#FFCB77>*{{ .Working.String }}</>{{ end }}{{ if .Staging.Changed }} <#9AE6A0>+{{ .Staging.String }}</>{{ end }}",
+          "type": "git"
+        },
+        {
+          "background": "transparent",
+          "foreground": "#FFCB77",
+          "properties": {
+            "display_mode": "files",
+            "fetch_version": true
+          },
+          "style": "plain",
+          "template": " <#214459>·</> rs {{ .Major }}.{{ .Minor }}",
+          "type": "rust"
+        },
+        {
+          "background": "transparent",
+          "foreground": "#9AE6A0",
+          "properties": {
+            "display_mode": "files",
+            "fetch_version": true
+          },
+          "style": "plain",
+          "template": " <#214459>·</> node {{ .Major }}.{{ .Minor }}",
+          "type": "node"
+        },
+        {
+          "background": "transparent",
+          "foreground": "#9AE6A0",
+          "properties": {
+            "display_mode": "files",
+            "fetch_version": true
+          },
+          "style": "plain",
+          "template": " <#214459>·</> py {{ if .Venv }}{{ .Venv }} {{ end }}{{ .Major }}.{{ .Minor }}",
+          "type": "python"
+        },
+        {
+          "background": "transparent",
+          "foreground": "#5CE6D0",
+          "properties": {
+            "display_mode": "files",
+            "fetch_version": true
+          },
+          "style": "plain",
+          "template": " <#214459>·</> go {{ .Major }}.{{ .Minor }}",
+          "type": "go"
+        }
+      ],
+      "type": "prompt"
+    },
+    {
+      "alignment": "right",
+      "segments": [
+        {
+          "background": "#132330",
+          "foreground": "#FFCB77",
+          "properties": {
+            "style": "roundrock",
+            "threshold": 1500
+          },
+          "style": "plain",
+          "template": " {{ .FormattedMs }} ",
+          "type": "executiontime"
+        },
+        {
+          "background": "#132330",
+          "foreground": "#CFE3EC",
+          "properties": {
+            "time_format": "15:04"
+          },
+          "style": "plain",
+          "template": "<#0C1823,transparent> </> <#FFCB77>◦</> {{ .CurrentDate | date .Format }} <#214459,transparent>─╮</>",
+          "type": "time"
+        }
+      ],
+      "type": "prompt"
+    },
+    {
+      "alignment": "left",
+      "newline": true,
+      "segments": [
+        {
+          "background": "transparent",
+          "foreground": "#5CE6D0",
+          "properties": {
+            "always_enabled": true
+          },
+          "style": "plain",
+          "template": "<#214459>╰─</> {{ if gt .Code 0 }}<#FF7A99>× {{ .Code }} ❯</>{{ else }}<#5CE6D0>❯</>{{ end }}",
+          "type": "status"
+        }
+      ],
+      "type": "prompt"
+    }
+  ],
+  "console_title_template": "◦ 言叶之雨 // {{ .Folder }}",
+  "final_space": true,
+  "secondary_prompt": {
+    "background": "transparent",
+    "foreground": "#648596",
+    "template": "❯ "
+  },
+  "transient_prompt": {
+    "background": "transparent",
+    "foreground": "#648596",
+    "template": "❯ "
+  },
+  "version": 3
+}

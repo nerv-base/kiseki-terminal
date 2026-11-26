@@ -32,7 +32,7 @@ impl Adapter for FastfetchAdapter {
     }
 
     fn detect(&self, _env: &EnvContext, platform: &dyn Platform) -> Result<DetectionReport> {
-        let installed = platform.which("fastfetch").is_some();
+        let installed = kiseki_platform::deps::executable(platform, "fastfetch").is_some();
         Ok(DetectionReport {
             installed,
             version: None,
