@@ -556,13 +556,16 @@ impl App {
         };
         let macos_font_scale = self.platform.os() == kiseki_types::OsKind::MacOs
             && state.typography.size_override_pt.is_none();
-        let options = CompileOptions::new(self.paths.config_dir(), loaded.root.clone())
+        let mut options = CompileOptions::new(self.paths.config_dir(), loaded.root.clone())
             .with_prompt_policy(self.config.prompt_policy)
             .with_aliases(self.config.shell_aliases)
             .with_font_families(families)
             .with_macos_font_scale(macos_font_scale)
             .with_atmosphere_dir(atmosphere_dir)
             .with_overrides_dir(overrides_dir);
+        if self.platform.os() == kiseki_types::OsKind::Windows {
+            options.windows_vendor_bin = Some(deps::installer_bin(&self.platform));
+        }
         compile(
             &CompileInput::new(theme, options)
                 .with_glsl(glsl.as_deref())
@@ -2072,6 +2075,11 @@ impl App {
                 .remove_file(&self.paths.config_dir().join("appearance"))?;
             if !incomplete {
                 remove_dir_all(&self.paths.generated_dir())?;
+                remove_dir_all(&self.paths.vendor_zsh())?;
+                for tool in deps::TOOLS.iter().filter(|tool| tool.installer_asset) {
+                    self.platform
+                        .remove_file(&deps::installed_binary_path(&self.platform, tool.id))?;
+                }
             }
             remove_dir_all(&self.paths.preview_dir())?;
             if args.purge && !incomplete {
@@ -2158,7 +2166,7 @@ impl App {
                 "no generated fastfetch config yet; run `kiseki use <theme>` first",
             ));
         }
-        let Some(binary) = self.platform.which("fastfetch") else {
+        let Some(binary) = deps::executable(&self.platform, "fastfetch") else {
             if self.json {
                 self.emit_json(json!({ "installed": false, "config": config }));
             } else {
@@ -2214,7 +2222,7 @@ impl App {
         if !self.platform.exists(&config) {
             return Ok(());
         }
-        let Some(binary) = self.platform.which("fastfetch") else {
+        let Some(binary) = deps::executable(&self.platform, "fastfetch") else {
             return Ok(());
         };
         println!();

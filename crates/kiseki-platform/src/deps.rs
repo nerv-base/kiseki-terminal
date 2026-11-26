@@ -190,7 +190,7 @@ pub const FONTS: &[FontSpec] = &[
     FontSpec {
         id: "fusion-pixel-12-zh",
         repository: "TakWolf/fusion-pixel-font",
-        asset_pattern: r"12px-monospaced-ttf.*\.zip$",
+        asset_pattern: r"12px-monospaced-ttf(?:-[^/]+)?\.zip$",
         filename_pattern: r"(zh_hans|ja)\.ttf$",
         target_dirs: &FONT_TARGET_DIRS,
     },
@@ -264,6 +264,23 @@ pub fn probe_all(platform: &dyn Platform) -> Vec<ToolProbe> {
     TOOLS.iter().map(|tool| probe(platform, tool)).collect()
 }
 
+pub fn installer_bin(platform: &dyn Platform) -> PathBuf {
+    platform.paths().vendor_bin(
+        platform.os(),
+        platform.env_var("KISEKI_INSTALL_DIR").as_deref(),
+        platform.env_var("LOCALAPPDATA").as_deref(),
+    )
+}
+
+pub fn installed_binary_path(platform: &dyn Platform, tool_id: &str) -> PathBuf {
+    let filename = if platform.os() == OsKind::Windows {
+        format!("{tool_id}.exe")
+    } else {
+        tool_id.to_owned()
+    };
+    installer_bin(platform).join(filename)
+}
+
 /// Resolves the executable used for a command that can be provisioned by the installer.
 /// The private directory is never added to PATH.
 pub fn executable(platform: &dyn Platform, tool_id: &str) -> Option<PathBuf> {
@@ -277,20 +294,9 @@ fn locate(platform: &dyn Platform, tool: &ToolSpec) -> Option<(ToolStatus, PathB
     let (system, vendor) = match tool.probe {
         ProbeKind::OnPath => {
             let system = platform.which(tool.id);
-            let vendor = tool.installer_asset.then(|| {
-                platform
-                    .paths()
-                    .vendor_bin(
-                        platform.os(),
-                        platform.env_var("KISEKI_INSTALL_DIR").as_deref(),
-                        platform.env_var("LOCALAPPDATA").as_deref(),
-                    )
-                    .join(if platform.os() == OsKind::Windows {
-                        format!("{}.exe", tool.id)
-                    } else {
-                        tool.id.to_string()
-                    })
-            });
+            let vendor = tool
+                .installer_asset
+                .then(|| installed_binary_path(platform, tool.id));
             (system, vendor)
         }
         ProbeKind::KnownPaths(paths) | ProbeKind::KnownPathsOrVendored(paths) => {

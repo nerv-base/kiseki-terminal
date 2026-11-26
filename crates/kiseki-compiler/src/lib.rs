@@ -41,6 +41,8 @@ pub struct CompileOptions {
     /// Directory that supplies the L5 overrides assets (logo). Defaults to
     /// [`Self::theme_root`].
     pub overrides_dir: Option<PathBuf>,
+    /// Directory for the standalone Windows installer's private executables.
+    pub windows_vendor_bin: Option<PathBuf>,
     /// How prompt artefacts should be produced.
     pub prompt_policy: PromptPolicy,
     /// Whether opt-in `theme` / `themes` aliases are added to shell artefacts.
@@ -61,6 +63,7 @@ impl CompileOptions {
             theme_root: theme_root.into(),
             atmosphere_dir: None,
             overrides_dir: None,
+            windows_vendor_bin: None,
             prompt_policy: PromptPolicy::ManagedTemplate,
             aliases: false,
             font_families: Vec::new(),
@@ -281,7 +284,15 @@ pub fn compile(input: &CompileInput<'_>) -> Result<CompileOutput> {
     diagnostics.extend(shell::lint_shell_artifacts(&zsh));
     artifacts.insert(artifact::names::ENV_ZSH, zsh)?;
 
-    let ps1 = shell::env_ps1(theme, &options.config_dir, options.prompt_policy);
+    let ps1 = match options.windows_vendor_bin.as_deref() {
+        Some(vendor_bin) => shell::env_ps1_with_vendor(
+            theme,
+            &options.config_dir,
+            options.prompt_policy,
+            vendor_bin,
+        ),
+        None => shell::env_ps1(theme, &options.config_dir, options.prompt_policy),
+    };
     diagnostics.extend(shell::lint_shell_artifacts(&ps1));
     artifacts.insert(artifact::names::ENV_PS1, ps1)?;
 

@@ -165,9 +165,13 @@ pub fn env_zsh(
             // rotate `POSH_SESSION_ID` (and stop any resident `oh-my-posh serve`
             // daemon) to invalidate OMP's per-session config cache without
             // re-running `oh-my-posh init zsh` inside `precmd`.
-            out.push_str("if (( $+commands[oh-my-posh] )); then\n");
+            out.push_str("if (( $+commands[oh-my-posh] )) || [[ -x \"$KISEKI_CONFIG_DIR/vendor/bin/oh-my-posh\" ]]; then\n");
             out.push_str("  if [[ \"${POSH_CONFIG:-}\" != \"$POSH_THEME\" ]]; then\n");
-            out.push_str("    eval \"$(oh-my-posh init zsh --config \"$POSH_THEME\")\"\n");
+            out.push_str("    if (( $+commands[oh-my-posh] )); then\n");
+            out.push_str("      eval \"$(oh-my-posh init zsh --config \"$POSH_THEME\")\"\n");
+            out.push_str("    else\n");
+            out.push_str("      eval \"$(\"$KISEKI_CONFIG_DIR/vendor/bin/oh-my-posh\" init zsh --config \"$POSH_THEME\")\"\n");
+            out.push_str("    fi\n");
             out.push_str("  else\n");
             out.push_str("    (( $+functions[_omp_serve_stop] )) && _omp_serve_stop\n");
             out.push_str(
@@ -274,8 +278,12 @@ pub fn env_zsh(
     out.push_str("if [[ -t 1 ]] && [[ -z \"${KISEKI_NO_FETCH:-}\" ]] && [[ -z \"${KISEKI_GREETED:-}\" ]] \\\n");
     out.push_str("  && [[ -z \"${VSCODE_INJECTION:-}\" ]] && [[ \"${TERM_PROGRAM:-}\" != \"vscode\" ]]; then\n");
     out.push_str("  export KISEKI_GREETED=1\n");
-    out.push_str("  if (( $+commands[fastfetch] )) && [[ -r \"$KISEKI_CONFIG_DIR/generated/fastfetch.jsonc\" ]]; then\n");
-    out.push_str("    fastfetch --config \"$KISEKI_CONFIG_DIR/generated/fastfetch.jsonc\"\n");
+    out.push_str("  if [[ -r \"$KISEKI_CONFIG_DIR/generated/fastfetch.jsonc\" ]]; then\n");
+    out.push_str("    if (( $+commands[fastfetch] )); then\n");
+    out.push_str("      fastfetch --config \"$KISEKI_CONFIG_DIR/generated/fastfetch.jsonc\"\n");
+    out.push_str("    elif [[ -x \"$KISEKI_CONFIG_DIR/vendor/bin/fastfetch\" ]]; then\n");
+    out.push_str("      \"$KISEKI_CONFIG_DIR/vendor/bin/fastfetch\" --config \"$KISEKI_CONFIG_DIR/generated/fastfetch.jsonc\"\n");
+    out.push_str("    fi\n");
     out.push_str("  fi\n");
     out.push_str("fi\n");
 
@@ -311,6 +319,15 @@ fn load_zsh_plugin(out: &mut String, plugin: &str, guard: &str) {
 
 /// Renders `generated/env.ps1`.
 pub fn env_ps1(theme: &ResolvedTheme, config_dir: &Path, policy: PromptPolicy) -> String {
+    env_ps1_with_vendor(theme, config_dir, policy, &config_dir.join("vendor/bin"))
+}
+
+pub(crate) fn env_ps1_with_vendor(
+    theme: &ResolvedTheme,
+    config_dir: &Path,
+    policy: PromptPolicy,
+    vendor_bin: &Path,
+) -> String {
     let config_dir_str = config_dir.to_string_lossy().into_owned();
     let sep = if config_dir_str.contains('/') && !config_dir_str.contains('\\') {
         '/'
@@ -382,7 +399,10 @@ pub fn env_ps1(theme: &ResolvedTheme, config_dir: &Path, policy: PromptPolicy) -
             // theme switches overwrite `prompt.omp.json` in place, so we stop any
             // resident `oh-my-posh serve` daemon and rotate `POSH_SESSION_ID` to
             // invalidate OMP's session cache without reloading the module.
-            out.push_str("if (Get-Command oh-my-posh -ErrorAction SilentlyContinue) {\n");
+            let vendor_posh =
+                powershell_single_quote(&vendor_bin.join("oh-my-posh.exe").to_string_lossy());
+            out.push_str(&format!("$kisekiOmp = if (Get-Command oh-my-posh -ErrorAction SilentlyContinue) {{ 'oh-my-posh' }} elseif (Test-Path -LiteralPath {vendor_posh} -PathType Leaf) {{ {vendor_posh} }}\n"));
+            out.push_str("if ($kisekiOmp) {\n");
             out.push_str("    $kisekiOmpMod = Get-Module -Name 'oh-my-posh-core'\n");
             out.push_str("    if ($kisekiOmpMod) {\n");
             out.push_str("        try {\n");
@@ -399,7 +419,7 @@ pub fn env_ps1(theme: &ResolvedTheme, config_dir: &Path, policy: PromptPolicy) -
             out.push_str("        }\n");
             out.push_str("        $global:_ompInitialized = $false\n");
             out.push_str("        $kisekiOmpShell = if ($PSVersionTable.PSEdition -eq 'Core') { 'pwsh' } else { 'powershell' }\n");
-            out.push_str("        oh-my-posh init $kisekiOmpShell --config $env:POSH_THEME | Invoke-Expression\n");
+            out.push_str("        & $kisekiOmp init $kisekiOmpShell --config $env:POSH_THEME | Invoke-Expression\n");
             out.push_str("        if (Get-Command _KisekiInstallPromptHook -ErrorAction SilentlyContinue) {\n");
             out.push_str("            _KisekiInstallPromptHook -Candidate $function:prompt\n");
             out.push_str("        }\n");
@@ -457,8 +477,10 @@ pub fn env_ps1(theme: &ResolvedTheme, config_dir: &Path, policy: PromptPolicy) -
         "    $kisekiFfConfig = {}\n",
         powershell_single_quote(&fastfetch_path)
     ));
-    out.push_str("    if ((Get-Command fastfetch -ErrorAction SilentlyContinue) -and (Test-Path $kisekiFfConfig)) {\n");
-    out.push_str("        & fastfetch --config $kisekiFfConfig\n");
+    let vendor_fetch = powershell_single_quote(&vendor_bin.join("fastfetch.exe").to_string_lossy());
+    out.push_str(&format!("    $kisekiFetch = if (Get-Command fastfetch -ErrorAction SilentlyContinue) {{ 'fastfetch' }} elseif (Test-Path -LiteralPath {vendor_fetch} -PathType Leaf) {{ {vendor_fetch} }}\n"));
+    out.push_str("    if ($kisekiFetch -and (Test-Path -LiteralPath $kisekiFfConfig -PathType Leaf)) {\n");
+    out.push_str("        & $kisekiFetch --config $kisekiFfConfig\n");
     out.push_str("    }\n");
     out.push_str("}\n");
     out
@@ -810,9 +832,14 @@ mod tests {
         assert!(content.starts_with('\u{FEFF}'), "env.ps1 must start with UTF-8 BOM for PS 5.1");
         assert!(content.contains("$env:KISEKI_THEME = 'nerv-eva'"));
         assert!(content.contains("$env:KISEKI_ACCENT_PRIMARY = '#F06A22'"));
-        assert!(content.contains("oh-my-posh init $kisekiOmpShell --config $env:POSH_THEME | Invoke-Expression"));
+        assert!(content.contains("& $kisekiOmp init $kisekiOmpShell --config $env:POSH_THEME | Invoke-Expression"));
         assert!(content.contains("Set-PSReadLineOption -Colors"));
-        assert!(content.contains("fastfetch --config $kisekiFfConfig"));
+        assert!(content.contains("& $kisekiFetch --config $kisekiFfConfig"));
+        for (tool, vendor) in [("oh-my-posh", "oh-my-posh.exe"), ("fastfetch", "fastfetch.exe")] {
+            let system = content.find(&format!("Get-Command {tool} -ErrorAction SilentlyContinue")).unwrap();
+            let vendored = powershell_single_quote(&config_dir().join("vendor/bin").join(vendor).to_string_lossy());
+            assert!(system < content.find(&vendored).unwrap());
+        }
         assert!(!content.contains("Set-PSReadLineKeyHandler"));
         assert!(!content.contains("Set-Alias"));
         assert!(lint_shell_artifacts(&content).is_empty());

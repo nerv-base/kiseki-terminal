@@ -101,7 +101,7 @@ impl Adapter for PromptAdapter {
             .map(|path| platform.inspect(path))
             .unwrap_or(PathKind::Missing);
         Ok(DetectionReport {
-            installed: platform.which("oh-my-posh").is_some()
+            installed: kiseki_platform::deps::executable(platform, "oh-my-posh").is_some()
                 || platform.which("starship").is_some()
                 || path_kind != PathKind::Missing,
             version: None,
