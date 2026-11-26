@@ -1,0 +1,490 @@
+@import "tailwindcss";
+@import "./fonts.css";
+
+/* Scoped Kiseki App Tokens — Default opening world: starlight-8bit */
+#kiseki-app {
+  --font-display: 'DepartureMono Nerd Font', 'DepartureMonoWeb', 'Fusion Pixel 12px Mono zh-Hans', 'FusionPixelZh', 'FusionPixelJa', ui-monospace, monospace;
+  --font-jp-serif: 'Fusion Pixel 12px Mono zh-Hans', 'FusionPixelZh', 'FusionPixelJa', 'DepartureMono Nerd Font', 'DepartureMonoWeb', ui-monospace, monospace;
+  --font-sans: 'Noto Sans CJK SC', 'PingFang SC', 'Hiragino Sans GB', 'SF Pro Display', -apple-system, sans-serif;
+  --font-mono: 'DepartureMono Nerd Font', 'DepartureMonoWeb', 'Fusion Pixel 12px Mono zh-Hans', 'FusionPixelZh', 'FusionPixelJa', ui-monospace, monospace;
+  --font-hud: var(--font-mono);
+  --font-ansi: 'JetBrains Mono Variable', 'JetBrainsMono Nerd Font', 'JetBrainsMono NF', 'SF Mono', Menlo, ui-monospace, monospace;
+
+  --k-display-size: clamp(2.65rem, 5.6vw, 4.3rem);
+  --k-display-weight: 400;
+  --k-display-tracking: 0.13em;
+  --k-display-scale-x: 1;
+  --k-display-shadow: drop-shadow(3px 3px 0 color-mix(in srgb, var(--k-accent-secondary) 55%, #000));
+  --k-serif-weight: 400;
+  --k-vertical-tracking: 0.22em;
+  --k-vertical-scale-x: 1;
+  --k-act-tracking: 0.06em;
+  --k-act-scale-x: 1;
+  --k-body-weight: 400;
+  --k-watermark-weight: 400;
+  --k-watermark-tracking: 0.14em;
+  --k-watermark-scale-x: 1;
+
+  /* Default starlight-8bit tokens to eliminate initial paint flash */
+  --k-crust: #080C20;
+  --k-mantle: #0C122D;
+  --k-base: #0A0F25;
+  --k-surface0: #151D40;
+  --k-surface1: #1E2958;
+  --k-overlay0: #4A5A8C;
+  --k-text-primary: #EEF2FF;
+  --k-text-secondary: #DCE4FA;
+  --k-text-muted: #7F8FBF;
+  --k-text-inverse: #0A0F25;
+  --k-accent-primary: #66F0FF;
+  --k-accent-secondary: #FF82B8;
+  --k-accent-tertiary: #FFE5A3;
+  --k-error: #FF6B8B;
+  --k-warning: #FFE5A3;
+  --k-success: #72F1B8;
+  --k-border: #26356A;
+  --k-panel-bg: #101836;
+  --k-tab-bar-bg: #080C20;
+  --k-tab-active-bg: #151D40;
+  --k-radius: 0px;
+
+  font-family: var(--font-sans);
+  font-weight: var(--k-body-weight);
+  text-rendering: optimizeLegibility;
+  background-color: var(--k-crust);
+  color: var(--k-text-primary);
+  min-height: 100vh;
+  position: relative;
+  overflow-x: hidden;
+  transition: background-color 0.32s ease, color 0.25s ease;
+}
+
+#kiseki-app * {
+  box-sizing: border-box;
+}
+#kiseki-app .font-sans {
+  font-family: var(--font-sans);
+}
+.font-k-display {
+  font-family: var(--font-display);
+}
+.font-k-serif {
+  font-family: var(--font-jp-serif);
+  font-weight: var(--k-serif-weight);
+  font-feature-settings: "palt" 1;
+}
+.font-k-mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "zero" 1;
+}
+.font-k-hud {
+  font-family: var(--font-hud);
+  font-variant-numeric: tabular-nums;
+}
+.k-tabular {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1, "zero" 1;
+}
+
+/* Sculptural Theme-Adaptive Hero Wordmark */
+.k-hero-wordmark {
+  font-family: var(--font-display);
+  font-size: var(--k-display-size);
+  font-weight: var(--k-display-weight);
+  letter-spacing: var(--k-display-tracking);
+  line-height: 0.96;
+  font-feature-settings: "palt" 1;
+  display: inline-block;
+  white-space: nowrap;
+  transform: scaleX(var(--k-display-scale-x));
+  transform-origin: left center;
+  filter: var(--k-display-shadow);
+  transition: letter-spacing 0.35s ease, transform 0.35s ease;
+}
+
+.k-wordmark-cursor {
+  display: inline-block;
+  width: 0.34em;
+  height: 0.14em;
+  vertical-align: baseline;
+  margin-left: 0.08em;
+}
+
+/* Vertical Japanese Editorial Lockup */
+.k-vertical-jp {
+  writing-mode: vertical-rl;
+  text-orientation: upright;
+  letter-spacing: var(--k-vertical-tracking);
+  font-feature-settings: "palt" 1;
+  transform: scaleX(var(--k-vertical-scale-x));
+  transform-origin: top center;
+  transition: letter-spacing 0.3s ease, transform 0.3s ease;
+}
+#k-hero-hanko {
+  transform: none;
+  letter-spacing: 0.2em;
+}
+
+/* Act & Chapter Headings */
+.k-act-heading {
+  font-family: var(--font-jp-serif);
+  font-weight: var(--k-serif-weight);
+  letter-spacing: var(--k-act-tracking);
+  font-feature-settings: "palt" 1;
+  display: inline-block;
+  transform: scaleX(var(--k-act-scale-x));
+  transform-origin: left center;
+  transition: letter-spacing 0.3s ease, transform 0.3s ease;
+}
+
+.k-watermark {
+  font-family: var(--font-display);
+  font-weight: var(--k-watermark-weight);
+  letter-spacing: var(--k-watermark-tracking);
+  padding-left: var(--k-watermark-tracking);
+  transform: translateX(-50%) scaleX(var(--k-watermark-scale-x));
+  transform-origin: center top;
+}
+
+.k-col-num {
+  font-family: var(--font-display);
+  font-weight: var(--k-display-weight);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.08em;
+}
+
+/* 4-World Adaptive Typography Personalities */
+#kiseki-app[data-typo-theme="starlight-8bit"] {
+  --font-display: 'DepartureMono Nerd Font', 'DepartureMonoWeb', 'Fusion Pixel 12px Mono zh-Hans', 'FusionPixelZh', 'FusionPixelJa', ui-monospace, monospace;
+  --font-jp-serif: 'Fusion Pixel 12px Mono zh-Hans', 'FusionPixelZh', 'FusionPixelJa', 'DepartureMono Nerd Font', 'DepartureMonoWeb', ui-monospace, monospace;
+  --font-mono: 'DepartureMono Nerd Font', 'DepartureMonoWeb', 'Fusion Pixel 12px Mono zh-Hans', 'FusionPixelZh', 'FusionPixelJa', ui-monospace, monospace;
+  --font-hud: var(--font-mono);
+  --k-display-size: clamp(2.65rem, 5.6vw, 4.3rem);
+  --k-display-weight: 400;
+  --k-display-tracking: 0.13em;
+  --k-display-scale-x: 1;
+  --k-display-shadow: drop-shadow(3px 3px 0 color-mix(in srgb, var(--k-accent-secondary) 55%, #000));
+  --k-serif-weight: 400;
+  --k-vertical-tracking: 0.22em;
+  --k-vertical-scale-x: 1;
+  --k-act-tracking: 0.06em;
+  --k-act-scale-x: 1;
+  --k-body-weight: 400;
+  --k-watermark-weight: 400;
+  --k-watermark-tracking: 0.14em;
+  --k-watermark-scale-x: 1;
+}
+#kiseki-app[data-typo-theme="starlight-8bit"] .font-k-display,
+#kiseki-app[data-typo-theme="starlight-8bit"] .font-k-serif,
+#kiseki-app[data-typo-theme="starlight-8bit"] .k-hero-wordmark,
+#kiseki-app[data-typo-theme="starlight-8bit"] .k-act-heading,
+#kiseki-app[data-typo-theme="starlight-8bit"] .k-col-num,
+#kiseki-app[data-typo-theme="starlight-8bit"] #k-docs-article h1,
+#kiseki-app[data-typo-theme="starlight-8bit"] #k-docs-article h3 {
+  font-weight: 400 !important;
+  -webkit-font-smoothing: none;
+}
+#kiseki-app[data-typo-theme="starlight-8bit"] .k-wordmark-cursor {
+  width: 0.34em;
+  height: 0.14em;
+  vertical-align: baseline;
+  margin-left: 0.08em;
+}
+
+#kiseki-app[data-typo-theme="kyoto-sakura"] {
+  --font-display: 'Didot', 'Bodoni Moda', 'Bodoni 72', 'Noto Serif CJK SC', 'NotoSerifCJK', Georgia, serif;
+  --font-jp-serif: 'Noto Serif CJK SC', 'NotoSerifCJK', 'Hiragino Mincho ProN', 'YuMincho', 'Songti SC', serif;
+  --font-mono: 'Maple Mono NF CN', 'MapleMonoWeb', 'JetBrains Mono Variable', 'JetBrainsMono Nerd Font', 'SF Mono', ui-monospace, monospace;
+  --font-hud: var(--font-mono);
+  --k-display-size: clamp(3.35rem, 7.2vw, 5.25rem);
+  --k-display-weight: 400;
+  --k-display-tracking: 0.21em;
+  --k-display-scale-x: 1;
+  --k-display-shadow: drop-shadow(0 6px 26px color-mix(in srgb, var(--k-accent-primary) 28%, rgba(0, 0, 0, 0.75)));
+  --k-serif-weight: 400;
+  --k-vertical-tracking: 0.30em;
+  --k-vertical-scale-x: 1;
+  --k-act-tracking: 0.10em;
+  --k-act-scale-x: 1;
+  --k-body-weight: 400;
+  --k-watermark-weight: 400;
+  --k-watermark-tracking: 0.24em;
+  --k-watermark-scale-x: 1;
+}
+#kiseki-app[data-typo-theme="kyoto-sakura"] .k-wordmark-cursor {
+  width: 0.26em;
+  height: 2px;
+  vertical-align: baseline;
+  margin-left: 0.04em;
+}
+
+#kiseki-app[data-typo-theme="shinkai-rain"] {
+  --font-display: 'Avenir Next', 'Jost', 'Futura', 'Noto Sans CJK SC', -apple-system, sans-serif;
+  --font-jp-serif: 'Noto Serif CJK SC', 'NotoSerifCJK', 'Hiragino Mincho ProN', 'YuMincho', 'Songti SC', serif;
+  --font-mono: 'JetBrains Mono Variable', 'JetBrainsMono Nerd Font', 'Maple Mono NF CN', 'MapleMonoWeb', 'SF Mono', ui-monospace, monospace;
+  --font-hud: var(--font-mono);
+  --k-display-size: clamp(2.75rem, 5.8vw, 4.45rem);
+  --k-display-weight: 200;
+  --k-display-tracking: 0.34em;
+  --k-display-scale-x: 1;
+  --k-display-shadow: drop-shadow(0 4px 22px color-mix(in srgb, var(--k-accent-primary) 34%, rgba(0, 0, 0, 0.6)));
+  --k-serif-weight: 200;
+  --k-vertical-tracking: 0.36em;
+  --k-vertical-scale-x: 1;
+  --k-act-tracking: 0.14em;
+  --k-act-scale-x: 1;
+  --k-body-weight: 300;
+  --k-watermark-weight: 200;
+  --k-watermark-tracking: 0.36em;
+  --k-watermark-scale-x: 1;
+}
+#kiseki-app[data-typo-theme="shinkai-rain"] .k-wordmark-cursor {
+  width: 1.5px;
+  height: 0.72em;
+  vertical-align: -0.06em;
+  margin-left: -0.06em;
+}
+
+#kiseki-app[data-typo-theme="nerv-eva"] {
+  --font-display: "EvaMing", "Noto Serif CJK SC", "NotoSerifCJK", "Songti SC", serif;
+  --font-jp-serif: "EvaMing", "Noto Serif CJK SC", "NotoSerifCJK", "Songti SC", serif;
+  --font-hud: "Barlow Condensed", "JetBrains Mono Variable", "Arial Narrow", sans-serif;
+  --font-mono: "JetBrains Mono Variable", "JetBrainsMono Nerd Font", "SF Mono", Menlo, ui-monospace, monospace;
+  --k-display-size: clamp(3.75rem, 8.2vw, 5.9rem);
+  --k-display-weight: 900;
+  --k-display-tracking: -0.01em;
+  --k-display-scale-x: 0.86;
+  --k-display-shadow: drop-shadow(0 4px 20px color-mix(in srgb, var(--k-accent-secondary) 38%, rgba(0, 0, 0, 0.85)));
+  --k-serif-weight: 900;
+  --k-vertical-tracking: 0.14em;
+  --k-vertical-scale-x: 0.86;
+  --k-act-tracking: -0.01em;
+  --k-act-scale-x: 0.86;
+  --k-body-weight: 400;
+  --k-watermark-weight: 700;
+  --k-watermark-tracking: 0.10em;
+  --k-watermark-scale-x: 1;
+  font-synthesis-weight: none;
+}
+#kiseki-app[data-typo-theme="nerv-eva"] .font-k-hud {
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+#kiseki-app[data-typo-theme="nerv-eva"] .k-col-num {
+  font-family: var(--font-hud);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+#kiseki-app[data-typo-theme="nerv-eva"] .k-watermark {
+  font-family: var(--font-hud);
+  font-weight: 700;
+  color: transparent !important;
+  -webkit-text-stroke: 1.5px color-mix(in srgb, var(--k-accent-primary) 42%, transparent);
+  opacity: 0.34 !important;
+}
+#kiseki-app[data-typo-theme="nerv-eva"] #k-hero-jp-title {
+  letter-spacing: 0.30em;
+}
+#kiseki-app[data-typo-theme="nerv-eva"] .k-wordmark-cursor {
+  width: 0.22em;
+  height: 0.74em;
+  vertical-align: -0.04em;
+  margin-left: 0.14em;
+}
+
+/* Theme-reactive subtle morphology */
+#kiseki-app[data-ui-theme="nerv-eva"] { --k-radius: 0px; }
+#kiseki-app[data-ui-theme="kyoto-sakura"] { --k-radius: 8px; }
+#kiseki-app[data-ui-theme="shinkai-rain"] { --k-radius: 4px; }
+#kiseki-app[data-ui-theme="starlight-8bit"] { --k-radius: 0px; }
+
+/* Masked 64px architectural grid behind content sections */
+.k-blueprint-wash {
+  background-image:
+    linear-gradient(to right, color-mix(in srgb, var(--k-overlay0) 11%, transparent) 1px, transparent 1px),
+    linear-gradient(to bottom, color-mix(in srgb, var(--k-overlay0) 11%, transparent) 1px, transparent 1px);
+  background-size: 64px 64px;
+  mask-image: radial-gradient(ellipse 80% 65% at 50% 40%, #000 30%, transparent 100%);
+  -webkit-mask-image: radial-gradient(ellipse 80% 65% at 50% 40%, #000 30%, transparent 100%);
+}
+
+.k-film-grain {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E");
+  opacity: 0.024;
+  pointer-events: none;
+}
+
+.k-title-sheen {
+  background: linear-gradient(
+    180deg,
+    var(--k-text-primary) 22%,
+    color-mix(in srgb, var(--k-text-primary) 72%, var(--k-accent-primary)) 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Floating Header */
+#k-header {
+  transition: background-color 0.35s ease, border-color 0.35s ease, backdrop-filter 0.35s ease;
+}
+#k-header.is-scrolled {
+  background: color-mix(in srgb, var(--k-crust) 84%, transparent);
+  backdrop-filter: blur(14px);
+  border-bottom: 1px solid color-mix(in srgb, var(--k-border) 32%, transparent);
+}
+
+/* Cinematic Boot Curtain */
+#k-boot-curtain {
+  transition: opacity 0.55s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.55s;
+}
+#k-boot-curtain.is-done {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+@keyframes k-curtain-line {
+  0% { transform: scaleX(0); opacity: 0.3; }
+  100% { transform: scaleX(1); opacity: 1; }
+}
+.k-curtain-bar {
+  animation: k-curtain-line 0.48s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Choreographed Hero Lockup Reveal */
+@keyframes k-lockup-reveal {
+  0% { opacity: 0.2; transform: translate3d(0, 8px, 0); }
+  100% { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+.k-lockup-anim {
+  animation: k-lockup-reveal 0.42s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* GPU-composited Anime Scene-Cut Shutter Wipe */
+@keyframes k-shutter-wipe {
+  0% { transform: translate3d(-105%, 0, 0); opacity: 0.85; }
+  45% { transform: translate3d(0%, 0, 0); opacity: 0.94; }
+  100% { transform: translate3d(105%, 0, 0); opacity: 0; }
+}
+#k-scene-wipe {
+  pointer-events: none;
+  opacity: 0;
+  will-change: transform, opacity;
+}
+#k-scene-wipe.is-wiping {
+  animation: k-shutter-wipe 0.40s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+/* Delicate Scroll Indicator Line */
+@keyframes k-scroll-drop {
+  0% { transform: scaleY(0); transform-origin: top; opacity: 0; }
+  35% { transform: scaleY(1); transform-origin: top; opacity: 1; }
+  70% { transform: scaleY(1); transform-origin: bottom; opacity: 1; }
+  100% { transform: scaleY(0); transform-origin: bottom; opacity: 0; }
+}
+.k-scroll-line {
+  animation: k-scroll-drop 2.2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+@keyframes k-blink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+.k-cursor-blink {
+  animation: k-blink 1.1s steps(1) infinite;
+}
+
+/* Scroll reveal */
+.k-reveal {
+  opacity: 0;
+  transform: translateY(18px);
+  transition: opacity 0.7s cubic-bezier(0.16, 1, 0.3, 1), transform 0.7s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.k-reveal.is-revealed {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .k-cursor-blink, .k-scroll-line, .k-curtain-bar { animation: none; }
+  #k-scene-wipe.is-wiping, .k-lockup-anim { animation: none; opacity: 1; transform: none; }
+  .k-reveal { opacity: 1; transform: none; transition: none; }
+  #k-boot-curtain { display: none; }
+}
+
+/* Hardware-grade Terminal Window Materiality + 3D Tilt */
+.k-terminal-bezel {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.09),
+    0 34px 96px -26px color-mix(in srgb, var(--k-accent-primary) 24%, #000);
+  transform-style: preserve-3d;
+  will-change: transform;
+}
+
+/* Editorial Column Hover Accent Line */
+.k-col-accent { position: relative; }
+.k-col-accent::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 28px;
+  height: 1px;
+  background: var(--k-accent-primary);
+  transition: width 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.k-col-accent:hover::after { width: 72px; }
+
+/* Cinema corner registration brackets */
+.k-cinema-corners::before,
+.k-cinema-corners::after {
+  content: '';
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  pointer-events: none;
+}
+.k-cinema-corners::before {
+  top: -1px;
+  left: -1px;
+  border-top: 1px solid color-mix(in srgb, var(--k-accent-primary) 80%, transparent);
+  border-left: 1px solid color-mix(in srgb, var(--k-accent-primary) 80%, transparent);
+}
+.k-cinema-corners::after {
+  bottom: -1px;
+  right: -1px;
+  border-bottom: 1px solid color-mix(in srgb, var(--k-accent-secondary) 80%, transparent);
+  border-right: 1px solid color-mix(in srgb, var(--k-accent-secondary) 80%, transparent);
+}
+
+/* Docs Editorial Micro-Typography */
+.k-docs-prose p,
+.k-docs-prose li {
+  line-height: 1.75;
+  letter-spacing: 0.015em;
+}
+.k-docs-prose code:not(pre code) {
+  padding: 0.08em 0.36em;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--k-surface1) 68%, transparent);
+}
+
+/* Terminal TrueColor ANSI block logo (locked to fixed-advance JetBrains Mono) */
+.k-ansi-logo {
+  font-family: var(--font-ansi);
+  font-size: 9px;
+  line-height: 1.05;
+  letter-spacing: 0;
+  white-space: pre;
+  user-select: none;
+}
+@media (min-width: 768px) {
+  .k-ansi-logo { font-size: 10px; }
+}
+
+.k-term-scroll::-webkit-scrollbar { width: 4px; }
+.k-term-scroll::-webkit-scrollbar-track { background: transparent; }
+.k-term-scroll::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--k-overlay0) 55%, transparent); }

@@ -3,14 +3,15 @@
 # installs `kiseki.exe` to %LOCALAPPDATA%\Programs\kiseki, and updates User PATH.
 #
 # Usage:
-#   irm https://raw.githubusercontent.com/nerv-base/kiseki-terminal/v2/scripts/install.ps1 | iex
-#   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/nerv-base/kiseki-terminal/v2/scripts/install.ps1))) -Version v2.0.0-alpha.1
+#   irm https://kisekiterm.dev/install.ps1 | iex
+#   & ([scriptblock]::Create((irm https://kisekiterm.dev/install.ps1))) -Version v2.0.0-alpha.1
 
 [CmdletBinding()]
 param(
     [string]$Version = $env:KISEKI_VERSION,
     [string]$InstallDir = $(if ($env:KISEKI_INSTALL_DIR) { $env:KISEKI_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA "Programs\kiseki" }),
-    [string]$Repo = $(if ($env:KISEKI_REPO) { $env:KISEKI_REPO } else { "nerv-base/kiseki-terminal" })
+    [string]$Repo = $(if ($env:KISEKI_REPO) { $env:KISEKI_REPO } else { "nerv-base/kiseki-terminal" }),
+    [string]$DownloadBase = $(if ($env:KISEKI_DL_BASE) { $env:KISEKI_DL_BASE } else { "https://dl.kisekiterm.dev/releases" })
 )
 
 $ErrorActionPreference = "Stop"
@@ -44,11 +45,16 @@ function Get-RustTarget {
 }
 
 function Resolve-ReleaseTag {
-    param([string]$RequestedVersion, [string]$Repository)
+    param([string]$RequestedVersion, [string]$Repository, [string]$DlBase)
     if ($RequestedVersion) {
         if ($RequestedVersion.StartsWith("v")) { return $RequestedVersion }
         return "v$RequestedVersion"
     }
+
+    try {
+        $meta = Invoke-RestMethod -Uri "$DlBase/latest.json" -TimeoutSec 5 -Headers @{ "User-Agent" = "kiseki-installer" }
+        if ($meta -and $meta.tag) { return $meta.tag }
+    } catch { }
 
     $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repository/releases" -Headers @{ "User-Agent" = "kiseki-installer" }
     $v2 = $releases | Where-Object { $_.tag_name -like "v2.*" -and -not $_.draft } | Select-Object -First 1
@@ -58,10 +64,20 @@ function Resolve-ReleaseTag {
     return $v2.tag_name
 }
 
+function Download-ReleaseAsset {
+    param([string]$PrimaryUrl, [string]$FallbackUrl, [string]$OutFile)
+    try {
+        Invoke-WebRequest -Uri $PrimaryUrl -OutFile $OutFile -TimeoutSec 15 -UseBasicParsing
+        return
+    } catch { }
+    Invoke-WebRequest -Uri $FallbackUrl -OutFile $OutFile -UseBasicParsing
+}
+
 $target = Get-RustTarget
-$tag = Resolve-ReleaseTag -RequestedVersion $Version -Repository $Repo
+$tag = Resolve-ReleaseTag -RequestedVersion $Version -Repository $Repo -DlBase $DownloadBase
 $archive = "kiseki-$tag-$target.zip"
-$baseUrl = "https://github.com/$Repo/releases/download/$tag"
+$r2Url = "$DownloadBase/$tag"
+$ghUrl = "https://github.com/$Repo/releases/download/$tag"
 
 $tmpDir = Join-Path ([System.IO.Path]::GetTempPath()) ("kiseki-install-" + [System.Guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
@@ -72,8 +88,8 @@ try {
     $archivePath = Join-Path $tmpDir $archive
     $checksumsPath = Join-Path $tmpDir "checksums.txt"
 
-    Invoke-WebRequest -Uri "$baseUrl/$archive" -OutFile $archivePath -UseBasicParsing
-    Invoke-WebRequest -Uri "$baseUrl/checksums.txt" -OutFile $checksumsPath -UseBasicParsing
+    Download-ReleaseAsset -PrimaryUrl "$r2Url/$archive" -FallbackUrl "$ghUrl/$archive" -OutFile $archivePath
+    Download-ReleaseAsset -PrimaryUrl "$r2Url/checksums.txt" -FallbackUrl "$ghUrl/checksums.txt" -OutFile $checksumsPath
 
     $expectedLine = Get-Content $checksumsPath | Where-Object { $_ -match "\s+\*?$([regex]::Escape($archive))$" } | Select-Object -First 1
     if (-not $expectedLine) {

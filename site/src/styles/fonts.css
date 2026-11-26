@@ -1,0 +1,63 @@
+@import "@fontsource/barlow-condensed/600.css";
+@import "@fontsource/barlow-condensed/700.css";
+@import "@fontsource/bodoni-moda/400.css";
+@import "@fontsource/jost/200.css";
+@import "@fontsource/jost/300.css";
+@import "@fontsource-variable/jetbrains-mono/index.css";
+
+@font-face {
+  font-family: "DepartureMonoWeb";
+  src: url("/fonts/departure-mono.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "FusionPixelZh";
+  src: url("/fonts/fusion-pixel-zh.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "FusionPixelJa";
+  src: url("/fonts/fusion-pixel-ja.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* EvaMing (EVA明体简体, CC BY-NC 4.0) */
+@font-face {
+  font-family: "EvaMing";
+  src: url("/fonts/eva-ming.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "NotoSerifCJK";
+  src: url("/fonts/noto-serif-cjk-400.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "NotoSerifCJK";
+  src: url("/fonts/noto-serif-cjk-200.woff2") format("woff2");
+  font-weight: 200;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "MapleMonoWeb";
+  src: url("/fonts/maple-mono.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}

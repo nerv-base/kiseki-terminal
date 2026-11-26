@@ -315,8 +315,8 @@ jobs:
           - **Homebrew (macOS / Linux)**: \`brew install nerv-base/tap/kiseki\`
           - **npm / bun**: \`npm i -g kiseki-terminal\` · \`bun add -g kiseki-terminal\` · \`bunx kiseki-terminal\`
           - **Scoop (Windows)**: \`scoop install https://github.com/${{ github.repository }}/releases/download/${TAG}/kiseki.json\`
-          - **Shell (macOS / Linux)**: \`curl -fsSL https://github.com/${{ github.repository }}/releases/download/${TAG}/install.sh | KISEKI_VERSION=${TAG} sh\`
-          - **PowerShell (Windows)**: \`& ([scriptblock]::Create((irm https://github.com/${{ github.repository }}/releases/download/${TAG}/install.ps1))) -Version ${TAG}\`
+          - **Shell (macOS / Linux)**: \`curl -fsSL https://kisekiterm.dev/install.sh | KISEKI_VERSION=${TAG} sh\`
+          - **PowerShell (Windows)**: \`& ([scriptblock]::Create((irm https://kisekiterm.dev/install.ps1))) -Version ${TAG}\`
 
           ### SHA-256 Checksums
           \`\`\`
@@ -457,3 +457,61 @@ jobs:
             git commit -m "kiseki ${{ needs.prepare.outputs.version }}"
             git push
           fi
+
+  mirror-r2:
+    name: Mirror Release to Cloudflare R2 (dl.kisekiterm.dev)
+    needs: [prepare, build, release]
+    if: needs.prepare.outputs.draft == 'false'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check Cloudflare R2 credentials
+        id: check
+        env:
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -z "${CF_TOKEN:-}" ] || [ -z "${CF_ACCOUNT:-}" ]; then
+            echo "::notice::CLOUDFLARE_API_TOKEN or CLOUDFLARE_ACCOUNT_ID not configured; skipping R2 mirror."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-node@v4
+        if: steps.check.outputs.enabled == 'true'
+        with:
+          node-version: "22"
+
+      - uses: actions/download-artifact@v4
+        if: steps.check.outputs.enabled == 'true'
+        with:
+          pattern: archive-*
+          path: dist/archives
+          merge-multiple: true
+
+      - uses: actions/download-artifact@v4
+        if: steps.check.outputs.enabled == 'true'
+        with:
+          name: release-manifests
+          path: dist/manifests
+
+      - name: Upload release assets to R2 (kiseki-dl)
+        if: steps.check.outputs.enabled == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          TAG="${{ needs.prepare.outputs.tag }}"
+          VERSION="${{ needs.prepare.outputs.version }}"
+          printf '{"tag":"%s","version":"%s"}\n' "$TAG" "$VERSION" > dist/latest.json
+
+          for f in dist/archives/kiseki-* dist/manifests/checksums.txt scripts/install.sh scripts/install.ps1; do
+            name="$(basename "$f")"
+            npx --yes wrangler@4 r2 object put "kiseki-dl/releases/${TAG}/${name}" --file "$f" --remote
+          done
+          npx --yes wrangler@4 r2 object put "kiseki-dl/releases/latest.json" \
+            --file dist/latest.json --content-type application/json \
+            --cache-control "public, max-age=60" --remote
