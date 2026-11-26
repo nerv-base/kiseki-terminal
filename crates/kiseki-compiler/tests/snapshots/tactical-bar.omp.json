@@ -1,0 +1,145 @@
+{
+  "$schema": "https://raw.githubusercontent.com/JanDeDobbeleer/oh-my-posh/main/themes/schema.json",
+  "blocks": [
+    {
+      "alignment": "left",
+      "newline": true,
+      "segments": [
+        {
+          "background": "#D8262E",
+          "foreground": "#FFF3E6",
+          "style": "plain",
+          "template": "<#D8262E,transparent>▛</> <b>02</b> <#D8262E,transparent>▟</>",
+          "type": "text"
+        },
+        {
+          "background": "#171214",
+          "foreground": "#ECE4DA",
+          "properties": {
+            "folder_separator_icon": "/",
+            "home_icon": "~",
+            "max_depth": 2,
+            "style": "agnoster_short"
+          },
+          "style": "plain",
+          "template": "<#0B090A,transparent> </><#F06A22>┃</> <b>{{ .Path }}</b> ",
+          "type": "path"
+        },
+        {
+          "background": "#221215",
+          "foreground": "#FFC08F",
+          "properties": {
+            "branch_icon": "",
+            "fetch_status": true,
+            "fetch_upstream_icon": false
+          },
+          "style": "plain",
+          "template": "<#0B090A,transparent> </><#D8262E>┃</> {{ .HEAD }}{{ if .BranchStatus }} <#62C6F2>{{ .BranchStatus }}</>{{ end }}{{ if .Working.Changed }} <#F5C96A>*{{ .Working.String }}</>{{ end }}{{ if .Staging.Changed }} <#3FE08A>+{{ .Staging.String }}</>{{ end }} ",
+          "type": "git"
+        },
+        {
+          "background": "#171214",
+          "foreground": "#F06A22",
+          "properties": {
+            "display_mode": "files",
+            "fetch_version": true
+          },
+          "style": "plain",
+          "template": "<#0B090A,transparent> </><#F06A22>┃</> rs {{ .Major }}.{{ .Minor }} ",
+          "type": "rust"
+        },
+        {
+          "background": "#171214",
+          "foreground": "#3FE08A",
+          "properties": {
+            "display_mode": "files",
+            "fetch_version": true
+          },
+          "style": "plain",
+          "template": "<#0B090A,transparent> </><#3FE08A>┃</> node {{ .Major }}.{{ .Minor }} ",
+          "type": "node"
+        },
+        {
+          "background": "#171214",
+          "foreground": "#3FE08A",
+          "properties": {
+            "display_mode": "files",
+            "fetch_version": true
+          },
+          "style": "plain",
+          "template": "<#0B090A,transparent> </><#3FE08A>┃</> py {{ if .Venv }}{{ .Venv }} {{ end }}{{ .Major }}.{{ .Minor }} ",
+          "type": "python"
+        },
+        {
+          "background": "#171214",
+          "foreground": "#62C6F2",
+          "properties": {
+            "display_mode": "files",
+            "fetch_version": true
+          },
+          "style": "plain",
+          "template": "<#0B090A,transparent> </><#62C6F2>┃</> go {{ .Major }}.{{ .Minor }} ",
+          "type": "go"
+        }
+      ],
+      "type": "prompt"
+    },
+    {
+      "alignment": "right",
+      "segments": [
+        {
+          "background": "#171214",
+          "foreground": "#F5C96A",
+          "properties": {
+            "style": "roundrock",
+            "threshold": 1500
+          },
+          "style": "plain",
+          "template": "<#F5C96A>┃ {{ .FormattedMs }} </>",
+          "type": "executiontime"
+        },
+        {
+          "background": "#171214",
+          "foreground": "#DDD3C9",
+          "properties": {
+            "time_format": "15:04"
+          },
+          "style": "plain",
+          "template": "<#0B090A,transparent> </><#F06A22>┃</> {{ .CurrentDate | date .Format }} <#D8262E,transparent>▜</>",
+          "type": "time"
+        }
+      ],
+      "type": "prompt"
+    },
+    {
+      "alignment": "left",
+      "newline": true,
+      "segments": [
+        {
+          "background": "transparent",
+          "foreground": "#F06A22",
+          "properties": {
+            "always_enabled": true
+          },
+          "style": "plain",
+          "template": "<#55383B>┗━</>{{ if gt .Code 0 }}<#F0413C>[精神汚染] // ERR:{{ .Code }} ▸</>{{ else }}<#D8262E>[弐号機]</> <#F06A22>▸</>{{ end }}",
+          "type": "status"
+        }
+      ],
+      "type": "prompt"
+    }
+  ],
+  "console_title_template": "UNIT-02 // {{ .Folder }}",
+  "final_space": true,
+  "secondary_prompt": {
+    "background": "transparent",
+    "foreground": "#8C7D78",
+    "template": "▸ "
+  },
+  "transient_prompt": {
+    "background": "transparent",
+    "foreground": "#8C7D78",
+    "template": "▸ "
+  },
+  "version": 3
+}

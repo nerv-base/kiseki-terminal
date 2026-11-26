@@ -1,0 +1,152 @@
+{
+  "$schema": "https://raw.githubusercontent.com/JanDeDobbeleer/oh-my-posh/main/themes/schema.json",
+  "blocks": [
+    {
+      "alignment": "left",
+      "newline": true,
+      "segments": [
+        {
+          "background": "transparent",
+          "foreground": "#66F0FF",
+          "style": "plain",
+          "template": "<#2B3466>┌─</>░▒▓",
+          "type": "text"
+        },
+        {
+          "background": "#66F0FF",
+          "foreground": "#0A0F25",
+          "properties": {
+            "folder_separator_icon": "/",
+            "home_icon": "~",
+            "max_depth": 2,
+            "style": "agnoster_short"
+          },
+          "style": "plain",
+          "template": " ★ <b>{{ .Path }}</b> ",
+          "type": "path"
+        },
+        {
+          "background": "transparent",
+          "foreground": "#66F0FF",
+          "style": "plain",
+          "template": "▓▒░",
+          "type": "text"
+        },
+        {
+          "background": "#191E3C",
+          "foreground": "#D2B8FF",
+          "properties": {
+            "branch_icon": "",
+            "fetch_status": true,
+            "fetch_upstream_icon": false
+          },
+          "style": "plain",
+          "template": "<#0A0F25,transparent> </><#FF82B8>▌</><#D2B8FF> {{ .HEAD }}</>{{ if .BranchStatus }} <#66F0FF>{{ .BranchStatus }}</>{{ end }}{{ if .Working.Changed }} <#FFD580>*{{ .Working.String }}</>{{ end }}{{ if .Staging.Changed }} <#72F1B8>+{{ .Staging.String }}</>{{ end }} ",
+          "type": "git"
+        },
+        {
+          "background": "#151B36",
+          "foreground": "#FFD580",
+          "properties": {
+            "display_mode": "files",
+            "fetch_version": true
+          },
+          "style": "plain",
+          "template": "<#0A0F25,transparent> </><#FF82B8>▌</> rs {{ .Major }}.{{ .Minor }} ",
+          "type": "rust"
+        },
+        {
+          "background": "#151B36",
+          "foreground": "#72F1B8",
+          "properties": {
+            "display_mode": "files",
+            "fetch_version": true
+          },
+          "style": "plain",
+          "template": "<#0A0F25,transparent> </><#72F1B8>▌</> node {{ .Major }}.{{ .Minor }} ",
+          "type": "node"
+        },
+        {
+          "background": "#151B36",
+          "foreground": "#72F1B8",
+          "properties": {
+            "display_mode": "files",
+            "fetch_version": true
+          },
+          "style": "plain",
+          "template": "<#0A0F25,transparent> </><#72F1B8>▌</> py {{ if .Venv }}{{ .Venv }} {{ end }}{{ .Major }}.{{ .Minor }} ",
+          "type": "python"
+        },
+        {
+          "background": "#151B36",
+          "foreground": "#66F0FF",
+          "properties": {
+            "display_mode": "files",
+            "fetch_version": true
+          },
+          "style": "plain",
+          "template": "<#0A0F25,transparent> </><#66F0FF>▌</> go {{ .Major }}.{{ .Minor }} ",
+          "type": "go"
+        }
+      ],
+      "type": "prompt"
+    },
+    {
+      "alignment": "right",
+      "segments": [
+        {
+          "background": "#151B36",
+          "foreground": "#FFD580",
+          "properties": {
+            "style": "roundrock",
+            "threshold": 1500
+          },
+          "style": "plain",
+          "template": "<#FFD580>▌ {{ .FormattedMs }} </>",
+          "type": "executiontime"
+        },
+        {
+          "background": "#151B36",
+          "foreground": "#D6DCFA",
+          "properties": {
+            "time_format": "15:04"
+          },
+          "style": "plain",
+          "template": "<#0A0F25,transparent> </><#B48EFE>▌</> <#B48EFE>✦</> {{ .CurrentDate | date .Format }} <#2B3466,transparent>─┐</>",
+          "type": "time"
+        }
+      ],
+      "type": "prompt"
+    },
+    {
+      "alignment": "left",
+      "newline": true,
+      "segments": [
+        {
+          "background": "transparent",
+          "foreground": "#66F0FF",
+          "properties": {
+            "always_enabled": true
+          },
+          "style": "plain",
+          "template": "<#2B3466>└─</> {{ if gt .Code 0 }}<#FF6B8B>[ERR] {{ .Code }} ▶</>{{ else }}<#FF82B8>♥</> <#66F0FF>▶</>{{ end }}",
+          "type": "status"
+        }
+      ],
+      "type": "prompt"
+    }
+  ],
+  "console_title_template": "★ STARLIGHT // {{ .Folder }}",
+  "final_space": true,
+  "secondary_prompt": {
+    "background": "transparent",
+    "foreground": "#737DB5",
+    "template": "▶ "
+  },
+  "transient_prompt": {
+    "background": "transparent",
+    "foreground": "#737DB5",
+    "template": "▶ "
+  },
+  "version": 3
+}

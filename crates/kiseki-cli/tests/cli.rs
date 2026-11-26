@@ -105,6 +105,41 @@ fn version_and_help_are_available() {
 }
 
 #[test]
+fn dependencies_have_one_doctor_check_and_a_status_summary() {
+    let sandbox = Sandbox::new();
+    let deps = sandbox.json(&["deps", "--json"]);
+    let tools = deps["tools"].as_array().unwrap();
+    assert_eq!(tools.len(), 8);
+    let missing = tools
+        .iter()
+        .filter(|tool| tool["status"] == "missing")
+        .count();
+    let incompatible = tools
+        .iter()
+        .filter(|tool| tool["compatible"] == false)
+        .count();
+    let status = sandbox.json(&["status", "--json"]);
+    assert_eq!(status["deps"]["missing"], missing);
+    assert_eq!(status["deps"]["incompatible"], incompatible);
+    assert_eq!(
+        status["deps"]["ready"],
+        tools.len() - missing - incompatible
+    );
+    let doctor = sandbox.json(&["doctor", "--json"]);
+    let checks = doctor["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|check| check["name"].as_str().unwrap().starts_with("deps."))
+        .collect::<Vec<_>>();
+    assert_eq!(checks.len(), 1);
+    assert_eq!(checks[0]["name"], "deps.summary");
+    assert!(checks[0]["hint"].as_str().unwrap().contains("kiseki deps"));
+    let fonts = sandbox.json(&["fonts", "install", "--json"]);
+    assert!(fonts["remedy"].as_str().unwrap().contains("重跑安装脚本"));
+}
+
+#[test]
 fn theme_list_works_before_initialisation() {
     let sandbox = Sandbox::new();
     let json = sandbox.json(&["theme", "list", "--json"]);

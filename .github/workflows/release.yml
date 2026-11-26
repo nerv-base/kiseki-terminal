@@ -15,11 +15,6 @@ on:
         required: false
         default: true
         type: boolean
-      publish_npm:
-        description: "Publish `kiseki-terminal` + 6 platform packages to npm"
-        required: false
-        default: false
-        type: boolean
       publish_brew:
         description: "Update Formula/kiseki.rb in nerv-base/homebrew-tap"
         required: false
@@ -28,7 +23,6 @@ on:
 
 permissions:
   contents: write
-  id-token: write
 
 concurrency:
   group: release-${{ github.ref }}
@@ -42,9 +36,7 @@ jobs:
       tag: ${{ steps.meta.outputs.tag }}
       version: ${{ steps.meta.outputs.version }}
       prerelease: ${{ steps.meta.outputs.prerelease }}
-      npm_tag: ${{ steps.meta.outputs.npm_tag }}
       draft: ${{ steps.meta.outputs.draft }}
-      publish_npm: ${{ steps.meta.outputs.publish_npm }}
       publish_brew: ${{ steps.meta.outputs.publish_brew }}
     steps:
       - id: meta
@@ -53,12 +45,10 @@ jobs:
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             TAG="${{ inputs.tag }}"
             DRAFT="${{ inputs.draft }}"
-            PUBLISH_NPM="${{ inputs.publish_npm }}"
             PUBLISH_BREW="${{ inputs.publish_brew }}"
           else
             TAG="${GITHUB_REF_NAME}"
             DRAFT="false"
-            PUBLISH_NPM="true"
             PUBLISH_BREW="true"
           fi
           case "$TAG" in
@@ -68,18 +58,15 @@ jobs:
           VERSION="${TAG#v}"
           if [[ "$VERSION" == *-* ]]; then
             PRERELEASE="true"
-            NPM_TAG="next"
           else
             PRERELEASE="false"
-            NPM_TAG="latest"
           fi
-          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "prerelease=${PRERELEASE}" >> "$GITHUB_OUTPUT"
-          echo "npm_tag=${NPM_TAG}" >> "$GITHUB_OUTPUT"
-          echo "draft=${DRAFT}" >> "$GITHUB_OUTPUT"
-          echo "publish_npm=${PUBLISH_NPM}" >> "$GITHUB_OUTPUT"
-          echo "publish_brew=${PUBLISH_BREW}" >> "$GITHUB_OUTPUT"
+          printf '%s\n' \
+            "tag=${TAG}" \
+            "version=${VERSION}" \
+            "prerelease=${PRERELEASE}" \
+            "draft=${DRAFT}" \
+            "publish_brew=${PUBLISH_BREW}" >> "$GITHUB_OUTPUT"
 
   build:
     name: Build (${{ matrix.target }})
@@ -159,7 +146,11 @@ jobs:
             -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
           rm -f "$RUNNER_TEMP/cert.p12"
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KC_PASS" "$KEYCHAIN" > /dev/null
-          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | sed 's/"//g')
+          KEYCHAINS=("$KEYCHAIN")
+          while IFS='"' read -r _ existing _; do
+            if [ -n "$existing" ]; then KEYCHAINS+=("$existing"); fi
+          done < <(security list-keychains -d user)
+          security list-keychains -d user -s "${KEYCHAINS[@]}"
 
           IDENTITY="$(security find-identity -v -p codesigning "$KEYCHAIN" | awk -F'"' '/Developer ID Application:/ { print $2; exit }')"
           if [ -z "$IDENTITY" ]; then
@@ -220,11 +211,14 @@ jobs:
         run: |
           TAG="${{ needs.prepare.outputs.tag }}"
           PKG="kiseki-${TAG}-${{ matrix.target }}"
-          mkdir -p "dist/archives" "dist/binaries/${{ matrix.target }}" "dist/stage/${PKG}"
-          cp "target/${{ matrix.target }}/release/${{ matrix.bin }}" "dist/binaries/${{ matrix.target }}/${{ matrix.bin }}"
-          chmod +x "dist/binaries/${{ matrix.target }}/${{ matrix.bin }}"
-          cp "dist/binaries/${{ matrix.target }}/${{ matrix.bin }}" "dist/stage/${PKG}/${{ matrix.bin }}"
+          mkdir -p "dist/archives" "dist/stage/${PKG}"
+          cp "target/${{ matrix.target }}/release/${{ matrix.bin }}" "dist/stage/${PKG}/${{ matrix.bin }}"
+          chmod +x "dist/stage/${PKG}/${{ matrix.bin }}"
           cp README.md LICENSE "dist/stage/${PKG}/"
+          cp crates/kiseki-compiler/assets/zsh/NOTICE "dist/stage/${PKG}/"
+          for plugin in zsh-syntax-highlighting zsh-autosuggestions; do
+            cp "crates/kiseki-compiler/assets/zsh/$plugin/LICENSE" "dist/stage/${PKG}/LICENSE.$plugin"
+          done
           tar -C dist/stage -czf "dist/archives/${PKG}.tar.gz" "${PKG}"
 
       - name: Package Windows archive (.zip)
@@ -234,22 +228,18 @@ jobs:
           $tag = "${{ needs.prepare.outputs.tag }}"
           $target = "${{ matrix.target }}"
           $pkg = "kiseki-$tag-$target"
-          New-Item -ItemType Directory -Force -Path "dist/archives", "dist/binaries/$target", "dist/stage/$pkg" | Out-Null
-          Copy-Item "target/$target/release/${{ matrix.bin }}" "dist/binaries/$target/${{ matrix.bin }}"
-          Copy-Item "dist/binaries/$target/${{ matrix.bin }}" "dist/stage/$pkg/${{ matrix.bin }}"
-          Copy-Item README.md, LICENSE "dist/stage/$pkg/"
+          New-Item -ItemType Directory -Force -Path "dist/archives", "dist/stage/$pkg" | Out-Null
+          Copy-Item "target/$target/release/${{ matrix.bin }}" "dist/stage/$pkg/${{ matrix.bin }}"
+          Copy-Item README.md, LICENSE, crates/kiseki-compiler/assets/zsh/NOTICE "dist/stage/$pkg/"
+          foreach ($plugin in 'zsh-syntax-highlighting', 'zsh-autosuggestions') {
+            Copy-Item "crates/kiseki-compiler/assets/zsh/$plugin/LICENSE" "dist/stage/$pkg/LICENSE.$plugin"
+          }
           Compress-Archive -Path "dist/stage/$pkg" -DestinationPath "dist/archives/$pkg.zip" -Force
 
       - uses: actions/upload-artifact@v4
         with:
           name: archive-${{ matrix.target }}
           path: dist/archives/*
-          if-no-files-found: error
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: binary-${{ matrix.target }}
-          path: dist/binaries/${{ matrix.target }}/${{ matrix.bin }}
           if-no-files-found: error
 
   release:
@@ -269,32 +259,35 @@ jobs:
           path: dist/archives
           merge-multiple: true
 
+      - name: Render dependency manifest
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/release/render-deps.mjs --out dist/deps.tsv
+
       - name: Generate SHA-256 checksums
         run: |
           cd dist/archives
           sha256sum kiseki-* | sort -k2 > checksums.txt
+          sha256sum ../deps.tsv | awk '{print $1 "  deps.tsv"}' >> checksums.txt
           cat checksums.txt
 
-      - name: Render Homebrew Formula & Scoop Manifest
+      - name: Render Homebrew formula and stage release manifests
         run: |
           mkdir -p dist/manifests
           node scripts/release/render-manifests.mjs \
             --version "${{ needs.prepare.outputs.version }}" \
             --checksums dist/archives/checksums.txt \
             --brew-out dist/manifests/kiseki.rb \
-            --scoop-out dist/manifests/kiseki.json \
             --repo "${{ github.repository }}"
           ruby -c dist/manifests/kiseki.rb
-          node -e "JSON.parse(require('fs').readFileSync('dist/manifests/kiseki.json', 'utf8'))"
+          cp dist/archives/checksums.txt dist/deps.tsv dist/manifests/
 
       - name: Upload manifests artifact for downstream jobs
         uses: actions/upload-artifact@v4
         with:
           name: release-manifests
-          path: |
-            dist/archives/checksums.txt
-            dist/manifests/kiseki.rb
-            dist/manifests/kiseki.json
+          path: dist/manifests/
+          if-no-files-found: error
 
       - name: Create or update GitHub Release
         env:
@@ -313,8 +306,6 @@ jobs:
           ## Install
 
           - **Homebrew (macOS / Linux)**: \`brew install nerv-base/tap/kiseki\`
-          - **npm / bun**: \`npm i -g kiseki-terminal\` · \`bun add -g kiseki-terminal\` · \`bunx kiseki-terminal\`
-          - **Scoop (Windows)**: \`scoop install https://github.com/${{ github.repository }}/releases/download/${TAG}/kiseki.json\`
           - **Shell (macOS / Linux)**: \`curl -fsSL https://kisekiterm.dev/install.sh | KISEKI_VERSION=${TAG} sh\`
           - **PowerShell (Windows)**: \`& ([scriptblock]::Create((irm https://kisekiterm.dev/install.ps1))) -Version ${TAG}\`
 
@@ -328,7 +319,7 @@ jobs:
             dist/archives/kiseki-*
             dist/archives/checksums.txt
             dist/manifests/kiseki.rb
-            dist/manifests/kiseki.json
+            dist/deps.tsv
             scripts/install.sh
             scripts/install.ps1
           )
@@ -344,69 +335,6 @@ jobs:
             if [ "$PRERELEASE" = "true" ]; then FLAGS+=(--prerelease); fi
             gh release create "$TAG" "${FLAGS[@]}" "${ASSETS[@]}"
           fi
-
-  publish-npm:
-    name: Publish npm / bun packages
-    needs: [prepare, build, release]
-    if: needs.prepare.outputs.draft == 'false' && needs.prepare.outputs.publish_npm == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          registry-url: "https://registry.npmjs.org"
-
-      - name: Download all 6 compiled binaries
-        uses: actions/download-artifact@v4
-        with:
-          pattern: binary-*
-          path: dist/binaries-raw
-
-      - name: Normalize binary directory layout
-        run: |
-          mkdir -p dist/binaries
-          for dir in dist/binaries-raw/binary-*; do
-            target="${dir##*/binary-}"
-            mkdir -p "dist/binaries/${target}"
-            cp -f "${dir}"/* "dist/binaries/${target}/"
-          done
-          ls -la dist/binaries/*
-
-      - name: Stage npm packages
-        run: |
-          node scripts/release/stage-npm.mjs \
-            --version "${{ needs.prepare.outputs.version }}" \
-            --binaries-dir dist/binaries \
-            --out-dir dist/npm > dist/npm-manifest.json
-          cat dist/npm-manifest.json
-
-      - name: Smoke test staged Linux x64 wrapper
-        run: |
-          mkdir -p /tmp/kiseki-npm-smoke/node_modules
-          cp -R dist/npm/kiseki-terminal-linux-x64 /tmp/kiseki-npm-smoke/node_modules/
-          cp -R dist/npm/kiseki-terminal /tmp/kiseki-npm-smoke/node_modules/
-          node /tmp/kiseki-npm-smoke/node_modules/kiseki-terminal/bin/kiseki.js --version
-
-      - name: Publish platform packages & wrapper to npm
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          NPM_TAG="${{ needs.prepare.outputs.npm_tag }}"
-          VERSION="${{ needs.prepare.outputs.version }}"
-          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
-            echo "::notice::NPM_TOKEN secret is not configured; attempting npm OIDC Trusted Publishing."
-          fi
-          while IFS= read -r dir; do
-            pkg="$(node -e "console.log(JSON.parse(require('fs').readFileSync(process.argv[1],'utf8')).name)" "$dir/package.json")"
-            if npm view "${pkg}@${VERSION}" version >/dev/null 2>&1; then
-              echo "Skipping ${pkg}@${VERSION} (already published)"
-              continue
-            fi
-            echo "Publishing ${pkg}@${VERSION} (tag=${NPM_TAG})..."
-            npm publish "$dir" --access public --provenance --tag "$NPM_TAG"
-          done < <(node -e "const m = JSON.parse(require('fs').readFileSync('dist/npm-manifest.json','utf8')); console.log(m.packages.map(p => p.dir).join('\n'));")
 
   publish-homebrew:
     name: Update nerv-base/homebrew-tap
@@ -508,7 +436,7 @@ jobs:
           VERSION="${{ needs.prepare.outputs.version }}"
           printf '{"tag":"%s","version":"%s"}\n' "$TAG" "$VERSION" > dist/latest.json
 
-          for f in dist/archives/kiseki-* dist/manifests/checksums.txt scripts/install.sh scripts/install.ps1; do
+          for f in dist/archives/kiseki-* dist/manifests/checksums.txt dist/manifests/deps.tsv scripts/install.sh scripts/install.ps1; do
             name="$(basename "$f")"
             npx --yes wrangler@4 r2 object put "kiseki-dl/releases/${TAG}/${name}" --file "$f" --remote
           done

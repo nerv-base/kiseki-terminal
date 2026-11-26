@@ -1570,8 +1570,20 @@ impl App {
             return None;
         };
         let path = self.paths.generated("prompt.omp.json");
+        // Oh My Posh resolves `extends` as a local or remote config. Diagnostic
+        // subprocesses only receive an absolute path to a self-contained file.
+        if !path.is_absolute() {
+            return None;
+        }
         let raw = self.platform.read_to_string(&path).ok()??;
         let config: serde_json::Value = serde_json::from_str(&raw).ok()?;
+        if config
+            .as_object()?
+            .keys()
+            .any(|key| key.eq_ignore_ascii_case("extends"))
+        {
+            return None;
+        }
         if config["version"].as_u64()? != api {
             return Some(false);
         }

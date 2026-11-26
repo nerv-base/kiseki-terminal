@@ -821,6 +821,37 @@ mod tests {
     }
 
     #[test]
+    fn prompt_preset_snapshots() {
+        macro_rules! fixture {
+            ($theme:literal, $preset:literal) => {
+                (
+                    $preset,
+                    include_str!(concat!("../../../themes/", $theme, "/manifest.json")),
+                    include_str!(concat!("../../../themes/", $theme, "/tokens.json")),
+                    include_str!(concat!("../tests/snapshots/", $preset, ".omp.json")),
+                )
+            };
+        }
+        for (preset, manifest, tokens, snapshot) in [
+            fixture!("nerv-eva", "tactical-bar"),
+            fixture!("kyoto-sakura", "shrine-ribbon"),
+            fixture!("shinkai-rain", "cinematic-line"),
+            fixture!("starlight-8bit", "pixel-frame"),
+        ] {
+            let pack = ThemePack {
+                manifest: serde_json::from_str(manifest).unwrap(),
+                tokens: serde_json::from_str(tokens).unwrap(),
+            };
+            let theme = ResolvedTheme::from_pack(&pack, RenderingProfile::Balanced);
+            let (_, output) = artifacts(&theme, PromptPolicy::ManagedTemplate)
+                .into_iter()
+                .find(|(path, _)| *path == crate::artifact::names::PROMPT_OMP)
+                .unwrap();
+            assert_eq!(output, snapshot.trim_end(), "{preset}");
+        }
+    }
+
+    #[test]
     fn policy_controls_which_artifacts_exist() {
         let theme = theme();
         assert!(artifacts(&theme, PromptPolicy::Disabled).is_empty());

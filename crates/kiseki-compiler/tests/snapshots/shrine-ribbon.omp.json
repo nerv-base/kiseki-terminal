@@ -1,0 +1,138 @@
+{
+  "$schema": "https://raw.githubusercontent.com/JanDeDobbeleer/oh-my-posh/main/themes/schema.json",
+  "blocks": [
+    {
+      "alignment": "left",
+      "newline": true,
+      "segments": [
+        {
+          "background": "#23152E",
+          "foreground": "#FFEBF4",
+          "properties": {
+            "folder_separator_icon": "/",
+            "home_icon": "~",
+            "max_depth": 2,
+            "style": "agnoster_short"
+          },
+          "style": "plain",
+          "template": "<#FF9EC7,transparent>「</><#FF9EC7> ✿</> <b>{{ .Path }}</b> <#FF9EC7,transparent>」</>",
+          "type": "path"
+        },
+        {
+          "background": "#1E142B",
+          "foreground": "#C4A7FF",
+          "properties": {
+            "branch_icon": "",
+            "fetch_status": true,
+            "fetch_upstream_icon": false
+          },
+          "style": "plain",
+          "template": "<#0F0B19,transparent> </> <#FFC971>·</> {{ .HEAD }}{{ if .BranchStatus }} <#86E3CE>{{ .BranchStatus }}</>{{ end }}{{ if .Working.Changed }} <#FFC971>*{{ .Working.String }}</>{{ end }}{{ if .Staging.Changed }} <#86E3CE>+{{ .Staging.String }}</>{{ end }} ",
+          "type": "git"
+        },
+        {
+          "background": "#1C142B",
+          "foreground": "#FFC971",
+          "properties": {
+            "display_mode": "files",
+            "fetch_version": true
+          },
+          "style": "plain",
+          "template": "<#0F0B19,transparent> </> rs {{ .Major }}.{{ .Minor }} ",
+          "type": "rust"
+        },
+        {
+          "background": "#1C142B",
+          "foreground": "#86E3CE",
+          "properties": {
+            "display_mode": "files",
+            "fetch_version": true
+          },
+          "style": "plain",
+          "template": "<#0F0B19,transparent> </> node {{ .Major }}.{{ .Minor }} ",
+          "type": "node"
+        },
+        {
+          "background": "#1C142B",
+          "foreground": "#86E3CE",
+          "properties": {
+            "display_mode": "files",
+            "fetch_version": true
+          },
+          "style": "plain",
+          "template": "<#0F0B19,transparent> </> py {{ if .Venv }}{{ .Venv }} {{ end }}{{ .Major }}.{{ .Minor }} ",
+          "type": "python"
+        },
+        {
+          "background": "#1C142B",
+          "foreground": "#94B4FF",
+          "properties": {
+            "display_mode": "files",
+            "fetch_version": true
+          },
+          "style": "plain",
+          "template": "<#0F0B19,transparent> </> go {{ .Major }}.{{ .Minor }} ",
+          "type": "go"
+        }
+      ],
+      "type": "prompt"
+    },
+    {
+      "alignment": "right",
+      "segments": [
+        {
+          "background": "#1C142B",
+          "foreground": "#FFC971",
+          "properties": {
+            "style": "roundrock",
+            "threshold": 1500
+          },
+          "style": "plain",
+          "template": " {{ .FormattedMs }} ",
+          "type": "executiontime"
+        },
+        {
+          "background": "#1C142B",
+          "foreground": "#EADAE6",
+          "properties": {
+            "time_format": "15:04"
+          },
+          "style": "plain",
+          "template": "<#0F0B19,transparent> </><#FFC971,transparent>「</> {{ .CurrentDate | date .Format }} <#FFC971,transparent>」</>",
+          "type": "time"
+        }
+      ],
+      "type": "prompt"
+    },
+    {
+      "alignment": "left",
+      "newline": true,
+      "segments": [
+        {
+          "background": "transparent",
+          "foreground": "#FF9EC7",
+          "properties": {
+            "always_enabled": true
+          },
+          "style": "plain",
+          "template": "  {{ if gt .Code 0 }}<#FF6B7B>「散華 {{ .Code }}」 ›</>{{ else }}<#FFC971>❀</> <#FF9EC7>›</>{{ end }}",
+          "type": "status"
+        }
+      ],
+      "type": "prompt"
+    }
+  ],
+  "console_title_template": "✿ 夜樱 // {{ .Folder }}",
+  "final_space": true,
+  "secondary_prompt": {
+    "background": "transparent",
+    "foreground": "#8B739C",
+    "template": "› "
+  },
+  "transient_prompt": {
+    "background": "transparent",
+    "foreground": "#8B739C",
+    "template": "› "
+  },
+  "version": 3
+}
