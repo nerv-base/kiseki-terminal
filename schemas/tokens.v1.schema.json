@@ -1,0 +1,409 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kiseki.dev/schemas/tokens.v1.schema.json",
+  "title": "Kiseki Theme Tokens v1",
+  "description": "5-layer declarative semantic design tokens and zero-code-execution safe overrides.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "palette"],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "maxLength": 256
+    },
+    "schemaVersion": {
+      "const": 1
+    },
+    "palette": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["surfaces", "text", "accents", "semantic", "interaction", "ansi"],
+      "properties": {
+        "surfaces": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["crust", "mantle", "base", "surface0", "surface1", "surface2", "overlay0", "overlay1"],
+          "properties": {
+            "crust": { "$ref": "#/$defs/hexColor" },
+            "mantle": { "$ref": "#/$defs/hexColor" },
+            "base": { "$ref": "#/$defs/hexColor" },
+            "surface0": { "$ref": "#/$defs/hexColor" },
+            "surface1": { "$ref": "#/$defs/hexColor" },
+            "surface2": { "$ref": "#/$defs/hexColor" },
+            "overlay0": { "$ref": "#/$defs/hexColor" },
+            "overlay1": { "$ref": "#/$defs/hexColor" }
+          }
+        },
+        "text": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["primary", "secondary", "muted", "inverse"],
+          "properties": {
+            "primary": { "$ref": "#/$defs/hexColor" },
+            "secondary": { "$ref": "#/$defs/hexColor" },
+            "muted": { "$ref": "#/$defs/hexColor" },
+            "inverse": { "$ref": "#/$defs/hexColor" }
+          }
+        },
+        "accents": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["primary", "secondary", "tertiary"],
+          "properties": {
+            "primary": { "$ref": "#/$defs/hexColor" },
+            "secondary": { "$ref": "#/$defs/hexColor" },
+            "tertiary": { "$ref": "#/$defs/hexColor" }
+          }
+        },
+        "semantic": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["error", "warning", "success", "info", "hint"],
+          "properties": {
+            "error": { "$ref": "#/$defs/hexColor" },
+            "warning": { "$ref": "#/$defs/hexColor" },
+            "success": { "$ref": "#/$defs/hexColor" },
+            "info": { "$ref": "#/$defs/hexColor" },
+            "hint": { "$ref": "#/$defs/hexColor" }
+          }
+        },
+        "interaction": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["cursor", "cursorText", "selectionBg", "selectionFg", "matchBg", "matchFg"],
+          "properties": {
+            "cursor": { "$ref": "#/$defs/hexColor" },
+            "cursorText": { "$ref": "#/$defs/hexColor" },
+            "selectionBg": { "$ref": "#/$defs/hexColor" },
+            "selectionFg": { "$ref": "#/$defs/hexColor" },
+            "matchBg": { "$ref": "#/$defs/hexColor" },
+            "matchFg": { "$ref": "#/$defs/hexColor" }
+          }
+        },
+        "ansi": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "black", "red", "green", "yellow", "blue", "magenta", "cyan", "white",
+            "brightBlack", "brightRed", "brightGreen", "brightYellow",
+            "brightBlue", "brightMagenta", "brightCyan", "brightWhite"
+          ],
+          "properties": {
+            "black": { "$ref": "#/$defs/hexColor" },
+            "red": { "$ref": "#/$defs/hexColor" },
+            "green": { "$ref": "#/$defs/hexColor" },
+            "yellow": { "$ref": "#/$defs/hexColor" },
+            "blue": { "$ref": "#/$defs/hexColor" },
+            "magenta": { "$ref": "#/$defs/hexColor" },
+            "cyan": { "$ref": "#/$defs/hexColor" },
+            "white": { "$ref": "#/$defs/hexColor" },
+            "brightBlack": { "$ref": "#/$defs/hexColor" },
+            "brightRed": { "$ref": "#/$defs/hexColor" },
+            "brightGreen": { "$ref": "#/$defs/hexColor" },
+            "brightYellow": { "$ref": "#/$defs/hexColor" },
+            "brightBlue": { "$ref": "#/$defs/hexColor" },
+            "brightMagenta": { "$ref": "#/$defs/hexColor" },
+            "brightCyan": { "$ref": "#/$defs/hexColor" },
+            "brightWhite": { "$ref": "#/$defs/hexColor" }
+          }
+        }
+      }
+    },
+    "syntax": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "keyword": { "$ref": "#/$defs/hexColor" },
+        "operator": { "$ref": "#/$defs/hexColor" },
+        "function": { "$ref": "#/$defs/hexColor" },
+        "method": { "$ref": "#/$defs/hexColor" },
+        "type": { "$ref": "#/$defs/hexColor" },
+        "variable": { "$ref": "#/$defs/hexColor" },
+        "parameter": { "$ref": "#/$defs/hexColor" },
+        "property": { "$ref": "#/$defs/hexColor" },
+        "string": { "$ref": "#/$defs/hexColor" },
+        "escape": { "$ref": "#/$defs/hexColor" },
+        "number": { "$ref": "#/$defs/hexColor" },
+        "boolean": { "$ref": "#/$defs/hexColor" },
+        "constant": { "$ref": "#/$defs/hexColor" },
+        "comment": { "$ref": "#/$defs/hexColor" },
+        "punctuation": { "$ref": "#/$defs/hexColor" },
+        "tag": { "$ref": "#/$defs/hexColor" },
+        "attribute": { "$ref": "#/$defs/hexColor" },
+        "macro": { "$ref": "#/$defs/hexColor" },
+        "invalid": { "$ref": "#/$defs/hexColor" }
+      }
+    },
+    "diff": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "addFg": { "$ref": "#/$defs/hexColor" },
+        "addBg": { "$ref": "#/$defs/hexColor" },
+        "deleteFg": { "$ref": "#/$defs/hexColor" },
+        "deleteBg": { "$ref": "#/$defs/hexColor" },
+        "changeFg": { "$ref": "#/$defs/hexColor" },
+        "changeBg": { "$ref": "#/$defs/hexColor" },
+        "inlineAddBg": { "$ref": "#/$defs/hexColor" },
+        "inlineDeleteBg": { "$ref": "#/$defs/hexColor" }
+      }
+    },
+    "ui": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "windowFrame": { "$ref": "#/$defs/hexColor" },
+        "windowFrameUnfocused": { "$ref": "#/$defs/hexColor" },
+        "tabBarBg": { "$ref": "#/$defs/hexColor" },
+        "tabBarUnfocusedBg": { "$ref": "#/$defs/hexColor" },
+        "tabActiveBg": { "$ref": "#/$defs/hexColor" },
+        "tabActiveFg": { "$ref": "#/$defs/hexColor" },
+        "tabInactiveBg": { "$ref": "#/$defs/hexColor" },
+        "tabInactiveFg": { "$ref": "#/$defs/hexColor" },
+        "statuslineBg": { "$ref": "#/$defs/hexColor" },
+        "statuslineFg": { "$ref": "#/$defs/hexColor" },
+        "border": { "$ref": "#/$defs/hexColor" },
+        "borderFocused": { "$ref": "#/$defs/hexColor" },
+        "panelBg": { "$ref": "#/$defs/hexColor" }
+      }
+    },
+    "atmosphere": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "window": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "opacity": { "type": "number", "minimum": 0.2, "maximum": 1.0 },
+            "unfocusedOpacity": { "type": "number", "minimum": 0.2, "maximum": 1.0 },
+            "blur": { "type": "boolean" },
+            "blurRadius": { "type": "integer", "minimum": 0, "maximum": 64 },
+            "useMica": { "type": "boolean" },
+            "padding": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["x", "y"],
+              "properties": {
+                "x": { "type": "integer", "minimum": 0, "maximum": 64 },
+                "y": { "type": "integer", "minimum": 0, "maximum": 64 }
+              }
+            }
+          }
+        },
+        "wallpaper": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path"],
+          "properties": {
+            "path": { "$ref": "#/$defs/safeImagePath" },
+            "opacity": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+            "unfocusedOpacity": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+            "alignment": {
+              "type": "string",
+              "enum": ["center", "top-left", "top-right", "bottom-left", "bottom-right"]
+            },
+            "fit": {
+              "type": "string",
+              "enum": ["cover", "contain", "fill"]
+            },
+            "codeSafeZone": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["side", "startX", "endX"],
+              "properties": {
+                "side": { "type": "string", "enum": ["left", "right", "center", "none"] },
+                "startX": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+                "endX": { "type": "number", "minimum": 0.0, "maximum": 1.0 }
+              }
+            },
+            "variants": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "portrait": { "$ref": "#/$defs/safeImagePath" },
+                "compact": { "$ref": "#/$defs/safeImagePath" }
+              }
+            }
+          }
+        },
+        "shader": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "glsl": { "$ref": "#/$defs/safeGlslPath" },
+            "hlsl": { "$ref": "#/$defs/safeHlslPath" },
+            "defaultProfile": {
+              "type": "string",
+              "enum": ["static", "eco", "balanced", "ultra", "accessibility"]
+            },
+            "params": {
+              "type": "object",
+              "maxProperties": 24,
+              "propertyNames": {
+                "pattern": "^[a-zA-Z][a-zA-Z0-9_]{0,31}$"
+              },
+              "additionalProperties": {
+                "oneOf": [
+                  { "type": "number", "minimum": -1000.0, "maximum": 1000.0 },
+                  { "type": "boolean" },
+                  { "$ref": "#/$defs/hexColor" }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "typography": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["families"],
+      "properties": {
+        "style": {
+          "type": "string",
+          "enum": ["8bit", "code", "maple", "modern", "custom"]
+        },
+        "families": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 6,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[A-Za-z0-9 ._-]+$"
+          }
+        },
+        "sizePt": { "type": "number", "minimum": 6.0, "maximum": 36.0 },
+        "lineHeight": { "type": "number", "minimum": 1.0, "maximum": 2.0 },
+        "weight": {
+          "type": "string",
+          "enum": ["thin", "light", "normal", "medium", "semibold", "bold"]
+        },
+        "ligatures": { "type": "boolean" }
+      }
+    },
+    "overrides": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Strict zero-code-execution declarative visual overrides.",
+      "properties": {
+        "terminal": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "cursorShape": {
+              "type": "string",
+              "enum": ["block", "block-hollow", "bar", "underline"]
+            },
+            "cursorBlink": { "type": "boolean" },
+            "macosTitlebarStyle": {
+              "type": "string",
+              "enum": ["transparent", "tabs", "native"]
+            }
+          }
+        },
+        "prompt": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "preset": {
+              "type": "string",
+              "enum": ["tactical-bar", "pixel-frame", "cinematic-line", "shrine-ribbon", "minimal"]
+            },
+            "badgeText": { "$ref": "#/$defs/safeShortLabel" },
+            "okLabel": { "$ref": "#/$defs/safeShortLabel" },
+            "errorLabel": { "$ref": "#/$defs/safeShortLabel" },
+            "promptSymbol": { "$ref": "#/$defs/safeShortGlyph" },
+            "consoleTitlePrefix": { "$ref": "#/$defs/safeShortLabel" },
+            "segmentColors": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "badgeBg": { "$ref": "#/$defs/hexColor" },
+                "badgeFg": { "$ref": "#/$defs/hexColor" },
+                "pathBg": { "$ref": "#/$defs/hexColor" },
+                "pathFg": { "$ref": "#/$defs/hexColor" },
+                "gitBg": { "$ref": "#/$defs/hexColor" },
+                "gitFg": { "$ref": "#/$defs/hexColor" }
+              }
+            }
+          }
+        },
+        "fzf": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "border": {
+              "type": "string",
+              "enum": ["sharp", "rounded", "bold", "double", "none"]
+            },
+            "prompt": { "$ref": "#/$defs/safeShortGlyph" },
+            "pointer": { "$ref": "#/$defs/safeShortGlyph" },
+            "marker": { "$ref": "#/$defs/safeShortGlyph" }
+          }
+        },
+        "fastfetch": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "logoPath": { "$ref": "#/$defs/safeTextPath" },
+            "headerTitle": { "$ref": "#/$defs/safeShortLabel" },
+            "fieldLabels": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "title": { "$ref": "#/$defs/safeShortLabel" },
+                "os": { "$ref": "#/$defs/safeShortLabel" },
+                "shell": { "$ref": "#/$defs/safeShortLabel" },
+                "terminal": { "$ref": "#/$defs/safeShortLabel" },
+                "cpu": { "$ref": "#/$defs/safeShortLabel" },
+                "memory": { "$ref": "#/$defs/safeShortLabel" },
+                "uptime": { "$ref": "#/$defs/safeShortLabel" }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "hexColor": {
+      "type": "string",
+      "pattern": "^#[0-9A-Fa-f]{6}$"
+    },
+    "safeImagePath": {
+      "type": "string",
+      "maxLength": 160,
+      "pattern": "^(?!/)(?!.*\\.\\.)(?!.*\\\\)[A-Za-z0-9._/-]+\\.(png|jpg|jpeg|webp)$"
+    },
+    "safeGlslPath": {
+      "type": "string",
+      "maxLength": 160,
+      "pattern": "^(?!/)(?!.*\\.\\.)(?!.*\\\\)[A-Za-z0-9._/-]+\\.glsl$"
+    },
+    "safeHlslPath": {
+      "type": "string",
+      "maxLength": 160,
+      "pattern": "^(?!/)(?!.*\\.\\.)(?!.*\\\\)[A-Za-z0-9._/-]+\\.hlsl$"
+    },
+    "safeTextPath": {
+      "type": "string",
+      "maxLength": 160,
+      "pattern": "^(?!/)(?!.*\\.\\.)(?!.*\\\\)[A-Za-z0-9._/-]+\\.txt$"
+    },
+    "safeShortLabel": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 48,
+      "pattern": "^[^\\r\\n\\t`$;|&<>\\\\\\u0000-\\u001F]+$"
+    },
+    "safeShortGlyph": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 12,
+      "pattern": "^[^\\r\\n\\t`$;|&<>\"'\\\\\\u0000-\\u001F]+$"
+    }
+  }
+}
