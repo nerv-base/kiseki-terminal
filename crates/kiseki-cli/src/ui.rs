@@ -184,6 +184,26 @@ impl Ui {
         println!("  {}", self.dim(text));
     }
 
+    /// Compact single-line switch banner shown above Fastfetch after clearing
+    /// the terminal in an interactive TTY switch.
+    pub fn use_banner(&self, theme: &ResolvedTheme, subtitle: Option<&str>) {
+        if self.quiet {
+            return;
+        }
+        let swatch = swatch_from_resolved(theme);
+        let sub = subtitle
+            .filter(|s| !s.is_empty())
+            .map(|s| format!("  {}", self.dim(s)))
+            .unwrap_or_default();
+        println!(
+            "{} 已切换至 {} {}  {}{sub}",
+            self.paint_rgb(swatch.accent, "✦", true),
+            self.paint_rgb(swatch.accent, &theme.name, true),
+            self.dim(&format!("({} · {})", theme.id, profile_label(theme.profile))),
+            self.swatch_strip(&swatch)
+        );
+    }
+
     // ---------------------------------------------------------------- use
     pub fn use_report(&self, report: &TransactionReport, theme: &ResolvedTheme, dry_run: bool) {
         if self.quiet {

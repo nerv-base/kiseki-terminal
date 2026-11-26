@@ -783,15 +783,25 @@ impl App {
             let resolved = self
                 .resolve(&loaded, &state, profile)
                 .unwrap_or_else(|_| ResolvedTheme::from_pack(&loaded.pack, profile));
-            self.ui.use_report(&report, &resolved, self.dry_run);
-            // In interactive TTY terminals, show the themed Fastfetch system-info
-            // banner right after switching (matching v1; opt-out via KISEKI_NO_FETCH=1).
-            if !self.dry_run
+            let has_problem = report
+                .targets
+                .iter()
+                .any(|t| matches!(t.status, TargetStatus::Failed | TargetStatus::RolledBack));
+            let interactive_showcase = !self.dry_run
+                && !self.render_only
                 && !self.ui.quiet()
+                && !has_problem
                 && std::io::stdout().is_terminal()
-                && self.platform.env_var("KISEKI_NO_FETCH").as_deref() != Some("1")
-            {
+                && self.platform.env_var("KISEKI_NO_FETCH").as_deref() != Some("1");
+            if interactive_showcase {
+                // Clear screen & scrollback so the new theme opens cleanly with
+                // the switch line + Fastfetch pinned to the top (matching v1).
+                print!("\x1b[2J\x1b[3J\x1b[H");
+                self.ui
+                    .use_banner(&resolved, loaded.pack.manifest.subtitle.as_deref());
                 let _ = self.exec_fastfetch_interactive();
+            } else {
+                self.ui.use_report(&report, &resolved, self.dry_run);
             }
         }
         Ok(())
