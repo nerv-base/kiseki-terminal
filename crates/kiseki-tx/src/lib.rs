@@ -467,15 +467,15 @@ impl<'a> TransactionManager<'a> {
             let Some(adapter) = self.registry.by_id(plan.adapter) else {
                 continue;
             };
-            let caps = adapter.capabilities(
-                detections.get(plan.adapter).unwrap_or(&DetectionReport::not_installed("")),
-                request.env,
-            );
-            let outcome = adapter.reload(
-                detections.get(plan.adapter).unwrap_or(&DetectionReport::not_installed("")),
-                caps,
-                self.platform,
-            )?;
+            let detection = detections
+                .get(plan.adapter)
+                .cloned()
+                .unwrap_or_else(|| DetectionReport::not_installed(""));
+            if !detection.installed && !detection.active_in_session {
+                continue;
+            }
+            let caps = adapter.capabilities(&detection, request.env);
+            let outcome = adapter.reload(&detection, caps, self.platform)?;
             reload.push((plan.adapter.to_string(), outcome.detail().to_string()));
             if let ReloadOutcome::Failed { detail } = outcome {
                 manifest.entries.iter_mut().for_each(|entry| {

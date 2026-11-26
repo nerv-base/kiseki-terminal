@@ -153,7 +153,16 @@ pub fn reload(platform: &dyn Platform) -> ReloadOutcome {
             detail: "pkill is unavailable, so no reload signal was sent".to_string(),
         };
     }
-    match platform.run("pkill", &["-USR2", "-x", "ghostty"]) {
+    // On macOS, BSD `pkill` excludes its own ancestor processes by default.
+    // Because users typically run `kiseki` *inside* Ghostty, `-a` is required
+    // so Ghostty itself receives `SIGUSR2`. Linux procps `pkill` does not
+    // exclude ancestors and uses a different meaning for `-a`.
+    let args: &[&str] = if platform.os() == OsKind::MacOs {
+        &["-USR2", "-a", "-x", "ghostty"]
+    } else {
+        &["-USR2", "-x", "ghostty"]
+    };
+    match platform.run("pkill", args) {
         Ok(output) if output.success() => ReloadOutcome::Signalled {
             detail: "sent SIGUSR2 to ghostty".to_string(),
         },
@@ -339,7 +348,10 @@ mod tests {
                 matches!(reload(&platform), ReloadOutcome::Signalled { .. }),
                 "{version} must signal"
             );
-            assert!(platform.commands().iter().any(|command| command.program == "pkill"));
+            assert!(platform
+                .commands()
+                .iter()
+                .any(|command| command.matches("pkill", &["-USR2", "-a", "-x", "ghostty"])));
         }
 
         for version in ["Ghostty 1.2.3", "Ghostty 1.0.0", "ghostty 0.9.9"] {

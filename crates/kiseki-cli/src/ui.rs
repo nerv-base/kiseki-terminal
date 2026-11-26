@@ -206,9 +206,7 @@ impl Ui {
             self.swatch_strip(&swatch)
         );
         self.print_targets(report, None);
-        for (adapter, detail) in &report.reload {
-            println!("  {} {:<16} {}", self.cyan("↻"), adapter, self.dim(detail));
-        }
+        self.print_reloads(report);
         let warnings = report
             .diagnostics
             .items
@@ -689,9 +687,7 @@ impl Ui {
         if let Some(report) = report {
             self.kv("同步版本", &format!("gen {}", report.state.generation));
             self.print_targets(report, Some(&paths.generated_dir()));
-            for (adapter, detail) in &report.reload {
-                println!("  {} {:<16} {}", self.cyan("↻"), adapter, self.dim(detail));
-            }
+            self.print_reloads(report);
         }
         println!();
         if !on_path {
@@ -721,6 +717,30 @@ impl Ui {
             self.accent("kiseki rollback"),
             self.dim("一键回滚到上一次快照")
         );
+        if !config.render_only {
+            println!(
+                "  {}",
+                self.dim("提示：当前终端执行 `source ~/.zshrc` 或新开标签页后，Prompt 与环境变量立即生效")
+            );
+        }
+    }
+
+    fn print_reloads(&self, report: &TransactionReport) {
+        for (adapter, detail) in &report.reload {
+            // Suppress verbose steady-state auto-reload notes for passive adapters.
+            let passive = detail.contains("on the next prompt")
+                || detail.contains("on the next shell prompt")
+                || detail.contains("reads the generated jsonc");
+            if passive {
+                continue;
+            }
+            let pretty = match detail.as_str() {
+                "sent SIGUSR2 to ghostty" => "已发送 SIGUSR2 实时热重载",
+                "no running ghostty process found" => "未检测到运行中的 Ghostty 进程（下次启动生效）",
+                other => other,
+            };
+            println!("  {} {:<16} {}", self.cyan("↻"), adapter, self.dim(pretty));
+        }
     }
 
     fn print_targets(&self, report: &TransactionReport, generated_dir: Option<&std::path::Path>) {
