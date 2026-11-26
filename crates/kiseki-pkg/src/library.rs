@@ -186,10 +186,22 @@ impl ThemeLibrary {
         Ok(entries.into_values().collect())
     }
 
-    /// Loads a theme by ID, materialising a bundled theme when needed.
+    /// Loads a theme by ID, materialising or upgrading a bundled official theme
+    /// when needed.
+    ///
+    /// Precedence stays `UserDirectory > Community > Official`: if a user or
+    /// community pack shadows an official ID it is returned untouched; when
+    /// resolving from `Official`, `materialize_one` checks `.versions.json` so
+    /// a newer bundled version refreshes the on-disk official pack instead of
+    /// serving stale files forever.
     pub fn load(&self, platform: &dyn Platform, id: &ThemeId) -> Result<LoadedTheme> {
         for (source, root) in &self.roots {
             let dir = root.join(id.as_str());
+            if *source == ThemeSource::Official {
+                if let Some(theme) = bundled_theme(id.as_str()) {
+                    self.materialize_one(platform, theme)?;
+                }
+            }
             if dir.join("manifest.json").exists() {
                 return load_from_dir(&dir, *source);
             }
@@ -500,6 +512,35 @@ mod tests {
         assert_eq!(written, 3);
         let written_again = library.materialize_official(&platform).unwrap();
         assert_eq!(written_again, 0);
+    }
+
+    #[test]
+    fn loading_refreshes_an_outdated_official_pack_version() {
+        let (_dir, platform) = platform();
+        let library = ThemeLibrary::open(&platform, &[]);
+        let id = ThemeId::new("starlight-8bit").unwrap();
+        let first = library.load(&platform, &id).unwrap();
+
+        // Simulate an older 2.0.0 materialized copy on disk.
+        let official = platform.paths().official_themes_dir();
+        platform
+            .write_preserving_symlinks(
+                &official.join(".versions.json"),
+                br#"{"starlight-8bit":"2.0.0"}"#,
+            )
+            .unwrap();
+        let glsl_path = first.root.join("shaders/live.glsl");
+        platform
+            .write_preserving_symlinks(&glsl_path, b"// stale 2.0.0 shader\n")
+            .unwrap();
+
+        let refreshed = library.load(&platform, &id).unwrap();
+        assert!(
+            refreshed.glsl.as_deref().unwrap().contains("mainImage"),
+            "newer bundled version must overwrite stale official pack files"
+        );
+        let versions = std::fs::read_to_string(official.join(".versions.json")).unwrap();
+        assert!(versions.contains(bundled_theme("starlight-8bit").unwrap().version));
     }
 
     #[test]
