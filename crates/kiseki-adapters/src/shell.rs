@@ -122,7 +122,9 @@ impl Adapter for ZshAdapter {
             );
             return Ok(plan);
         }
-        if detection.path_kind == PathKind::Missing && !ctx.options.allow_create_host_files {
+        if detection.path_kind == PathKind::Missing
+            && (!ctx.options.allow_create_host_files || !detection.installed)
+        {
             plan.diagnostic(
                 Diagnostic::info(
                     "adapter.zsh.no-profile",
@@ -317,7 +319,9 @@ impl Adapter for PowerShellAdapter {
             );
             return Ok(plan);
         }
-        if detection.path_kind == PathKind::Missing && !ctx.options.allow_create_host_files {
+        if detection.path_kind == PathKind::Missing
+            && (!ctx.options.allow_create_host_files || !detection.installed)
+        {
             plan.diagnostic(
                 Diagnostic::info(
                     "adapter.pwsh.no-profile",

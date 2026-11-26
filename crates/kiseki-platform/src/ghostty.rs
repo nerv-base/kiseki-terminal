@@ -52,6 +52,18 @@ pub struct ValidationOutcome {
     pub stderr: String,
 }
 
+/// Finds the Ghostty executable (`KISEKI_GHOSTTY_BIN` override or `platform.which("ghostty")`,
+/// which on macOS also probes `/Applications/Ghostty.app/Contents/MacOS/ghostty`).
+pub fn find_binary(platform: &dyn Platform) -> Option<PathBuf> {
+    if let Some(explicit) = platform.env_var("KISEKI_GHOSTTY_BIN") {
+        let path = PathBuf::from(explicit);
+        if platform.exists(&path) {
+            return Some(path);
+        }
+    }
+    platform.which("ghostty")
+}
+
 /// Runs `ghostty +validate-config --config-file=<path>`.
 ///
 /// Ghostty 1.4.0 rejects two separate arguments, so the flag and its value must
@@ -60,7 +72,7 @@ pub struct ValidationOutcome {
 /// Returns `Ok(None)` when the binary is not installed, which is not an error:
 /// `doctor` reports the skip instead.
 pub fn validate_config(platform: &dyn Platform, config_path: &Path) -> Result<Option<ValidationOutcome>> {
-    let Some(binary) = platform.which("ghostty") else {
+    let Some(binary) = find_binary(platform) else {
         return Ok(None);
     };
     let config = config_path.to_string_lossy().into_owned();
@@ -79,7 +91,7 @@ pub fn validate_config(platform: &dyn Platform, config_path: &Path) -> Result<Op
 /// 1.4.0-dev+...`, and a bare `1.2.3`. Returns `None` when the binary is
 /// unavailable or its version cannot be understood.
 pub fn version_of(platform: &dyn Platform) -> Option<(u64, u64)> {
-    let binary = platform.which("ghostty")?;
+    let binary = find_binary(platform)?;
     let output = platform.run(&binary.to_string_lossy(), &["--version"]).ok()?;
     if !output.success() {
         return None;

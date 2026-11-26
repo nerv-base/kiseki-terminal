@@ -142,10 +142,17 @@ pub fn env_zsh(theme: &ResolvedTheme, config_dir: &Path, policy: PromptPolicy, a
                 "export POSH_THEME={}\n",
                 shell_single_quote(&format!("{config_dir}/generated/prompt.omp.json"))
             ));
+            // Initialize Oh My Posh when available (runs only on shell startup
+            // and when `state.gen` changes — never on steady-state prompts).
+            // Fall back to Kiseki's managed Starship config when OMP is absent.
+            out.push_str("if (( $+commands[oh-my-posh] )); then\n");
+            out.push_str("  eval \"$(oh-my-posh init zsh --config \"$POSH_THEME\")\"\n");
+            out.push_str("else\n");
             out.push_str(&format!(
-                "export STARSHIP_CONFIG={}\n",
+                "  export STARSHIP_CONFIG={}\n",
                 shell_single_quote(&format!("{config_dir}/generated/starship-palette.toml"))
             ));
+            out.push_str("fi\n");
         }
         PromptPolicy::PaletteOnly => {
             out.push_str(&format!(

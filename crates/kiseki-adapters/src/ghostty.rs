@@ -39,13 +39,13 @@ impl Adapter for GhosttyAdapter {
             .as_deref()
             .map(|path| platform.inspect(path))
             .unwrap_or(PathKind::Missing);
-        let binary = platform.which("ghostty");
+        let binary = ghostty::find_binary(platform);
         let installed = binary.is_some()
             || path_kind != PathKind::Missing
             || env.terminal_is("ghostty");
         let mut notes = Vec::new();
         if binary.is_none() {
-            notes.push("ghostty binary not found on PATH; generated config is not validated by the host".to_string());
+            notes.push("ghostty binary not found on PATH or /Applications/Ghostty.app; generated config is not validated by the host".to_string());
         }
         if path_kind == PathKind::Missing {
             notes.push("no Ghostty config file found; generated config is available for manual include".to_string());

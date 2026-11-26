@@ -530,10 +530,13 @@ impl App {
             },
             None => loaded.logo.clone(),
         };
+        let macos_font_scale = self.platform.os() == kiseki_types::OsKind::MacOs
+            && state.typography.size_override_pt.is_none();
         let options = CompileOptions::new(self.paths.config_dir(), loaded.root.clone())
             .with_prompt_policy(self.config.prompt_policy)
             .with_aliases(self.config.shell_aliases)
             .with_font_families(families)
+            .with_macos_font_scale(macos_font_scale)
             .with_atmosphere_dir(atmosphere_dir)
             .with_overrides_dir(overrides_dir);
         compile(
@@ -1158,8 +1161,17 @@ impl App {
             let resolved = self
                 .resolve(&loaded, &report.state, report.state.rendering.profile)
                 .ok();
-            self.ui
-                .init_summary(&self.config, &report.state, resolved.as_ref(), Some(&report));
+            let on_path = self.platform.which("kiseki").is_some();
+            let current_exe = std::env::current_exe().ok();
+            self.ui.init_summary(
+                &self.config,
+                &report.state,
+                resolved.as_ref(),
+                Some(&report),
+                &self.paths,
+                on_path,
+                current_exe.as_deref(),
+            );
         }
         Ok(())
     }

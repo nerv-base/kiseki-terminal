@@ -150,17 +150,40 @@ impl Platform for SystemPlatform {
     }
 
     fn which(&self, program: &str) -> Option<PathBuf> {
-        let path = self.env_var("PATH")?;
-        let separator = if cfg!(windows) { ';' } else { ':' };
-        for dir in path.split(separator).filter(|dir| !dir.is_empty()) {
-            let candidate = Path::new(dir).join(program);
-            if is_executable(&candidate) {
-                return Some(candidate);
+        if let Some(path) = self.env_var("PATH") {
+            let separator = if cfg!(windows) { ';' } else { ':' };
+            for dir in path.split(separator).filter(|dir| !dir.is_empty()) {
+                let candidate = Path::new(dir).join(program);
+                if is_executable(&candidate) {
+                    return Some(candidate);
+                }
+                if cfg!(windows) {
+                    let exe = Path::new(dir).join(format!("{program}.exe"));
+                    if is_executable(&exe) {
+                        return Some(exe);
+                    }
+                }
             }
-            if cfg!(windows) {
-                let exe = Path::new(dir).join(format!("{program}.exe"));
-                if is_executable(&exe) {
-                    return Some(exe);
+        }
+        // On macOS, Ghostty is typically installed as an `.app` bundle without
+        // symlinking its CLI binary onto PATH.
+        if cfg!(target_os = "macos") && program == "ghostty" {
+            let mut bundles = vec![PathBuf::from(
+                "/Applications/Ghostty.app/Contents/MacOS/ghostty",
+            )];
+            if let Some(home) = self.env_var("HOME") {
+                bundles.push(
+                    PathBuf::from(home)
+                        .join("Applications")
+                        .join("Ghostty.app")
+                        .join("Contents")
+                        .join("MacOS")
+                        .join("ghostty"),
+                );
+            }
+            for candidate in bundles {
+                if is_executable(&candidate) {
+                    return Some(candidate);
                 }
             }
         }

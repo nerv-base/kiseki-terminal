@@ -11,12 +11,24 @@ use kiseki_types::{Diagnostic, Result};
 
 use crate::escape::conf_value;
 
-/// Renders the generated Ghostty config.
+/// Renders the generated Ghostty config (without OS-specific font scaling).
 pub fn render(
     theme: &ResolvedTheme,
     font_families: &[String],
     wallpaper: Option<&Path>,
     shader: Option<&Path>,
+) -> Result<String> {
+    render_with_scale(theme, font_families, wallpaper, shader, false)
+}
+
+/// Renders the generated Ghostty config, optionally scaling DirectWrite point
+/// sizes to macOS CoreText (1.25x rounded to 0.5pt, matching v1).
+pub fn render_with_scale(
+    theme: &ResolvedTheme,
+    font_families: &[String],
+    wallpaper: Option<&Path>,
+    shader: Option<&Path>,
+    macos_font_scale: bool,
 ) -> Result<String> {
     let palette = &theme.palette;
     let mut out = String::with_capacity(2048);
@@ -24,6 +36,9 @@ pub fn render(
     out.push_str(&format!("# theme: {} | profile: {}\n", theme.id, theme.profile));
     out.push_str("# Edit the theme tokens instead; `kiseki use` rewrites this file.\n\n");
 
+    // Clear any built-in Ghostty `theme = ...` set earlier in the user's config
+    // so our explicit palette & background always win cleanly.
+    out.push_str("theme =\n");
     out.push_str(&format!("background = {}\n", palette.surfaces.base));
     out.push_str(&format!("foreground = {}\n", palette.text.primary));
     out.push_str(&format!("cursor-color = {}\n", palette.interaction.cursor));
@@ -47,6 +62,7 @@ pub fn render(
         "background-opacity = {:.4}\n",
         theme.window_opacity.clamp(0.0, 1.0)
     ));
+    out.push_str("background-opacity-cells = false\n");
     if let Some(window) = theme.atmosphere.window.as_ref() {
         if let Some(unfocused) = window.unfocused_opacity {
             out.push_str(&format!("unfocused-split-opacity = {:.4}\n", unfocused));
@@ -57,15 +73,33 @@ pub fn render(
         if let Some(padding) = window.padding {
             out.push_str(&format!("window-padding-x = {}\n", padding.x));
             out.push_str(&format!("window-padding-y = {}\n", padding.y));
+            out.push_str("window-padding-balance = true\n");
         }
+    }
+    if let Some(titlebar) = theme
+        .overrides
+        .as_ref()
+        .and_then(|overrides| overrides.terminal.as_ref())
+        .and_then(|terminal| terminal.macos_titlebar_style)
+    {
+        out.push_str(&format!("macos-titlebar-style = {}\n", titlebar.as_str()));
     }
 
     out.push('\n');
-    for family in font_families {
-        out.push_str(&format!("font-family = {}\n", conf_value(family)?));
+    if !font_families.is_empty() {
+        // Reset user fallback stack first so the theme's curated stack leads.
+        out.push_str("font-family = \"\"\n");
+        for family in font_families {
+            out.push_str(&format!("font-family = {}\n", conf_value(family)?));
+        }
     }
     if let Some(size) = theme.typography.size_pt {
-        out.push_str(&format!("font-size = {size:.2}\n"));
+        let effective = if macos_font_scale {
+            (size * 1.25 * 2.0).round() / 2.0
+        } else {
+            size
+        };
+        out.push_str(&format!("font-size = {effective:.2}\n"));
     }
     match theme.typography.ligatures {
         Some(true) => out.push_str("font-feature = liga\n"),
@@ -105,11 +139,13 @@ pub fn render(
         if let Some(fit) = wallpaper_tokens.and_then(|wallpaper| wallpaper.fit) {
             out.push_str(&format!("background-image-fit = {}\n", fit.as_str()));
         }
+        out.push_str("background-image-repeat = false\n");
     }
 
     if let Some(shader) = shader {
         let path = conf_value(&shader.to_string_lossy())?;
         out.push_str(&format!("\ncustom-shader = {path}\n"));
+        out.push_str("custom-shader-animation = true\n");
     }
 
     Ok(out)
@@ -136,7 +172,7 @@ pub fn lint(content: &str) -> Vec<Diagnostic> {
         if trimmed.is_empty() || trimmed.starts_with('#') {
             continue;
         }
-        let Some((key, _)) = trimmed.split_once('=') else {
+        let Some((key, value)) = trimmed.split_once('=') else {
             diagnostics.push(Diagnostic::error(
                 "adapter.ghostty.syntax",
                 format!("line {} is not `key = value`: {trimmed:?}", index + 1),
@@ -144,6 +180,7 @@ pub fn lint(content: &str) -> Vec<Diagnostic> {
             continue;
         };
         let key = key.trim();
+        let value = value.trim();
         const FORBIDDEN_KEYS: &[&str] = &[
             "shell-integration",
             "shell-integration-features",
@@ -151,9 +188,10 @@ pub fn lint(content: &str) -> Vec<Diagnostic> {
             "command",
             "initial-command",
             "working-directory",
-            "theme",
         ];
-        if FORBIDDEN_KEYS.contains(&key) {
+        // Empty `theme =` intentionally clears a prior Ghostty preset theme so
+        // Kiseki's explicit palette takes effect; setting a named theme is forbidden.
+        if FORBIDDEN_KEYS.contains(&key) || (key == "theme" && !value.is_empty()) {
             diagnostics.push(Diagnostic::error(
                 "adapter.ghostty.non-visual-key",
                 format!("generated config must not set `{key}` (non-visual / behaviour altering)"),

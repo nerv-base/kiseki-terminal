@@ -47,6 +47,10 @@ pub struct CompileOptions {
     /// Concrete font families to write into terminal configs. Empty means
     /// "use the theme's declared families verbatim".
     pub font_families: Vec<String>,
+    /// Scale theme default DirectWrite point size (~96 DPI) to macOS CoreText
+    /// (~72 DPI, 1.25x rounded to 0.5pt) when the user did not explicitly
+    /// override font size.
+    pub macos_font_scale: bool,
 }
 
 impl CompileOptions {
@@ -59,7 +63,13 @@ impl CompileOptions {
             prompt_policy: PromptPolicy::ManagedTemplate,
             aliases: false,
             font_families: Vec::new(),
+            macos_font_scale: false,
         }
+    }
+
+    pub fn with_macos_font_scale(mut self, enabled: bool) -> Self {
+        self.macos_font_scale = enabled;
+        self
     }
 
     pub fn with_prompt_policy(mut self, policy: PromptPolicy) -> Self {
@@ -237,11 +247,12 @@ pub fn compile(input: &CompileInput<'_>) -> Result<CompileOutput> {
     }
 
     // --- terminal configs ------------------------------------------------
-    let ghostty = ghostty::render(
+    let ghostty = ghostty::render_with_scale(
         theme,
         &families,
         wallpaper.as_deref(),
         glsl_artifact.as_deref(),
+        options.macos_font_scale,
     )?;
     diagnostics.extend(ghostty::lint(&ghostty));
     artifacts.insert(artifact::names::GHOSTTY_CONF, ghostty)?;

@@ -205,17 +205,9 @@ impl Ui {
             )),
             self.swatch_strip(&swatch)
         );
-        for target in &report.targets {
-            let (marker, status_label) = target_badge(self, target.status);
-            println!("  {marker} {:<36} {}", target.adapter, self.dim(status_label));
-            for note in &target.notes {
-                if !note.is_empty() && target.status != TargetStatus::Applied {
-                    println!("      {}", self.dim(note));
-                }
-            }
-        }
+        self.print_targets(report, None);
         for (adapter, detail) in &report.reload {
-            println!("  {} {:<36} {}", self.cyan("↻"), adapter, self.dim(detail));
+            println!("  {} {:<16} {}", self.cyan("↻"), adapter, self.dim(detail));
         }
         let warnings = report
             .diagnostics
@@ -656,12 +648,16 @@ impl Ui {
     }
 
     // ---------------------------------------------------------------- init
+    #[allow(clippy::too_many_arguments)]
     pub fn init_summary(
         &self,
         config: &Config,
         state: &State,
         theme: Option<&ResolvedTheme>,
         report: Option<&TransactionReport>,
+        paths: &KisekiPaths,
+        on_path: bool,
+        current_exe: Option<&std::path::Path>,
     ) {
         let swatch = theme.map(swatch_from_resolved);
         self.banner(swatch.as_ref());
@@ -692,12 +688,23 @@ impl Ui {
         );
         if let Some(report) = report {
             self.kv("同步版本", &format!("gen {}", report.state.generation));
-            for target in &report.targets {
-                let (marker, status_label) = target_badge(self, target.status);
-                println!("  {marker} {:<36} {}", target.adapter, self.dim(status_label));
+            self.print_targets(report, Some(&paths.generated_dir()));
+            for (adapter, detail) in &report.reload {
+                println!("  {} {:<16} {}", self.cyan("↻"), adapter, self.dim(detail));
             }
         }
         println!();
+        if !on_path {
+            self.warn("当前 `kiseki` 尚未加入 PATH（所以直接输入 `kiseki` 会提示 command not found）");
+            if let Some(exe) = current_exe {
+                println!(
+                    "    {}  {}",
+                    self.dim("安装到 ~/.local/bin:"),
+                    self.accent(&format!("ln -sf \"{}\" ~/.local/bin/kiseki", exe.display()))
+                );
+            }
+            println!();
+        }
         self.success("准备就绪！常用指令：");
         println!(
             "    {}  {}",
@@ -714,6 +721,58 @@ impl Ui {
             self.accent("kiseki rollback"),
             self.dim("一键回滚到上一次快照")
         );
+    }
+
+    fn print_targets(&self, report: &TransactionReport, generated_dir: Option<&std::path::Path>) {
+        let mut generated_ok = 0usize;
+        let mut generated_failed = Vec::new();
+        let mut host_targets = Vec::new();
+
+        for target in &report.targets {
+            let is_generated = target.adapter == "generated"
+                || generated_dir.is_some_and(|dir| target.target.starts_with(dir))
+                || target
+                    .target
+                    .components()
+                    .any(|comp| comp.as_os_str() == "generated");
+            if is_generated {
+                if matches!(target.status, TargetStatus::Applied | TargetStatus::DryRun) {
+                    generated_ok += 1;
+                } else {
+                    generated_failed.push(target);
+                }
+            } else {
+                host_targets.push(target);
+            }
+        }
+
+        if generated_ok > 0 {
+            let label = generated_dir
+                .map(shorten_home)
+                .unwrap_or_else(|| "generated/".to_string());
+            println!(
+                "  {} {:<16} {}  {}",
+                self.green("✓"),
+                "generated",
+                self.dim(&format!("{label} ({generated_ok} 项产物)")),
+                self.dim(if report.dry_run { "预览 (dry-run)" } else { "已生成" })
+            );
+        }
+        for target in generated_failed.into_iter().chain(host_targets) {
+            let (marker, status_label) = target_badge(self, target.status);
+            let path = shorten_home(&target.target);
+            println!(
+                "  {marker} {:<16} {}  {}",
+                target.adapter,
+                self.dim(&path),
+                self.dim(status_label)
+            );
+            for note in &target.notes {
+                if !note.is_empty() && target.status != TargetStatus::Applied {
+                    println!("      {}", self.dim(note));
+                }
+            }
+        }
     }
 
     pub fn recover(&self, state: &State) {
@@ -837,6 +896,16 @@ fn pad_display_width(text: &str, target: usize) -> String {
     } else {
         format!("{text}{}", " ".repeat(target - width))
     }
+}
+
+fn shorten_home(path: &std::path::Path) -> String {
+    let raw = path.display().to_string();
+    if let Ok(home) = std::env::var("HOME") {
+        if !home.is_empty() && raw.starts_with(&home) {
+            return format!("~{}", &raw[home.len()..]);
+        }
+    }
+    raw
 }
 
 fn char_display_width(ch: char) -> usize {
