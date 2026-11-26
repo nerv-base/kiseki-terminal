@@ -12,6 +12,7 @@ REPO="${KISEKI_REPO:-nerv-base/kiseki-terminal}"
 DL_BASE="${KISEKI_DL_BASE:-https://dl.kisekiterm.dev/releases}"
 INSTALL_DIR="${KISEKI_INSTALL_DIR:-$HOME/.local/bin}"
 VERSION="${KISEKI_VERSION:-}"
+SKIP_FONTS=0
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -23,6 +24,10 @@ while [ "$#" -gt 0 ]; do
       INSTALL_DIR="${2:-}"
       shift 2
       ;;
+    --skip-fonts)
+      SKIP_FONTS=1
+      shift
+      ;;
     --help|-h)
       cat <<'USAGE'
 Kiseki Terminal v2 Installer
@@ -30,6 +35,7 @@ Kiseki Terminal v2 Installer
 Options:
   -v, --version <tag>       Install a specific release tag (e.g. v2.0.0-alpha.1)
   -d, --install-dir <dir>   Installation directory (default: ~/.local/bin)
+      --skip-fonts          Skip all four font families
   -h, --help                Show this help message
 USAGE
       exit 0
@@ -188,19 +194,28 @@ dependency_platform() (
   esac
 )
 
+require_unzip() {
+  if ! command -v unzip >/dev/null 2>&1; then
+    printf '%s\n' '✗ 解压 ZIP 资产需要 unzip。请安装 unzip（例如 sudo apt install unzip），再重跑安装脚本。' >&2
+    return 1
+  fi
+}
+
 install_dependency() (
   kind="$1" url="$2" digest="$3" relative="$4" mode="$5"
   asset_dir="$(mktemp -d "$TMP_DIR/dependency.XXXXXX")" || return 1
   trap 'rm -rf "$asset_dir"' 0
-  asset="$asset_dir/asset.zip"
+  asset="$asset_dir/asset"
   extracted="$asset_dir/extracted"
   case "$kind:$relative:$mode" in
     tool:vendor/bin/oh-my-posh:0755|tool:vendor/bin/fastfetch:0755)
       dest="$KISEKI_CONFIG_ROOT/$relative"
       if [ -x "$dest" ] && [ "$(sha256 "$dest")" = "$digest" ]; then return 0; fi
+      if [ "$relative" = vendor/bin/fastfetch ]; then
+        require_unzip || return 1
+      fi
       download "$url" "$asset" && verify_sha256 "$asset" "$digest" || return 1
       if [ "$relative" = vendor/bin/fastfetch ]; then
-        command -v unzip >/dev/null 2>&1 || return 1
         unzip -p "$asset" '*/usr/bin/fastfetch' > "$extracted" || return 1
       else
         cp "$asset" "$extracted" || return 1
@@ -208,17 +223,27 @@ install_dependency() (
       chmod +x "$extracted" && "$extracted" --version >/dev/null || return 1
       install_file "$extracted" "$dest" "$mode"
       ;;
+    font-raw:fonts/*.ttf:0644)
+      name="${relative#fonts/}"
+      case "$name" in *[!A-Za-z0-9_.-]*|.*) return 1 ;; esac
+      [ -n "$FONT_DIR" ] || return 1
+      dest="$FONT_DIR/$name"
+      if [ -f "$dest" ] && [ "$(sha256 "$dest")" = "$digest" ]; then return 0; fi
+      download "$url" "$asset" && verify_sha256 "$asset" "$digest" || return 1
+      install_file "$asset" "$dest" "$mode"
+      ;;
     font:fonts/*:0644)
       family="${relative#fonts/}"
       pattern="$(awk -F '\t' -v id="$family" '$1 == "# font" && $2 == id { print $3; exit }' "$manifest")"
-      [ -n "$FONT_DIR" ] && [ -n "$pattern" ] && command -v unzip >/dev/null 2>&1 || return 1
+      [ -n "$FONT_DIR" ] && [ -n "$pattern" ] || return 1
+      require_unzip || return 1
       download "$url" "$asset" && verify_sha256 "$asset" "$digest" || return 1
       unzip -Z1 "$asset" > "$asset_dir/font.entries" || return 1
       found=0
       while IFS= read -r entry; do
         name="${entry##*/}"
         case "$entry" in *'*'*|*'?'*|*'['*) continue ;; esac
-        printf '%s\n' "$name" | grep -Eq "$pattern" || continue
+        printf '%s\n' "$name" | grep -Eq -e "$pattern" || continue
         unzip -p "$asset" "$entry" > "$extracted" || return 1
         [ -s "$extracted" ] && install_file "$extracted" "$FONT_DIR/$name" "$mode" || return 1
         found=1
@@ -247,11 +272,16 @@ install_dependencies() {
   awk -F '\t' -v target="$dep_platform" '$1 !~ /^#/ && $2 == target' "$manifest" > "$TMP_DIR/deps-target.tsv" || return 0
   fonts_ready=0
   while IFS="$TAB" read -r kind _platform url digest relative mode; do
+    case "$kind" in
+      font|font-raw) [ "$SKIP_FONTS" = 0 ] || continue ;;
+    esac
     if install_dependency "$kind" "$url" "$digest" "$relative" "$mode"; then
-      if [ "$kind" = font ]; then
-        printf '✓ %s 字体已就绪\n' "${relative#fonts/}"
-        fonts_ready=1
-      fi
+      case "$kind" in
+        font|font-raw)
+          printf '✓ %s 字体已就绪\n' "${relative#fonts/}"
+          fonts_ready=1
+          ;;
+      esac
     else
       printf '✗ %s 安装失败，请重跑安装脚本（见 https://kisekiterm.dev）。\n' "$relative" >&2
     fi
@@ -302,3 +332,6 @@ esac
 echo ""
 echo "Next step: run 'kiseki init' to launch the interactive setup wizard."
 "${INSTALL_DIR}/kiseki" deps || echo "✗ 无法读取能力清单，可运行 kiseki deps 重试。" >&2
+if [ "$SKIP_FONTS" = 1 ]; then
+  echo '· 本次未安装字体（已按 --skip-fonts 跳过）。'
+fi

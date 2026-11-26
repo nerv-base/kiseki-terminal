@@ -10,6 +10,7 @@ use crate::Platform;
 pub const OMP_VERSION: &str = "33.4.1";
 // GitHub fastfetch-cli/fastfetch releases/latest on 2026-11-26.
 pub const FASTFETCH_VERSION: &str = "2.71.0";
+pub const JETBRAINS_MONO_NF_TAG: &str = "v3.5.1";
 
 pub const INSTALLER_REMEDY: &str = "重跑安装脚本（见 https://kisekiterm.dev）";
 
@@ -147,9 +148,21 @@ pub const TOOLS: &[ToolSpec] = &[
 pub struct FontSpec {
     pub id: &'static str,
     pub repository: &'static str,
-    pub asset_pattern: &'static str,
-    pub filename_pattern: &'static str,
+    pub source: FontSource,
     pub target_dirs: &'static FontTargetDirs,
+}
+
+#[derive(Debug)]
+pub enum FontSource {
+    ReleaseZip {
+        asset_pattern: &'static str,
+        filename_pattern: &'static str,
+    },
+    RawFiles {
+        tag: &'static str,
+        directory: &'static str,
+        files: &'static [&'static str],
+    },
 }
 
 #[derive(Debug)]
@@ -169,29 +182,42 @@ pub const FONTS: &[FontSpec] = &[
     FontSpec {
         id: "jetbrains-mono-nf",
         repository: "ryanoasis/nerd-fonts",
-        asset_pattern: r"^JetBrainsMono\.zip$",
-        filename_pattern: r"^JetBrainsMonoNerdFont-(Regular|Bold|Italic)\.ttf$",
+        source: FontSource::RawFiles {
+            tag: JETBRAINS_MONO_NF_TAG,
+            directory: "patched-fonts/JetBrainsMono/Ligatures",
+            files: &[
+                "JetBrainsMonoNerdFont-Regular.ttf",
+                "JetBrainsMonoNerdFont-Bold.ttf",
+                "JetBrainsMonoNerdFont-Italic.ttf",
+            ],
+        },
         target_dirs: &FONT_TARGET_DIRS,
     },
     FontSpec {
         id: "departure-mono-nf",
         repository: "ryanoasis/nerd-fonts",
-        asset_pattern: r"^DepartureMono\.zip$",
-        filename_pattern: r"\.(otf|ttf)$",
+        source: FontSource::ReleaseZip {
+            asset_pattern: r"^DepartureMono\.zip$",
+            filename_pattern: r"\.(otf|ttf)$",
+        },
         target_dirs: &FONT_TARGET_DIRS,
     },
     FontSpec {
         id: "maple-mono-nf-cn",
         repository: "subframe7536/maple-font",
-        asset_pattern: r"^MapleMono-NF-CN\.zip$",
-        filename_pattern: r"-(Regular|Medium|Bold|Italic)\.ttf$",
+        source: FontSource::ReleaseZip {
+            asset_pattern: r"^MapleMono-NF-CN\.zip$",
+            filename_pattern: r"-(Regular|Medium|Bold|Italic)\.ttf$",
+        },
         target_dirs: &FONT_TARGET_DIRS,
     },
     FontSpec {
         id: "fusion-pixel-12-zh",
         repository: "TakWolf/fusion-pixel-font",
-        asset_pattern: r"12px-monospaced-ttf(?:-[^/]+)?\.zip$",
-        filename_pattern: r"(zh_hans|ja)\.ttf$",
+        source: FontSource::ReleaseZip {
+            asset_pattern: r"12px-monospaced-ttf(?:-[^/]+)?\.zip$",
+            filename_pattern: r"(zh_hans|ja)\.ttf$",
+        },
         target_dirs: &FONT_TARGET_DIRS,
     },
 ];

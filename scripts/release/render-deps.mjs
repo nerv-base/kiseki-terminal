@@ -52,17 +52,31 @@ function field(record, name) {
 const installerTools = table("TOOLS", "ToolSpec")
   .filter((record) => /\binstaller_asset: true\b/.test(record))
   .map((record) => field(record, "id"));
-const fonts = table("FONTS", "FontSpec").map((record) => ({
-  id: field(record, "id"),
-  repo: field(record, "repository"),
-  asset: new RegExp(field(record, "asset_pattern")),
-  filename: field(record, "filename_pattern"),
-}));
+const fonts = table("FONTS", "FontSpec").map((record) => {
+  const id = field(record, "id");
+  const repo = field(record, "repository");
+  if (record.includes("source: FontSource::ReleaseZip {")) {
+    return { id, repo, asset: new RegExp(field(record, "asset_pattern")), filename: field(record, "filename_pattern") };
+  }
+  if (record.includes("source: FontSource::RawFiles {")) {
+    const pin = record.match(/\btag: ([A-Z][A-Z0-9_]+),/)?.[1];
+    const tag = pin && constant(pin);
+    const directory = field(record, "directory");
+    const list = record.match(/\bfiles: &\[([\s\S]*?)\]/)?.[1];
+    const files = [...(list ?? "").matchAll(/"([^"]+)"/g)].map(([, name]) => name);
+    if (!tag || !/^v?\d+\.\d+\.\d+(?:-[\w.-]+)?$/.test(tag) || !files.length ||
+        files.some((name) => !/^[\w-]+\.ttf$/.test(name))) {
+      throw new Error(`Invalid raw font source for ${id}`);
+    }
+    return { id, repo, tag, directory, files };
+  }
+  throw new Error(`Unknown font source for ${id}`);
+});
 const fontDirs = source.match(/pub const FONT_TARGET_DIRS: FontTargetDirs = FontTargetDirs \{([\s\S]*?)\};/)?.[1];
 const comments = [
   "# kind\tplatform\turl\tsha256\tdest\tmode",
   ...["macos", "linux", "windows"].map((os) => `# font-dir\t${os}\t${field(fontDirs, os)}`),
-  ...fonts.map((font) => `# font\t${font.id}\t${font.filename}`),
+  ...fonts.filter((font) => font.filename).map((font) => `# font\t${font.id}\t${font.filename}`),
 ];
 
 if (installerTools.length !== Object.keys(toolReleases).length || installerTools.some((id) => !toolReleases[id])) {
@@ -88,27 +102,26 @@ async function download(url, headers = {}) {
 }
 
 const checksums = new Map();
-function checksum(asset, releaseInfo) {
-  const url = asset.browser_download_url;
+function checksum({ browser_download_url: url, digest: upstreamDigest, name: assetName }, releaseInfo) {
   if (!checksums.has(url)) {
     checksums.set(url, (async () => {
-      const upstream = releaseInfo.assets.find(({ name }) => name === "checksums.txt");
+      const upstream = releaseInfo?.assets.find(({ name }) => name === "checksums.txt");
       if (upstream) {
         const body = await assetText(upstream);
         for (const line of body.split(/\r?\n/)) {
           const [, digest, name] = line.match(/^([0-9a-f]{64})\s+\*?(.+)$/i) ?? [];
-          if (name === asset.name) return digest.toLowerCase();
+          if (name === assetName) return digest.toLowerCase();
         }
       }
       // The quick CI path may use GitHub's release-asset checksum. The release
       // path streams assets that have no upstream checksum file.
-      if (options["metadata-only"] && /^sha256:[0-9a-f]{64}$/.test(asset.digest)) return asset.digest.slice(7);
+      if (options["metadata-only"] && /^sha256:[0-9a-f]{64}$/.test(upstreamDigest)) return upstreamDigest.slice(7);
       try {
         const response = await download(url);
         const hash = createHash("sha256");
         for await (const chunk of response.body) hash.update(chunk);
         const digest = hash.digest("hex");
-        if (asset.digest && `sha256:${digest}` !== asset.digest) throw new Error("GitHub release digest mismatch");
+        if (upstreamDigest && `sha256:${digest}` !== upstreamDigest) throw new Error("GitHub release digest mismatch");
         return digest;
       } catch (error) {
         throw new Error(`Could not hash release asset ${url}`, { cause: error });
@@ -138,12 +151,20 @@ function toolRows() {
 }
 
 function fontRows() {
-  return platforms.flatMap(([platform]) => fonts.map((font) => ({
-    kind: "font", platform, repo: font.repo, pattern: font.asset, dest: `fonts/${font.id}`, mode: "0644",
-  })));
+  return platforms.flatMap(([platform]) => fonts.flatMap((font) => {
+    if (font.files) {
+      const base = `https://raw.githubusercontent.com/${font.repo}/${font.tag}/${font.directory}`;
+      return font.files.map((name) => ({
+        kind: "font-raw", platform, url: `${base}/${name}`, dest: `fonts/${name}`, mode: "0644",
+      }));
+    }
+    return [{ kind: "font", platform, repo: font.repo, pattern: font.asset, dest: `fonts/${font.id}`, mode: "0644" }];
+  }));
 }
 
 async function renderRow(row) {
+  const { kind, platform, dest, mode } = row;
+  if (row.url) return [kind, platform, row.url, await checksum({ browser_download_url: row.url }), dest, mode].join("\t");
   const info = await release(row.repo, row.tag);
   const matches = info.assets.filter(({ name }) => row.asset ? name === row.asset : row.pattern.test(name));
   if (matches.length !== 1) {
@@ -151,7 +172,7 @@ async function renderRow(row) {
   }
   const [asset] = matches;
   const sha = await checksum(asset, info);
-  return [row.kind, row.platform, asset.browser_download_url, sha, row.dest, row.mode].join("\t");
+  return [kind, platform, asset.browser_download_url, sha, dest, mode].join("\t");
 }
 
 function checkManifest(tsv, rows) {
@@ -169,11 +190,15 @@ function checkManifest(tsv, rows) {
     if (!row || fields.length !== 6 || mode !== row.mode || !/^[0-9a-f]{64}$/.test(sha)) {
       throw new Error(`Unexpected dependency row: ${line}`);
     }
-    const prefix = `https://github.com/${row.repo}/releases/download/`;
-    const [tag, asset, ...extra] = url.slice(prefix.length).split("/").map(decodeURIComponent);
-    if (!url.startsWith(prefix) || !tag || !asset || extra.length ||
-        (row.tag && tag !== row.tag) || (row.asset ? asset !== row.asset : !row.pattern.test(asset))) {
-      throw new Error(`Unexpected asset URL for ${dest}: ${url}`);
+    if (row.url) {
+      if (url !== row.url) throw new Error(`Unexpected raw asset URL for ${dest}: ${url}`);
+    } else {
+      const prefix = `https://github.com/${row.repo}/releases/download/`;
+      const [tag, asset, ...extra] = url.slice(prefix.length).split("/").map(decodeURIComponent);
+      if (!url.startsWith(prefix) || !tag || !asset || extra.length ||
+          (row.tag && tag !== row.tag) || (row.asset ? asset !== row.asset : !row.pattern.test(asset))) {
+        throw new Error(`Unexpected asset URL for ${dest}: ${url}`);
+      }
     }
     expected.delete(key);
   }

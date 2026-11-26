@@ -1,16 +1,23 @@
-﻿# Kiseki Terminal v2 standalone installer for Windows (PowerShell 5.1+ / 7+)
+# Kiseki Terminal v2 standalone installer for Windows (PowerShell 5.1+ / 7+)
 # Installs Kiseki, its optional tools and fonts from a tagged release.
 #
 # Usage:
 #   irm https://kisekiterm.dev/install.ps1 | iex
 #   & ([scriptblock]::Create((irm https://kisekiterm.dev/install.ps1))) -Version v2.0.0-alpha.1
 
+<#
+.SYNOPSIS
+Installs Kiseki Terminal and its dependencies.
+.PARAMETER SkipFonts
+Skips all four font families for this run.
+#>
 [CmdletBinding()]
 param(
     [string]$Version = $env:KISEKI_VERSION,
     [string]$InstallDir = $(if ($env:KISEKI_INSTALL_DIR) { $env:KISEKI_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA "Programs\kiseki" }),
     [string]$Repo = $(if ($env:KISEKI_REPO) { $env:KISEKI_REPO } else { "nerv-base/kiseki-terminal" }),
-    [string]$DownloadBase = $(if ($env:KISEKI_DL_BASE) { $env:KISEKI_DL_BASE } else { "https://dl.kisekiterm.dev/releases" })
+    [string]$DownloadBase = $(if ($env:KISEKI_DL_BASE) { $env:KISEKI_DL_BASE } else { "https://dl.kisekiterm.dev/releases" }),
+    [switch]$SkipFonts
 )
 
 $ErrorActionPreference = "Stop"
@@ -117,7 +124,7 @@ function Install-Core {
     Assert-Sha256 $archivePath (Get-ReleaseChecksum $archive)
     Write-Host "$okMark SHA-256 verified" -ForegroundColor Green
     $extractDir = Join-Path $tmpDir "extracted"
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    Assert-ZipSupport
     [System.IO.Compression.ZipFile]::ExtractToDirectory($archivePath, $extractDir)
     $binPath = Join-Path $extractDir "kiseki-$tag-$target\kiseki.exe"
     if (-not (Test-Path -LiteralPath $binPath -PathType Leaf)) { $binPath = Join-Path $extractDir "kiseki.exe" }
@@ -167,6 +174,16 @@ namespace Kiseki {
     }
 }
 
+function Assert-ZipSupport {
+    if (('System.IO.Compression.ZipFile' -as [type]) -and ('System.IO.Compression.ZipFileExtensions' -as [type])) { return }
+    try {
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        if (-not ('System.IO.Compression.ZipFile' -as [type]) -or -not ('System.IO.Compression.ZipFileExtensions' -as [type])) {
+            throw 'ZIP extraction types are unavailable.'
+        }
+    } catch { throw 'ZIP extraction requires the Windows .NET ZIP components. Repair .NET Framework 4.5 or later, or use PowerShell 7, then rerun the installer.' }
+}
+
 function Install-Dependency([string[]]$Row, [hashtable]$FontPatterns, [string]$FontDir) {
     $kind, $null, $uri, $digest, $relative, $mode = $Row
     $assetPath = Join-Path $tmpDir 'dependency.zip'
@@ -174,11 +191,11 @@ function Install-Dependency([string[]]$Row, [hashtable]$FontPatterns, [string]$F
         $name = [IO.Path]::GetFileName($relative)
         $destination = Join-Path (Join-Path $InstallDir 'vendor\bin') $name
         if ((Test-Path -LiteralPath $destination -PathType Leaf) -and (Get-Sha256 $destination) -eq $digest) { return }
+        if ($name -eq 'fastfetch.exe') { Assert-ZipSupport }
         Save-Download $uri $assetPath
         Assert-Sha256 $assetPath $digest
         $source = Join-Path $tmpDir $name
         if ($name -eq 'fastfetch.exe') {
-            Add-Type -AssemblyName System.IO.Compression.FileSystem
             $zip = [IO.Compression.ZipFile]::OpenRead($assetPath)
             try {
                 $entry = $zip.GetEntry($name)
@@ -191,13 +208,25 @@ function Install-Dependency([string[]]$Row, [hashtable]$FontPatterns, [string]$F
         & $source --version | Out-Null
         if ($LASTEXITCODE -ne 0) { throw "$name failed health check (--version exited with $LASTEXITCODE)." }
         Install-File $source $destination | Out-Null
+    } elseif ($kind -eq 'font-raw' -and $mode -eq '0644' -and $relative -cmatch '^fonts/([A-Za-z0-9_-]+\.ttf)$') {
+        $name = $Matches[1]
+        if (-not $FontDir) { throw "Missing font directory for $name" }
+        $destination = Join-Path $FontDir $name
+        $source = $destination
+        if (-not (Test-Path -LiteralPath $destination -PathType Leaf) -or (Get-Sha256 $destination) -ne $digest) {
+            $source = Join-Path $tmpDir 'dependency.ttf'
+            Save-Download $uri $source
+            Assert-Sha256 $source $digest
+        }
+        Install-Font $source $name $FontDir
+        Write-Host "$okMark Font ready: $name" -ForegroundColor Green
     } elseif ($kind -eq 'font' -and $mode -eq '0644' -and $relative -match '^fonts/([a-z0-9-]+)$') {
         $family = $Matches[1]
         $pattern = $FontPatterns[$family]
         if (-not $FontDir -or -not $pattern) { throw "Missing font metadata for $family" }
+        Assert-ZipSupport
         Save-Download $uri $assetPath
         Assert-Sha256 $assetPath $digest
-        Add-Type -AssemblyName System.IO.Compression.FileSystem
         $zip = [IO.Compression.ZipFile]::OpenRead($assetPath)
         try {
             $entries = @($zip.Entries | Where-Object { $_.Name -cmatch $pattern })
@@ -232,6 +261,7 @@ function Install-Dependencies {
         if ($line.StartsWith('#')) { continue }
         $fields = $line -split "`t"
         if ($fields.Count -ne 6 -or $fields[1] -cne $depPlatform) { continue }
+        if ($SkipFonts -and $fields[0] -in 'font', 'font-raw') { continue }
         try { Install-Dependency $fields $fontPatterns $fontDir }
         catch { Write-Warning "Could not install $($fields[4]). $remedy $($_.Exception.Message)" }
     }
@@ -242,6 +272,7 @@ if ($Version) {
     if ($Version -notmatch '^v[0-9A-Za-z.+-]+$') { throw "Invalid release tag: $Version" }
 }
 $target = Get-RustTarget
+$DownloadBase = $DownloadBase.TrimEnd('/')
 $InstallDir = [IO.Path]::GetFullPath($InstallDir)
 $destPath = Join-Path $InstallDir 'kiseki.exe'
 $receiptPath = Join-Path $InstallDir '.kiseki-release'
@@ -287,6 +318,7 @@ try {
         & $destPath deps
         if ($LASTEXITCODE -ne 0) { throw "kiseki deps exited with $LASTEXITCODE" }
     } catch { Write-Warning 'Could not read the capability list. Run kiseki deps to retry.' }
+    if ($SkipFonts) { Write-Host 'Fonts were skipped for this run (-SkipFonts).' }
     $global:LASTEXITCODE = 0
 } finally {
     Remove-Item -LiteralPath $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
