@@ -237,12 +237,12 @@ impl Ui {
             self.warn(&format!("有 {warnings} 条提醒，运行 `kiseki doctor` 查看详情"));
         }
         if !dry_run {
+            let snapshot_path = report.journal_dir.join(&report.tx_id);
             println!(
                 "  {}",
                 self.dim(&format!(
-                    "回滚快照: {}/{}（随时可 `kiseki rollback`）",
-                    shorten_home(&report.journal_dir),
-                    report.tx_id
+                    "回滚快照: {}（随时可 `kiseki rollback`）",
+                    shorten_home(&snapshot_path),
                 ))
             );
         }
@@ -712,13 +712,24 @@ impl Ui {
         }
         println!();
         if !on_path {
-            self.warn("当前 `kiseki` 尚未加入 PATH（所以直接输入 `kiseki` 会提示 command not found）");
-            if let Some(exe) = current_exe {
-                println!(
-                    "    {}  {}",
-                    self.dim("安装到 ~/.local/bin:"),
-                    self.accent(&format!("ln -sf \"{}\" ~/.local/bin/kiseki", exe.display()))
-                );
+            if cfg!(windows) {
+                self.warn("当前 `kiseki` 尚未加入 PATH（直接输入 `kiseki` 可能无法识别）");
+                if let Some(dir) = current_exe.and_then(|exe| exe.parent()) {
+                    println!(
+                        "    {}  {}",
+                        self.dim("临时加入当前会话 PATH:"),
+                        self.accent(&format!("$env:Path += ';{}'", dir.display()))
+                    );
+                }
+            } else {
+                self.warn("当前 `kiseki` 尚未加入 PATH（所以直接输入 `kiseki` 会提示 command not found）");
+                if let Some(exe) = current_exe {
+                    println!(
+                        "    {}  {}",
+                        self.dim("安装到 ~/.local/bin:"),
+                        self.accent(&format!("ln -sf \"{}\" ~/.local/bin/kiseki", exe.display()))
+                    );
+                }
             }
             println!();
         }
@@ -739,10 +750,12 @@ impl Ui {
             self.dim("一键回滚到上一次快照")
         );
         if !config.render_only {
-            println!(
-                "  {}",
-                self.dim("提示：当前终端执行 `source ~/.zshrc` 或新开标签页后，Prompt 与环境变量立即生效")
-            );
+            let reload_hint = if cfg!(windows) {
+                "提示：当前终端执行 `. $PROFILE` 或新开标签页后，Prompt 与环境变量立即生效"
+            } else {
+                "提示：当前终端执行 `source ~/.zshrc` 或新开标签页后，Prompt 与环境变量立即生效"
+            };
+            println!("  {}", self.dim(reload_hint));
         }
     }
 
@@ -941,7 +954,12 @@ fn pad_display_width(text: &str, target: usize) -> String {
 
 fn shorten_home(path: &std::path::Path) -> String {
     let raw = path.display().to_string();
-    if let Ok(home) = std::env::var("HOME") {
+    let home = if cfg!(windows) {
+        std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME"))
+    } else {
+        std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE"))
+    };
+    if let Ok(home) = home {
         if !home.is_empty() && raw.starts_with(&home) {
             return format!("~{}", &raw[home.len()..]);
         }

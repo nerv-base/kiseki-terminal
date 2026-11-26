@@ -891,7 +891,15 @@ mod tests {
         #[cfg(unix)]
         std::os::unix::fs::symlink("/etc/passwd", legacy.join("leak.txt")).unwrap();
         #[cfg(windows)]
-        std::fs::write(legacy.join("leak.txt"), "no symlink support").unwrap();
+        {
+            let outside = dir.path().join("outside-secret.txt");
+            std::fs::write(&outside, "secret").unwrap();
+            match std::os::windows::fs::symlink_file(&outside, legacy.join("leak.txt")) {
+                Ok(()) => {}
+                Err(error) if error.raw_os_error() == Some(1314) => return,
+                Err(error) => panic!("symlink_file failed: {error}"),
+            }
+        }
         platform.set_env("HOME", &dir.path().to_string_lossy());
         let detection = detect_v1(&platform).unwrap().unwrap();
         let plan = plan_migration(&platform, detection).unwrap();

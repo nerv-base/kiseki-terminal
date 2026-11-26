@@ -15,6 +15,15 @@ use kiseki_types::{Appearance, PromptPolicy, RenderingProfile, Result};
 pub use logo::{render_mini_cli_logo, ThemeSwatch};
 pub use wizard::{InitWizardSession, WizardEvent, WizardOutcome};
 
+/// Enables Windows console virtual terminal processing so ANSI/TrueColor
+/// output renders cleanly in classic Windows PowerShell 5.1 (`conhost.exe`).
+pub fn enable_ansi_support() {
+    #[cfg(windows)]
+    {
+        let _ = crossterm::ansi_support::supports_ansi();
+    }
+}
+
 /// One row in the theme picker or init wizard.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PickerItem {

@@ -169,8 +169,12 @@ fn full_transaction_touches_every_host_and_is_reversible() {
         .unwrap()
         .unwrap();
     assert!(!fastfetch.contains("\"command\""));
-    assert!(fastfetch.contains(&paths.official_themes_dir().join("nerv-eva").to_string_lossy().to_string())
-        || fastfetch.contains("/themes/nerv-eva/assets/logo.txt"));
+    let parsed_fastfetch = kiseki_compiler::fastfetch::parse_body(&fastfetch).unwrap();
+    let logo_source = parsed_fastfetch["logo"]["source"].as_str().unwrap();
+    assert!(
+        logo_source.replace('\\', "/").ends_with("/themes/nerv-eva/assets/logo.txt"),
+        "{logo_source}"
+    );
 
     // --- zsh anchor ------------------------------------------------------
     let zshrc = host.platform.read_to_string(&host.zshrc).unwrap().unwrap();
@@ -251,7 +255,9 @@ fn read_only_dotfile_downgrades_but_keeps_generated_output() {
     permissions.set_readonly(true);
     std::fs::set_permissions(&target, permissions).unwrap();
     std::fs::remove_file(&host.zshrc).unwrap();
-    symlink(&target, &host.zshrc);
+    if !symlink(&target, &host.zshrc) {
+        return;
+    }
     assert!(matches!(
         host.platform.inspect(&host.zshrc),
         PathKind::ReadOnlySymlink(_)
@@ -339,9 +345,19 @@ fn config_is_round_tripped_through_the_real_toml_file() {
     assert!(raw.contains("palette-only"));
 }
 
-fn symlink(target: &Path, link: &Path) {
+fn symlink(target: &Path, link: &Path) -> bool {
     #[cfg(unix)]
-    std::os::unix::fs::symlink(target, link).unwrap();
+    {
+        std::os::unix::fs::symlink(target, link).unwrap();
+        true
+    }
     #[cfg(windows)]
-    std::os::windows::fs::symlink_file(target, link).unwrap();
+    {
+        match std::os::windows::fs::symlink_file(target, link) {
+            Ok(()) => true,
+            // Non-elevated Windows without Developer Mode returns ERROR_PRIVILEGE_NOT_HELD.
+            Err(error) if error.raw_os_error() == Some(1314) => false,
+            Err(error) => panic!("symlink_file failed: {error}"),
+        }
+    }
 }

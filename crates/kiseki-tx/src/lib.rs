@@ -354,17 +354,19 @@ impl<'a> TransactionManager<'a> {
             // A read-only host has no host operation at all, so surface the
             // render-only downgrade explicitly in the report.
             if plan.render_only && plan.host_writes().count() == 0 && detection.is_read_only() {
-                if let Some(target) = detection.config_path.clone() {
-                    targets.push(TargetResult {
-                        adapter: plan.adapter.to_string(),
-                        target,
-                        status: TargetStatus::RenderOnly,
-                        notes: plan
-                            .diagnostics
-                            .iter()
-                            .map(|diagnostic| diagnostic.message.clone())
-                            .collect(),
-                    });
+                for (path, kind) in detection.all_config_paths() {
+                    if matches!(kind, PathKind::ReadOnlyFile | PathKind::ReadOnlySymlink(_)) {
+                        targets.push(TargetResult {
+                            adapter: plan.adapter.to_string(),
+                            target: path.to_path_buf(),
+                            status: TargetStatus::RenderOnly,
+                            notes: plan
+                                .diagnostics
+                                .iter()
+                                .map(|diagnostic| diagnostic.message.clone())
+                                .collect(),
+                        });
+                    }
                 }
             }
             for operation in plan.operations.iter().filter(|operation| operation.is_host_write()) {
@@ -1682,7 +1684,11 @@ mod tests {
         #[cfg(unix)]
         std::os::unix::fs::symlink(&target, &link).unwrap();
         #[cfg(windows)]
-        std::os::windows::fs::symlink_file(&target, &link).unwrap();
+        match std::os::windows::fs::symlink_file(&target, &link) {
+            Ok(()) => {}
+            Err(error) if error.raw_os_error() == Some(1314) => return,
+            Err(error) => panic!("symlink_file failed: {error}"),
+        }
         platform.set_env("KISEKI_ZSHRC", &link.to_string_lossy());
 
         let output = compiled(platform.paths().config_dir());
@@ -1840,7 +1846,11 @@ mod tests {
         #[cfg(unix)]
         std::os::unix::fs::symlink(&real, &link).unwrap();
         #[cfg(windows)]
-        std::os::windows::fs::symlink_file(&real, &link).unwrap();
+        match std::os::windows::fs::symlink_file(&real, &link) {
+            Ok(()) => {}
+            Err(error) if error.raw_os_error() == Some(1314) => return,
+            Err(error) => panic!("symlink_file failed: {error}"),
+        }
         fixture
             .platform
             .set_env("KISEKI_WT_SETTINGS", &link.to_string_lossy());

@@ -262,8 +262,8 @@ pub fn doctor(
                         note.clone(),
                     ));
                 }
-                if let Some(path) = detection.config_path.as_ref() {
-                    if detection.is_read_only() {
+                for (path, kind) in detection.all_config_paths() {
+                    if matches!(kind, PathKind::ReadOnlyFile | PathKind::ReadOnlySymlink(_)) {
                         report.push(
                             DoctorCheck::new(
                                 format!("{name}.read-only"),

@@ -272,6 +272,7 @@ pub struct UninstallArgs {
 
 /// Runs the CLI, returning the process exit code.
 pub fn main_entry() -> i32 {
+    kiseki_tui::enable_ansi_support();
     let cli = Cli::parse();
     let json = cli.json;
     let ui = Ui::new(cli.quiet);
@@ -735,6 +736,12 @@ impl App {
         let mut loaded = self.load_theme(&id)?;
         let mut state = self.state_or_initial();
         state.active_theme = id.clone();
+        if !state.typography.locked && !self.config.font_locked {
+            // An unlocked font override applies until the user switches themes
+            // (matching `font --lock` / `--unlock` semantics).
+            state.typography.style_override = None;
+            state.typography.size_override_pt = None;
+        }
         if let Some(raw) = args.appearance.as_deref() {
             let (requested, persist) = if raw.eq_ignore_ascii_case("auto") {
                 state.appearance_mode = AppearanceMode::Auto;
@@ -1153,10 +1160,23 @@ impl App {
             .map(|adapter| adapter.detect(self.env(), &self.platform))
             .transpose()?
             .is_some_and(|detection| !detection.notes.is_empty());
+        let detected_shell = self.platform.env_var("SHELL").or_else(|| {
+            if self.platform.os() == kiseki_types::OsKind::Windows {
+                if self.platform.which("pwsh").is_some() {
+                    Some("pwsh".to_string())
+                } else if self.platform.which("powershell").is_some() {
+                    Some("powershell".to_string())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        });
         let input = InitWizardInput {
             themes: items,
             detected_terminal: self.env().current_terminal.clone(),
-            detected_shell: self.platform.env_var("SHELL"),
+            detected_shell,
             v1_detected,
             user_prompt_config,
             default_render_only: self.render_only,
@@ -1989,16 +2009,25 @@ impl App {
                 )))
             }
         };
+        let mut buffer = Vec::new();
+        clap_complete::generate(generator, &mut Cli::command(), "kiseki", &mut buffer);
+        let mut script = String::from_utf8_lossy(&buffer).into_owned();
+        if matches!(generator, clap_complete::Shell::PowerShell) {
+            script = make_powershell_completions_ascii_safe(&script);
+        }
         if self.json {
-            let mut buffer = Vec::new();
-            clap_complete::generate(generator, &mut Cli::command(), "kiseki", &mut buffer);
             self.emit_json(json!({
                 "shell": shell,
-                "script": String::from_utf8_lossy(&buffer),
+                "script": script,
             }));
         } else {
             let mut stdout = std::io::stdout();
-            clap_complete::generate(generator, &mut Cli::command(), "kiseki", &mut stdout);
+            stdout
+                .write_all(script.as_bytes())
+                .map_err(|error| KisekiError::io("stdout", error))?;
+            stdout
+                .flush()
+                .map_err(|error| KisekiError::io("stdout", error))?;
         }
         Ok(())
     }
@@ -2253,4 +2282,49 @@ fn remove_dir_all(path: &std::path::Path) -> Result<()> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(KisekiError::io(path, error)),
     }
+}
+
+/// Rewrites non-ASCII single-quoted tooltip literals in `clap_complete`'s
+/// PowerShell completion script into pure-ASCII `[char]0xXXXX` concatenations.
+///
+/// Without this, loading a UTF-8-without-BOM completion file in Windows
+/// PowerShell 5.1 under an ANSI/GBK system codepage corrupts multi-byte UTF-8
+/// tooltip bytes into the closing `'`, causing parse failures.
+fn make_powershell_completions_ascii_safe(script: &str) -> String {
+    let mut out = String::with_capacity(script.len());
+    for line in script.split_inclusive('\n') {
+        if line.is_ascii() {
+            out.push_str(line);
+            continue;
+        }
+        let mut chars = line.chars().peekable();
+        while let Some(ch) = chars.next() {
+            if ch == '\'' {
+                let mut literal = String::new();
+                while let Some(next) = chars.next() {
+                    if next == '\'' {
+                        if chars.peek() == Some(&'\'') {
+                            chars.next();
+                            literal.push('\'');
+                        } else {
+                            break;
+                        }
+                    } else {
+                        literal.push(next);
+                    }
+                }
+                out.push_str(&kiseki_compiler::escape::powershell_ascii_string(&literal));
+            } else if ch == '#' {
+                out.push(ch);
+                for rest in chars.by_ref() {
+                    if rest.is_ascii() {
+                        out.push(rest);
+                    }
+                }
+            } else if ch.is_ascii() {
+                out.push(ch);
+            }
+        }
+    }
+    out
 }

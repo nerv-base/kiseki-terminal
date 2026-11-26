@@ -38,6 +38,7 @@ impl Adapter for FastfetchAdapter {
             version: None,
             config_path: None,
             path_kind: kiseki_platform::PathKind::Missing,
+            extra_config_paths: Vec::new(),
             active_in_session: false,
             notes: if installed {
                 vec!["fastfetch found on PATH; run it through `kiseki fetch`".to_string()]

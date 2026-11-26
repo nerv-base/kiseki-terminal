@@ -219,7 +219,26 @@ pub fn build(
         }
     }
 
-    if let Some(wallpaper) = wallpaper {
+    let active_wallpaper =
+        wallpaper.filter(|_| theme.wallpaper_opacity.is_none_or(|opacity| opacity > 0.0));
+
+    if let Some(shader) = shader {
+        // Windows Terminal reads these as literal dotted keys directly under
+        // `profiles.defaults`, not as a nested `experimental` object.
+        // Live HLSL shaders composite `imageTexture` (t1) themselves, so omit
+        // `backgroundImage*` to avoid rendering the wallpaper twice behind the
+        // swap chain.
+        defaults.insert(
+            "experimental.pixelShaderPath".to_string(),
+            json!(shader.to_string_lossy()),
+        );
+        if let Some(wallpaper) = active_wallpaper {
+            defaults.insert(
+                "experimental.pixelShaderImagePath".to_string(),
+                json!(wallpaper.to_string_lossy()),
+            );
+        }
+    } else if let Some(wallpaper) = active_wallpaper {
         defaults.insert(
             "backgroundImage".to_string(),
             json!(wallpaper.to_string_lossy()),
@@ -240,21 +259,6 @@ pub fn build(
                     json!(wt_stretch(fit.as_str())),
                 );
             }
-        }
-    }
-
-    if let Some(shader) = shader {
-        // Windows Terminal reads these as literal dotted keys directly under
-        // `profiles.defaults`, not as a nested `experimental` object.
-        defaults.insert(
-            "experimental.pixelShaderPath".to_string(),
-            json!(shader.to_string_lossy()),
-        );
-        if let Some(wallpaper) = wallpaper {
-            defaults.insert(
-                "experimental.pixelShaderImagePath".to_string(),
-                json!(wallpaper.to_string_lossy()),
-            );
         }
     }
 
@@ -360,13 +364,14 @@ mod tests {
 
     #[test]
     fn shader_and_wallpaper_paths_are_absolute_passthrough() {
+        // Live shader mode binds wallpaper to `experimental.pixelShaderImagePath`
+        // and omits static `backgroundImage*` to avoid double-rendering.
         let payload = build(
             &theme(RenderingProfile::Ultra),
             &["monospace".into()],
             Some(&PathBuf::from("/wall.png")),
             Some(&PathBuf::from("/active.hlsl")),
         );
-        assert_eq!(payload.defaults["backgroundImage"], "/wall.png");
         // Flat dotted keys, exactly as Windows Terminal reads them.
         assert_eq!(
             payload.defaults["experimental.pixelShaderPath"],
@@ -377,9 +382,54 @@ mod tests {
             "/wall.png"
         );
         assert!(!payload.defaults.contains_key("experimental"));
-        assert_eq!(payload.defaults["backgroundImageAlignment"], "bottomRight");
-        assert_eq!(payload.defaults["backgroundImageStretchMode"], "uniformToFill");
+        assert!(!payload.defaults.contains_key("backgroundImage"));
+        assert!(!payload.defaults.contains_key("backgroundImageOpacity"));
         assert!(payload.lint().is_empty(), "{:?}", payload.lint());
+
+        // Static mode (no shader) sets `backgroundImage*`.
+        let static_payload = build(
+            &theme(RenderingProfile::Static),
+            &["monospace".into()],
+            Some(&PathBuf::from("/wall.png")),
+            None,
+        );
+        assert_eq!(static_payload.defaults["backgroundImage"], "/wall.png");
+        assert_eq!(
+            static_payload.defaults["backgroundImageAlignment"],
+            "bottomRight"
+        );
+        assert_eq!(
+            static_payload.defaults["backgroundImageStretchMode"],
+            "uniformToFill"
+        );
+        assert!(!static_payload
+            .defaults
+            .contains_key("experimental.pixelShaderPath"));
+        assert!(static_payload.lint().is_empty(), "{:?}", static_payload.lint());
+    }
+
+    #[test]
+    fn zero_wallpaper_opacity_omits_wallpaper_and_shader_image() {
+        let mut t = theme(RenderingProfile::Balanced);
+        t.wallpaper_opacity = Some(0.0);
+        let live = build(
+            &t,
+            &["monospace".into()],
+            Some(&PathBuf::from("/wall.png")),
+            Some(&PathBuf::from("/active.hlsl")),
+        );
+        assert_eq!(live.defaults["experimental.pixelShaderPath"], "/active.hlsl");
+        assert!(!live.defaults.contains_key("experimental.pixelShaderImagePath"));
+        assert!(!live.defaults.contains_key("backgroundImage"));
+
+        let static_off = build(
+            &t,
+            &["monospace".into()],
+            Some(&PathBuf::from("/wall.png")),
+            None,
+        );
+        assert!(!static_off.defaults.contains_key("backgroundImage"));
+        assert!(!static_off.defaults.contains_key("backgroundImageOpacity"));
     }
 
     #[test]

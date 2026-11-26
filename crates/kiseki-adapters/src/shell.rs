@@ -79,6 +79,7 @@ impl Adapter for ZshAdapter {
             version: None,
             config_path,
             path_kind,
+            extra_config_paths: Vec::new(),
             active_in_session: platform
                 .env_var("SHELL")
                 .is_some_and(|shell| shell.ends_with("zsh")),
@@ -221,24 +222,54 @@ impl Adapter for ZshAdapter {
 pub struct PowerShellAdapter;
 
 impl PowerShellAdapter {
-    fn config_path(platform: &dyn Platform) -> Option<std::path::PathBuf> {
-        if let Some(explicit) = platform.env_var("KISEKI_PWSH_PROFILE") {
-            return Some(std::path::PathBuf::from(explicit));
+    fn home_dir(platform: &dyn Platform) -> Option<std::path::PathBuf> {
+        match platform.os() {
+            OsKind::Windows => platform
+                .env_var("USERPROFILE")
+                .or_else(|| platform.env_var("HOME"))
+                .map(std::path::PathBuf::from),
+            OsKind::MacOs | OsKind::Linux => platform
+                .env_var("HOME")
+                .or_else(|| platform.env_var("USERPROFILE"))
+                .map(std::path::PathBuf::from),
         }
-        let home = platform
-            .env_var("HOME")
-            .or_else(|| platform.env_var("USERPROFILE"))
-            .map(std::path::PathBuf::from)?;
-        Some(match platform.os() {
-            OsKind::Windows => home
-                .join("Documents")
-                .join("PowerShell")
-                .join("Microsoft.PowerShell_profile.ps1"),
-            OsKind::MacOs | OsKind::Linux => home
+    }
+
+    fn config_paths(platform: &dyn Platform) -> Vec<std::path::PathBuf> {
+        if let Some(explicit) = platform
+            .env_var("KISEKI_PWSH_PROFILE")
+            .filter(|value| !value.trim().is_empty())
+        {
+            return vec![std::path::PathBuf::from(explicit)];
+        }
+        let Some(home) = Self::home_dir(platform) else {
+            return Vec::new();
+        };
+        match platform.os() {
+            OsKind::Windows => {
+                let pwsh7 = home
+                    .join("Documents")
+                    .join("PowerShell")
+                    .join("Microsoft.PowerShell_profile.ps1");
+                let ps51 = home
+                    .join("Documents")
+                    .join("WindowsPowerShell")
+                    .join("Microsoft.PowerShell_profile.ps1");
+                let has_pwsh7 = platform.which("pwsh").is_some()
+                    || platform.inspect(&pwsh7) != PathKind::Missing;
+                let has_ps51 = platform.which("powershell").is_some()
+                    || platform.inspect(&ps51) != PathKind::Missing;
+                match (has_pwsh7, has_ps51) {
+                    (true, true) => vec![pwsh7, ps51],
+                    (false, true) => vec![ps51],
+                    _ => vec![pwsh7],
+                }
+            }
+            OsKind::MacOs | OsKind::Linux => vec![home
                 .join(".config")
                 .join("powershell")
-                .join("Microsoft.PowerShell_profile.ps1"),
-        })
+                .join("Microsoft.PowerShell_profile.ps1")],
+        }
     }
 }
 
@@ -260,17 +291,38 @@ impl Adapter for PowerShellAdapter {
     }
 
     fn detect(&self, env: &EnvContext, platform: &dyn Platform) -> Result<DetectionReport> {
-        let config_path = Self::config_path(platform);
+        let mut all_paths = Self::config_paths(platform);
+        let config_path = if all_paths.is_empty() {
+            None
+        } else {
+            Some(all_paths.remove(0))
+        };
         let path_kind = config_path
             .as_deref()
             .map(|path| platform.inspect(path))
             .unwrap_or(PathKind::Missing);
+        let extra_config_paths: Vec<(std::path::PathBuf, PathKind)> = all_paths
+            .into_iter()
+            .map(|path| {
+                let kind = platform.inspect(&path);
+                (path, kind)
+            })
+            .collect();
+        let any_exists = path_kind != PathKind::Missing
+            || extra_config_paths
+                .iter()
+                .any(|(_, kind)| *kind != PathKind::Missing);
         let installed = platform.which("pwsh").is_some()
             || platform.which("powershell").is_some()
-            || path_kind != PathKind::Missing;
+            || any_exists;
         let mut notes = Vec::new();
-        if path_kind == PathKind::Missing {
+        if !any_exists {
             notes.push("no PowerShell profile found; generated env.ps1 is available for manual sourcing".to_string());
+        }
+        if !extra_config_paths.is_empty() {
+            for (extra, _) in &extra_config_paths {
+                notes.push(format!("also managing Windows PowerShell profile at {}", extra.display()));
+            }
         }
         if env.is_ssh {
             notes.push("SSH session: host config writes are suppressed".to_string());
@@ -280,6 +332,7 @@ impl Adapter for PowerShellAdapter {
             version: None,
             config_path,
             path_kind,
+            extra_config_paths,
             active_in_session: env.terminal_is("pwsh") || env.terminal_is("powershell"),
             notes,
         })
@@ -302,9 +355,11 @@ impl Adapter for PowerShellAdapter {
             plan.diagnostic(diagnostic);
         }
 
-        let Some(config_path) = detection.config_path.as_ref() else {
+        let targets = detection.all_config_paths();
+        if targets.is_empty() {
             return Ok(plan);
-        };
+        }
+        let env_ps1_display = ctx.paths.generated(kiseki_compiler::artifact_names::ENV_PS1);
         if !ctx.options.host_writes_allowed(ctx.env) {
             plan.render_only = true;
             plan.diagnostic(
@@ -312,48 +367,50 @@ impl Adapter for PowerShellAdapter {
                     "adapter.pwsh.render-only",
                     "host writes suppressed; dot-source generated/env.ps1 manually",
                 )
-                .with_hint(format!(
-                    ". \"{}/env.ps1\"",
-                    ctx.paths.config_dir().join("generated").display()
-                )),
+                .with_hint(format!(". \"{}\"", env_ps1_display.display())),
             );
             return Ok(plan);
         }
-        if detection.path_kind == PathKind::Missing
-            && (!ctx.options.allow_create_host_files || !detection.installed)
-        {
+
+        let mut mounted = 0usize;
+        let mut read_only = 0usize;
+        for (target, kind) in targets {
+            if *kind == PathKind::Missing && (!ctx.options.allow_create_host_files || !detection.installed) {
+                continue;
+            }
+            if !kind.is_writable() {
+                read_only += 1;
+                plan.diagnostic(render_only_diagnostic(
+                    self.id(),
+                    target,
+                    kind.label(),
+                    format!(
+                        "add `. \"{}\"` to your Nix/Home Manager PowerShell profile",
+                        env_ps1_display.display()
+                    ),
+                ));
+                continue;
+            }
+            plan.push(FileOperation::UpsertMarkerBlock {
+                target: target.to_path_buf(),
+                begin: MARKER_BEGIN.to_string(),
+                end: MARKER_END.to_string(),
+                body: body.clone(),
+            });
+            mounted += 1;
+        }
+
+        if mounted == 0 && read_only > 0 {
+            plan.render_only = true;
+        } else if mounted == 0 && read_only == 0 {
             plan.diagnostic(
                 Diagnostic::info(
                     "adapter.pwsh.no-profile",
                     "no PowerShell profile found; generated env.ps1 was not mounted",
                 )
-                .with_hint(format!(
-                    "add `. \"{}/env.ps1\"` to your $PROFILE",
-                    ctx.paths.config_dir().join("generated").display()
-                )),
+                .with_hint(format!("add `. \"{}\"` to your $PROFILE", env_ps1_display.display())),
             );
-            return Ok(plan);
         }
-        if !detection.path_kind.is_writable() {
-            plan.render_only = true;
-            plan.diagnostic(render_only_diagnostic(
-                self.id(),
-                config_path,
-                detection.path_kind.label(),
-                format!(
-                    "add `. \"{}/env.ps1\"` to your Nix/Home Manager PowerShell profile",
-                    ctx.paths.config_dir().join("generated").display()
-                ),
-            ));
-            return Ok(plan);
-        }
-
-        plan.push(FileOperation::UpsertMarkerBlock {
-            target: config_path.clone(),
-            begin: MARKER_BEGIN.to_string(),
-            end: MARKER_END.to_string(),
-            body,
-        });
         Ok(plan)
     }
 
@@ -399,9 +456,9 @@ impl Adapter for PowerShellAdapter {
         _paths: &kiseki_platform::KisekiPaths,
     ) -> Result<AdapterPlan> {
         let mut plan = AdapterPlan::new(self.id());
-        if let Some(target) = detection.config_path.as_ref() {
+        for (target, _) in detection.all_config_paths() {
             plan.push(FileOperation::RemoveMarkerBlock {
-                target: target.clone(),
+                target: target.to_path_buf(),
                 begin: MARKER_BEGIN.to_string(),
                 end: MARKER_END.to_string(),
             });
@@ -460,6 +517,7 @@ mod tests {
             version: None,
             config_path: Some(path.to_path_buf()),
             path_kind: kind,
+            extra_config_paths: Vec::new(),
             active_in_session: true,
             notes: Vec::new(),
         }
@@ -624,5 +682,76 @@ mod tests {
             plan.operations[0],
             FileOperation::RemoveMarkerBlock { .. }
         ));
+    }
+
+    #[test]
+    fn windows_powershell_adapter_manages_both_ps7_and_ps51_profiles() {
+        let (dir, platform) = platform();
+        platform.set_os(OsKind::Windows);
+        platform.set_env("USERPROFILE", &dir.path().to_string_lossy());
+        platform.set_env("KISEKI_WHICH_pwsh", r"C:\Program Files\PowerShell\7\pwsh.exe");
+        platform.set_env("KISEKI_WHICH_powershell", r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe");
+
+        let env = EnvContext::local();
+        let detection = PowerShellAdapter.detect(&env, &platform).unwrap();
+        assert!(detection.installed);
+        let ps7 = dir.path().join("Documents").join("PowerShell").join("Microsoft.PowerShell_profile.ps1");
+        let ps51 = dir.path().join("Documents").join("WindowsPowerShell").join("Microsoft.PowerShell_profile.ps1");
+        assert_eq!(detection.config_path.as_deref(), Some(ps7.as_path()));
+        assert_eq!(detection.extra_config_paths, vec![(ps51.clone(), PathKind::Missing)]);
+
+        // `kiseki init` (allow_create_host_files = true) mounts both profiles.
+        let output = compiled(platform.paths().config_dir(), PromptPolicy::ManagedTemplate);
+        let init_plan = PowerShellAdapter
+            .plan(
+                &PlanContext {
+                    theme: &theme(),
+                    artifacts: &output.artifacts,
+                    options: &PlanOptions {
+                        allow_create_host_files: true,
+                        ..PlanOptions::default()
+                    },
+                    env: &env,
+                    paths: platform.paths(),
+                },
+                &detection,
+                CapabilityFlags::empty(),
+            )
+            .unwrap();
+        let targets: Vec<&std::path::Path> = init_plan
+            .operations
+            .iter()
+            .filter_map(|op| match op {
+                FileOperation::UpsertMarkerBlock { target, .. } => Some(target.as_path()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(targets, vec![ps7.as_path(), ps51.as_path()]);
+
+        // `kiseki uninstall` unhooks both profiles.
+        let unhook = PowerShellAdapter.plan_unhook(&detection, platform.paths()).unwrap();
+        let unhook_targets: Vec<&std::path::Path> = unhook
+            .operations
+            .iter()
+            .filter_map(|op| match op {
+                FileOperation::RemoveMarkerBlock { target, .. } => Some(target.as_path()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(unhook_targets, vec![ps7.as_path(), ps51.as_path()]);
+    }
+
+    #[test]
+    fn windows_powershell_adapter_targets_ps51_alone_when_pwsh7_absent() {
+        let (dir, platform) = platform();
+        platform.set_os(OsKind::Windows);
+        platform.set_env("USERPROFILE", &dir.path().to_string_lossy());
+        platform.set_env("KISEKI_WHICH_powershell", r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe");
+
+        let detection = PowerShellAdapter.detect(&EnvContext::local(), &platform).unwrap();
+        assert!(detection.installed);
+        let ps51 = dir.path().join("Documents").join("WindowsPowerShell").join("Microsoft.PowerShell_profile.ps1");
+        assert_eq!(detection.config_path.as_deref(), Some(ps51.as_path()));
+        assert!(detection.extra_config_paths.is_empty());
     }
 }

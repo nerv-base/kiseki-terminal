@@ -85,6 +85,9 @@ pub struct DetectionReport {
     pub version: Option<String>,
     pub config_path: Option<PathBuf>,
     pub path_kind: PathKind,
+    /// Additional host config files managed by the same adapter (for example
+    /// Windows PowerShell 5.1 alongside PowerShell 7 on Windows).
+    pub extra_config_paths: Vec<(PathBuf, PathKind)>,
     pub active_in_session: bool,
     pub notes: Vec<String>,
 }
@@ -97,19 +100,36 @@ impl DetectionReport {
             version: None,
             config_path: None,
             path_kind: PathKind::Missing,
+            extra_config_paths: Vec::new(),
             active_in_session: false,
             notes: vec![note.into()],
         }
     }
 
-    /// True when a writable host config file is present.
-    pub fn has_writable_config(&self) -> bool {
-        self.config_path.is_some() && self.path_kind.is_writable() && self.path_kind != PathKind::Missing
+    /// Every config path (primary + extras) with its inspected [`PathKind`].
+    pub fn all_config_paths(&self) -> Vec<(&std::path::Path, &PathKind)> {
+        let mut paths = Vec::new();
+        if let Some(primary) = self.config_path.as_deref() {
+            paths.push((primary, &self.path_kind));
+        }
+        for (extra, kind) in &self.extra_config_paths {
+            paths.push((extra.as_path(), kind));
+        }
+        paths
     }
 
-    /// True when the config exists but cannot be rewritten.
+    /// True when a writable host config file is present.
+    pub fn has_writable_config(&self) -> bool {
+        self.all_config_paths()
+            .into_iter()
+            .any(|(_, kind)| kind.is_writable() && *kind != PathKind::Missing)
+    }
+
+    /// True when any config exists but cannot be rewritten.
     pub fn is_read_only(&self) -> bool {
-        matches!(self.path_kind, PathKind::ReadOnlyFile | PathKind::ReadOnlySymlink(_))
+        self.all_config_paths()
+            .into_iter()
+            .any(|(_, kind)| matches!(kind, PathKind::ReadOnlyFile | PathKind::ReadOnlySymlink(_)))
     }
 }
 

@@ -146,7 +146,11 @@ impl KisekiPaths {
 
     /// Path of a generated artefact by its slash-separated relative name.
     pub fn generated(&self, relative: &str) -> PathBuf {
-        self.generated_dir().join(relative)
+        let mut path = self.generated_dir();
+        for segment in relative.split('/').filter(|segment| !segment.is_empty()) {
+            path.push(segment);
+        }
+        path
     }
 
     /// True when `candidate` lives under one of the Kiseki-owned roots.

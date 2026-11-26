@@ -600,8 +600,14 @@ fn font_unlock_clears_both_the_config_and_state_flags() {
     let state = sandbox.json(&["status", "--json"]);
     assert_eq!(state["state"]["typography"]["locked"], false);
     assert_eq!(state["config"]["fontLocked"], false);
-    // The override itself survives the unlock.
+    // The override itself survives the unlock until the next theme switch.
     assert_eq!(state["state"]["typography"]["sizeOverridePt"], 14.0);
+
+    // Switching themes once unlocked lets the new theme supply its own font stack.
+    sandbox.run_ok(&["use", "kyoto-sakura", "--render-only", "--quiet"]);
+    let after_switch = sandbox.json(&["status", "--json"]);
+    assert!(after_switch["state"]["typography"]["styleOverride"].is_null());
+    assert!(after_switch["state"]["typography"]["sizeOverridePt"].is_null());
 }
 
 #[test]
@@ -769,8 +775,11 @@ fn compose_donor_assets_come_from_the_donor_pack() {
         &fs::read_to_string(sandbox.kiseki_home().join("generated/wt-visual.json")).unwrap(),
     )
     .unwrap();
-    let wallpaper = payload["defaults"]["backgroundImage"].as_str().unwrap();
+    let wallpaper = payload["defaults"]["experimental.pixelShaderImagePath"]
+        .as_str()
+        .unwrap();
     assert!(wallpaper.contains("donor-atmos"), "{wallpaper}");
+    assert!(payload["defaults"].get("backgroundImage").is_none());
     let shader = payload["defaults"]["experimental.pixelShaderPath"]
         .as_str()
         .unwrap();
@@ -1003,9 +1012,11 @@ fn init_preserves_official_v1_theme() {
 #[test]
 fn json_startup_errors_emit_an_error_document() {
     let sandbox = Sandbox::new();
+    // Corrupt `state.json` fails `App::new` startup consistently on every OS.
+    fs::create_dir_all(sandbox.kiseki_home()).unwrap();
+    fs::write(sandbox.kiseki_home().join("state.json"), "{ not json").unwrap();
     let output = sandbox
         .command()
-        .env("KISEKI_HOME", "/dev/null")
         .args(["--json", "doctor"])
         .output()
         .expect("kiseki binary runs");
@@ -1015,7 +1026,83 @@ fn json_startup_errors_emit_an_error_document() {
         panic!("expected an error JSON document ({error}):\n{stdout}")
     });
     assert_eq!(parsed["ok"], false);
-    assert!(parsed["error"].as_str().unwrap().contains("/dev/null"));
+    assert!(
+        parsed["error"].as_str().unwrap().contains("state.json"),
+        "{parsed}"
+    );
+}
+
+#[test]
+fn powershell_completions_are_pure_ascii_for_ps51() {
+    let sandbox = Sandbox::new();
+    let output = sandbox.run_ok(&["completions", "powershell"]);
+    let script = String::from_utf8(output.stdout).expect("valid UTF-8");
+    assert!(script.is_ascii(), "PowerShell completions must be pure ASCII for PS 5.1");
+    assert!(script.contains("Register-ArgumentCompleter"));
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_init_and_uninstall_manage_both_ps51_and_ps7_profiles() {
+    let sandbox = Sandbox::new();
+    let ps7 = sandbox
+        .home()
+        .join("Documents")
+        .join("PowerShell")
+        .join("Microsoft.PowerShell_profile.ps1");
+    let ps51 = sandbox
+        .home()
+        .join("Documents")
+        .join("WindowsPowerShell")
+        .join("Microsoft.PowerShell_profile.ps1");
+    fs::create_dir_all(ps7.parent().unwrap()).unwrap();
+    fs::create_dir_all(ps51.parent().unwrap()).unwrap();
+    fs::write(&ps7, "# existing ps7\n").unwrap();
+    fs::write(&ps51, "# existing ps51\n").unwrap();
+
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_kiseki"));
+    cmd.env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .env("USERPROFILE", sandbox.home())
+        .env("LOCALAPPDATA", sandbox.home().join("AppData").join("Local"))
+        .env("KISEKI_HOME", sandbox.kiseki_home())
+        .env("KISEKI_WT_SETTINGS", sandbox.path("wt-settings.json"))
+        .env("NO_COLOR", "1")
+        .env("KISEKI_APPEARANCE", "dark")
+        .env("KISEKI_POWER_SOURCE", "ac")
+        .args(["init", "--non-interactive", "--aliases", "--quiet"]);
+    let out = cmd.output().expect("kiseki init runs");
+    assert!(out.status.success(), "{out:?}");
+
+    let ps7_after = fs::read_to_string(&ps7).unwrap();
+    let ps51_after = fs::read_to_string(&ps51).unwrap();
+    assert!(ps7_after.contains("# existing ps7"), "{ps7_after}");
+    assert!(ps7_after.contains("# >>> kiseki >>>"), "{ps7_after}");
+    assert!(ps51_after.contains("# existing ps51"), "{ps51_after}");
+    assert!(ps51_after.contains("# >>> kiseki >>>"), "{ps51_after}");
+
+    let env_ps1 = fs::read(sandbox.kiseki_home().join("generated/env.ps1")).unwrap();
+    assert_eq!(&env_ps1[..3], &[0xEF, 0xBB, 0xBF], "env.ps1 must have UTF-8 BOM");
+
+    let mut uninstall = Command::new(env!("CARGO_BIN_EXE_kiseki"));
+    uninstall
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .env("USERPROFILE", sandbox.home())
+        .env("LOCALAPPDATA", sandbox.home().join("AppData").join("Local"))
+        .env("KISEKI_HOME", sandbox.kiseki_home())
+        .env("KISEKI_WT_SETTINGS", sandbox.path("wt-settings.json"))
+        .env("NO_COLOR", "1")
+        .args(["uninstall", "--purge", "--quiet"]);
+    let out = uninstall.output().expect("kiseki uninstall runs");
+    assert!(out.status.success(), "{out:?}");
+
+    let ps7_restored = fs::read_to_string(&ps7).unwrap();
+    let ps51_restored = fs::read_to_string(&ps51).unwrap();
+    assert!(!ps7_restored.contains("# >>> kiseki >>>"), "{ps7_restored}");
+    assert!(ps7_restored.contains("# existing ps7"), "{ps7_restored}");
+    assert!(!ps51_restored.contains("# >>> kiseki >>>"), "{ps51_restored}");
+    assert!(ps51_restored.contains("# existing ps51"), "{ps51_restored}");
 }
 
 #[test]

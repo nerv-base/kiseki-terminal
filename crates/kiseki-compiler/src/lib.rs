@@ -175,7 +175,7 @@ pub fn compile(input: &CompileInput<'_>) -> Result<CompileOutput> {
 
     let wallpaper = theme
         .wallpaper_path()
-        .map(|path| options.atmosphere_root().join(path));
+        .map(|path| join_relative(options.atmosphere_root(), path));
     let logo_path = logo_path(theme, options, input.logo_text);
     if logo_path.is_none() {
         if let Some(fastfetch) = theme
@@ -217,7 +217,10 @@ pub fn compile(input: &CompileInput<'_>) -> Result<CompileOutput> {
             }
             let program = kiseki_shader::compile_glsl_for(theme, template);
             artifacts.insert(artifact::names::SHADER_GLSL, program.source)?;
-            glsl_artifact = Some(options.config_dir.join("generated").join(artifact::names::SHADER_GLSL));
+            glsl_artifact = Some(join_relative(
+                &options.config_dir.join("generated"),
+                artifact::names::SHADER_GLSL,
+            ));
         }
         if theme.hlsl_path().is_some() {
             let template = input.hlsl_template.ok_or_else(|| {
@@ -237,7 +240,10 @@ pub fn compile(input: &CompileInput<'_>) -> Result<CompileOutput> {
             }
             let program = kiseki_shader::compile_hlsl_for(theme, template);
             artifacts.insert(artifact::names::SHADER_HLSL, program.source)?;
-            hlsl_artifact = Some(options.config_dir.join("generated").join(artifact::names::SHADER_HLSL));
+            hlsl_artifact = Some(join_relative(
+                &options.config_dir.join("generated"),
+                artifact::names::SHADER_HLSL,
+            ));
         }
     } else {
         diagnostics.push(Diagnostic::info(
@@ -304,6 +310,14 @@ pub fn compile(input: &CompileInput<'_>) -> Result<CompileOutput> {
     })
 }
 
+fn join_relative(base: &std::path::Path, relative: &str) -> PathBuf {
+    let mut path = base.to_path_buf();
+    for segment in relative.split('/').filter(|segment| !segment.is_empty()) {
+        path.push(segment);
+    }
+    path
+}
+
 fn logo_path(
     theme: &ResolvedTheme,
     options: &CompileOptions,
@@ -316,7 +330,7 @@ fn logo_path(
         .and_then(|overrides| overrides.fastfetch.as_ref())
         .and_then(|fastfetch| fastfetch.logo_path.as_deref())
         .unwrap_or("assets/logo.txt");
-    Some(options.overrides_root().join(declared))
+    Some(join_relative(options.overrides_root(), declared))
 }
 
 fn summarize(diagnostics: &[Diagnostic]) -> String {
@@ -356,7 +370,11 @@ mod tests {
     }
 
     fn options() -> CompileOptions {
-        CompileOptions::new("/home/zz/.config/kiseki", "/data/themes/nerv-eva")
+        #[cfg(windows)]
+        let (config_dir, theme_root) = (r"C:\Users\zz\.config\kiseki", r"C:\data\themes\nerv-eva");
+        #[cfg(not(windows))]
+        let (config_dir, theme_root) = ("/home/zz/.config/kiseki", "/data/themes/nerv-eva");
+        CompileOptions::new(config_dir, theme_root)
             .with_font_families(vec!["JetBrainsMono Nerd Font".to_string()])
     }
 
@@ -461,7 +479,9 @@ mod tests {
         let parsed = fastfetch::parse_body(raw).unwrap();
         let logo = parsed["logo"]["source"].as_str().unwrap();
         assert!(Path::new(logo).is_absolute(), "{logo}");
-        assert!(logo.ends_with("/assets/logo.txt"), "{logo}");
+        assert!(logo.replace('\\', "/").ends_with("/assets/logo.txt"), "{logo}");
+        #[cfg(windows)]
+        assert!(!logo.contains('/'), "mixed separators on Windows: {logo}");
         assert!(fastfetch::is_declarative(&parsed));
     }
 
@@ -528,6 +548,9 @@ mod tests {
         // declares the *donor's* paths, so the compile options must point at the
         // donor's directory rather than the active theme's.
         let (theme, options) = input(RenderingProfile::Balanced);
+        #[cfg(windows)]
+        let donor = PathBuf::from(r"C:\data\themes\shinkai-rain");
+        #[cfg(not(windows))]
         let donor = PathBuf::from("/data/themes/shinkai-rain");
         let output = compile(
             &CompileInput::new(
@@ -542,20 +565,38 @@ mod tests {
         )
         .unwrap();
         let payload = WtVisualPayload::from_json(output.artifacts.get("wt-visual.json").unwrap()).unwrap();
-        let wallpaper = payload.defaults["backgroundImage"].as_str().unwrap();
+        let wallpaper = payload.defaults["experimental.pixelShaderImagePath"]
+            .as_str()
+            .unwrap();
         assert!(
             wallpaper.starts_with(&donor.to_string_lossy().to_string()),
             "{wallpaper}"
         );
-        assert_eq!(
-            payload.defaults["experimental.pixelShaderImagePath"],
-            wallpaper
-        );
+        // Live shader mode composites the wallpaper in t1 and omits static `backgroundImage`.
+        assert!(!payload.defaults.contains_key("backgroundImage"));
         let ghostty = output.artifacts.get("ghostty.conf").unwrap();
         assert!(ghostty.contains(&donor.to_string_lossy().to_string()), "{ghostty}");
         let fastfetch = fastfetch::parse_body(output.artifacts.get("fastfetch.jsonc").unwrap()).unwrap();
         let logo = fastfetch["logo"]["source"].as_str().unwrap();
         assert!(logo.starts_with(&donor.to_string_lossy().to_string()), "{logo}");
+
+        // Static profile (no shader) carries the donor wallpaper on `backgroundImage`.
+        let (static_theme, static_options) = input(RenderingProfile::Static);
+        let static_output = compile(
+            &CompileInput::new(
+                &static_theme,
+                static_options.with_atmosphere_dir(Some(donor.clone())),
+            )
+            .with_logo(Some(LOGO)),
+        )
+        .unwrap();
+        let static_payload =
+            WtVisualPayload::from_json(static_output.artifacts.get("wt-visual.json").unwrap()).unwrap();
+        let static_wall = static_payload.defaults["backgroundImage"].as_str().unwrap();
+        assert!(
+            static_wall.starts_with(&donor.to_string_lossy().to_string()),
+            "{static_wall}"
+        );
 
         // Without a donor the active theme root is used.
         let (theme, options) = input(RenderingProfile::Balanced);

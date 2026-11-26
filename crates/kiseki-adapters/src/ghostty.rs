@@ -55,6 +55,7 @@ impl Adapter for GhosttyAdapter {
             version: None,
             config_path,
             path_kind,
+            extra_config_paths: Vec::new(),
             active_in_session: env.terminal_is("ghostty"),
             notes,
         })
@@ -292,6 +293,7 @@ mod tests {
             version: None,
             config_path: Some(config.clone()),
             path_kind: PathKind::Regular,
+            extra_config_paths: Vec::new(),
             active_in_session: true,
             notes: Vec::new(),
         };
@@ -340,12 +342,15 @@ mod tests {
         permissions.set_readonly(true);
         std::fs::set_permissions(&target, permissions).unwrap();
         let link = dir.path().join("config-link");
-        symlink(&target, &link);
+        if !symlink(&target, &link) {
+            return;
+        }
         let detection = DetectionReport {
             installed: true,
             version: None,
             config_path: Some(link),
             path_kind: PathKind::ReadOnlySymlink(target),
+            extra_config_paths: Vec::new(),
             active_in_session: false,
             notes: Vec::new(),
         };
@@ -384,6 +389,7 @@ mod tests {
             version: None,
             config_path: Some(config),
             path_kind: PathKind::Regular,
+            extra_config_paths: Vec::new(),
             active_in_session: false,
             notes: Vec::new(),
         };
@@ -417,6 +423,7 @@ mod tests {
             version: None,
             config_path: Some(PathBuf::from("/home/zz/.config/ghostty/config")),
             path_kind: PathKind::Regular,
+            extra_config_paths: Vec::new(),
             active_in_session: false,
             notes: Vec::new(),
         };
@@ -430,10 +437,20 @@ mod tests {
         ));
     }
 
-    fn symlink(target: &std::path::Path, link: &std::path::Path) {
+    fn symlink(target: &std::path::Path, link: &std::path::Path) -> bool {
         #[cfg(unix)]
-        std::os::unix::fs::symlink(target, link).unwrap();
+        {
+            std::os::unix::fs::symlink(target, link).unwrap();
+            true
+        }
         #[cfg(windows)]
-        std::os::windows::fs::symlink_file(target, link).unwrap();
+        {
+            match std::os::windows::fs::symlink_file(target, link) {
+                Ok(()) => true,
+                // Non-elevated Windows without Developer Mode returns ERROR_PRIVILEGE_NOT_HELD.
+                Err(error) if error.raw_os_error() == Some(1314) => false,
+                Err(error) => panic!("symlink_file failed: {error}"),
+            }
+        }
     }
 }

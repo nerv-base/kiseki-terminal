@@ -789,8 +789,7 @@ pub fn install_from_dir(
     }
 
     let files = collect_files(source)?;
-    let mut installed_files = 0;
-    let mut total_bytes = 0;
+    let mut staged: Vec<(String, Vec<u8>, u64)> = Vec::new();
     for file in files {
         if file.is_dir || file.is_symlink || file.is_special {
             continue;
@@ -800,10 +799,34 @@ pub fn install_from_dir(
         }
         let bytes = std::fs::read(source.join(&file.relative))
             .map_err(|error| KisekiError::io(source.join(&file.relative), error))?;
-        platform
-            .write_preserving_symlinks(&destination.join(&file.relative), &bytes)?;
+        staged.push((file.relative, bytes, file.bytes));
+    }
+
+    if destination.exists() {
+        let community = platform.paths().community_themes_dir();
+        let canonical = std::fs::canonicalize(&destination)
+            .map_err(|error| KisekiError::io(&destination, error))?;
+        let canonical_root = std::fs::canonicalize(&community)
+            .map_err(|error| KisekiError::io(&community, error))?;
+        if canonical == canonical_root || canonical.parent() != Some(canonical_root.as_path()) {
+            return Err(KisekiError::security(format!(
+                "refusing to replace {id}: destination is not a direct child of the community theme store"
+            )));
+        }
+        std::fs::remove_dir_all(&destination)
+            .map_err(|error| KisekiError::io(&destination, error))?;
+    }
+
+    let mut installed_files = 0;
+    let mut total_bytes = 0;
+    for (relative, bytes, size) in staged {
+        let mut target = destination.clone();
+        for segment in relative.split('/').filter(|segment| !segment.is_empty()) {
+            target.push(segment);
+        }
+        platform.write_preserving_symlinks(&target, &bytes)?;
         installed_files += 1;
-        total_bytes += file.bytes;
+        total_bytes += size;
     }
 
     Ok(InstalledTheme {
@@ -916,7 +939,11 @@ mod tests {
         #[cfg(unix)]
         std::os::unix::fs::symlink(&target, &link).unwrap();
         #[cfg(windows)]
-        std::os::windows::fs::symlink_file(&target, &link).unwrap();
+        match std::os::windows::fs::symlink_file(&target, &link) {
+            Ok(()) => {}
+            Err(error) if error.raw_os_error() == Some(1314) => return,
+            Err(error) => panic!("symlink_file failed: {error}"),
+        }
         let validation = validate_theme_dir(dir.path()).unwrap();
         assert!(validation
             .diagnostics
@@ -994,8 +1021,14 @@ mod tests {
 
         let error = install_from_dir(&platform, source.path(), false).unwrap_err();
         assert!(error.to_string().contains("already installed"), "{error}");
+
+        // Force reinstall must purge stale files dropped in a newer version of the pack.
+        let stale = installed.path.join("assets").join("stale-preview.png");
+        std::fs::write(&stale, b"stale").unwrap();
+        assert!(stale.exists());
         let replaced = install_from_dir(&platform, source.path(), true).unwrap();
         assert_eq!(replaced.id, "nerv-eva");
+        assert!(!stale.exists(), "force reinstall must remove stale files");
 
         let removed = remove_installed(&platform, "nerv-eva").unwrap();
         assert!(!removed.exists());

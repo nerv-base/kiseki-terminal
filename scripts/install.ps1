@@ -1,4 +1,4 @@
-﻿# Kiseki Terminal v2 standalone installer for Windows (PowerShell 5.1+ / 7+)
+# Kiseki Terminal v2 standalone installer for Windows (PowerShell 5.1+ / 7+)
 # Downloads a tagged GitHub Release zip, verifies SHA-256 against checksums.txt,
 # installs `kiseki.exe` to %LOCALAPPDATA%\Programs\kiseki, and updates User PATH.
 #
@@ -14,10 +14,28 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+try {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+} catch {}
+
+$okMark = [char]0x2713
 
 function Get-RustTarget {
-    $arch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLowerInvariant()
+    $arch = $null
+    try {
+        $arch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLowerInvariant()
+    } catch {
+        $arch = $null
+    }
+    if (-not $arch) {
+        $raw = $env:PROCESSOR_ARCHITEW6432
+        if (-not $raw) { $raw = $env:PROCESSOR_ARCHITECTURE }
+        switch ($raw.ToUpperInvariant()) {
+            "AMD64" { $arch = "x64" }
+            "ARM64" { $arch = "arm64" }
+            default { $arch = $raw.ToLowerInvariant() }
+        }
+    }
     switch ($arch) {
         "x64"   { return "x86_64-pc-windows-msvc" }
         "arm64" { return "aarch64-pc-windows-msvc" }
@@ -67,10 +85,11 @@ try {
     if ($actualHash -ne $expectedHash) {
         throw "SHA-256 mismatch for $archive!`n  expected: $expectedHash`n  actual:   $actualHash"
     }
-    Write-Host "✓ SHA-256 verified" -ForegroundColor Green
+    Write-Host "$okMark SHA-256 verified" -ForegroundColor Green
 
     $extractDir = Join-Path $tmpDir "extracted"
-    Expand-Archive -Path $archivePath -DestinationPath $extractDir -Force
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    [System.IO.Compression.ZipFile]::ExtractToDirectory($archivePath, $extractDir)
 
     $binPath = Join-Path $extractDir "kiseki-$tag-$target\kiseki.exe"
     if (-not (Test-Path $binPath)) {
@@ -108,10 +127,10 @@ try {
         $newPath = (@($segments) + $InstallDir) -join ';'
         [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
         $env:Path = "$env:Path;$InstallDir"
-        Write-Host "✓ Added $InstallDir to User PATH" -ForegroundColor Green
+        Write-Host "$okMark Added $InstallDir to User PATH" -ForegroundColor Green
     }
 
-    Write-Host "✓ Installed to $destPath ($verOut)" -ForegroundColor Green
+    Write-Host "$okMark Installed to $destPath ($verOut)" -ForegroundColor Green
     Write-Host ""
     Write-Host "Next step: run 'kiseki init' to launch the interactive setup wizard."
 } finally {

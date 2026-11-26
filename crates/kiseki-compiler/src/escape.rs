@@ -64,6 +64,45 @@ pub fn powershell_single_quote(raw: &str) -> String {
     out
 }
 
+/// Encodes a PowerShell string expression using pure ASCII so Windows PowerShell
+/// 5.1 parses it identically even when the host file lacks a UTF-8 BOM under a
+/// non-UTF-8 system codepage (for example CP936/GBK).
+pub fn powershell_ascii_string(raw: &str) -> String {
+    let cleaned = strip_control(raw);
+    if cleaned.is_ascii() {
+        return powershell_single_quote(&cleaned);
+    }
+    let mut parts: Vec<String> = Vec::new();
+    let mut ascii_buf = String::new();
+    for ch in cleaned.chars() {
+        if ch.is_ascii() {
+            ascii_buf.push(ch);
+        } else {
+            if !ascii_buf.is_empty() {
+                parts.push(powershell_single_quote(&ascii_buf));
+                ascii_buf.clear();
+            }
+            let code = ch as u32;
+            if code <= 0xFFFF {
+                parts.push(format!("[char]0x{code:04X}"));
+            } else {
+                parts.push(format!("[char]::ConvertFromUtf32(0x{code:X})"));
+            }
+        }
+    }
+    if !ascii_buf.is_empty() {
+        parts.push(powershell_single_quote(&ascii_buf));
+    }
+    // PowerShell's `+` operator dispatches on the LHS type: starting with a
+    // `[char]` would fail to coerce a multi-char RHS string or sum integers.
+    // Prepending `''` whenever the first part is not a string literal forces
+    // left-to-right string concatenation in both PS 5.1 and pwsh 7.
+    if !parts.first().is_some_and(|first| first.starts_with('\'')) {
+        parts.insert(0, "''".to_string());
+    }
+    format!("({})", parts.join(" + "))
+}
+
 /// Renders a value for a line-oriented `key = value` config (Ghostty).
 ///
 /// Newlines, NULs and `#` are rejected because they can terminate the value or
@@ -141,6 +180,18 @@ mod tests {
             "'$(evil); `id`'"
         );
         assert_eq!(powershell_single_quote("a\r\nb"), "'ab'");
+    }
+
+    #[test]
+    fn powershell_ascii_string_encodes_non_ascii_as_pure_ascii() {
+        assert_eq!(
+            powershell_ascii_string(r"C:\Users\zz\.config\kiseki"),
+            r"'C:\Users\zz\.config\kiseki'"
+        );
+        let encoded = powershell_ascii_string("C:\\Users\\张三\\.config");
+        assert!(encoded.is_ascii(), "{encoded}");
+        assert!(encoded.contains("[char]0x5F20"), "{encoded}");
+        assert!(encoded.contains("[char]0x4E09"), "{encoded}");
     }
 
     #[test]

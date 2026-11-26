@@ -151,6 +151,7 @@ impl Adapter for WindowsTerminalAdapter {
             version: None,
             config_path,
             path_kind,
+            extra_config_paths: Vec::new(),
             active_in_session: env.terminal_is("windows-terminal"),
             notes,
         })
@@ -331,6 +332,14 @@ pub fn wt_settings_path(platform: &dyn Platform) -> Option<PathBuf> {
         .join("settings.json");
     if packaged.exists() {
         return Some(packaged);
+    }
+    let preview = local
+        .join("Packages")
+        .join("Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe")
+        .join("LocalState")
+        .join("settings.json");
+    if preview.exists() {
+        return Some(preview);
     }
     let unpackaged = local
         .join("Microsoft")

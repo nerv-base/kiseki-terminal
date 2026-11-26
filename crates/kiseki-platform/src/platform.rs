@@ -152,15 +152,29 @@ impl Platform for SystemPlatform {
     fn which(&self, program: &str) -> Option<PathBuf> {
         if let Some(path) = self.env_var("PATH") {
             let separator = if cfg!(windows) { ';' } else { ':' };
-            for dir in path.split(separator).filter(|dir| !dir.is_empty()) {
-                let candidate = Path::new(dir).join(program);
-                if is_executable(&candidate) {
-                    return Some(candidate);
+            for raw_dir in path.split(separator) {
+                let dir = raw_dir.trim().trim_matches('"');
+                if dir.is_empty() {
+                    continue;
                 }
                 if cfg!(windows) {
-                    let exe = Path::new(dir).join(format!("{program}.exe"));
-                    if is_executable(&exe) {
-                        return Some(exe);
+                    if Path::new(program).extension().is_some() {
+                        let candidate = Path::new(dir).join(program);
+                        if is_executable(&candidate) {
+                            return Some(candidate);
+                        }
+                    } else {
+                        for ext in [".exe", ".com", ".cmd", ".bat"] {
+                            let candidate = Path::new(dir).join(format!("{program}{ext}"));
+                            if is_executable(&candidate) {
+                                return Some(candidate);
+                            }
+                        }
+                    }
+                } else {
+                    let candidate = Path::new(dir).join(program);
+                    if is_executable(&candidate) {
+                        return Some(candidate);
                     }
                 }
             }
@@ -196,10 +210,14 @@ impl Platform for SystemPlatform {
         }
         if cfg!(target_os = "windows") {
             let output = std::process::Command::new("tasklist")
-                .args(["/FI", &format!("PID eq {pid}"), "/NH"])
+                .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
                 .output();
+            let needle = format!(",\"{pid}\",");
             return output
-                .map(|output| String::from_utf8_lossy(&output.stdout).contains(&pid.to_string()))
+                .map(|output| {
+                    output.status.success()
+                        && String::from_utf8_lossy(&output.stdout).contains(&needle)
+                })
                 .unwrap_or(false);
         }
         // `kill -0` never delivers a signal; it only probes existence.

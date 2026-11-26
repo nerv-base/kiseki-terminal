@@ -309,11 +309,21 @@ pub fn list_dir(dir: &Path) -> Result<Vec<PathBuf>> {
 mod tests {
     use super::*;
 
-    fn symlink(target: &Path, link: &Path) {
+    fn symlink(target: &Path, link: &Path) -> bool {
         #[cfg(unix)]
-        std::os::unix::fs::symlink(target, link).unwrap();
+        {
+            std::os::unix::fs::symlink(target, link).unwrap();
+            true
+        }
         #[cfg(windows)]
-        std::os::windows::fs::symlink_file(target, link).unwrap();
+        {
+            match std::os::windows::fs::symlink_file(target, link) {
+                Ok(()) => true,
+                // Non-elevated Windows without Developer Mode returns ERROR_PRIVILEGE_NOT_HELD.
+                Err(error) if error.raw_os_error() == Some(1314) => false,
+                Err(error) => panic!("symlink_file failed: {error}"),
+            }
+        }
     }
 
     fn tempdir() -> tempfile::TempDir {
@@ -347,7 +357,9 @@ mod tests {
         fs::create_dir_all(target.parent().unwrap()).unwrap();
         fs::write(&target, "original").unwrap();
         let link = dir.path().join("zshrc");
-        symlink(&target, &link);
+        if !symlink(&target, &link) {
+            return;
+        }
 
         let kind = inspect_path(&link);
         assert!(matches!(kind, PathKind::WritableSymlink(_)));
@@ -387,7 +399,9 @@ mod tests {
         permissions.set_readonly(true);
         fs::set_permissions(&target, permissions).unwrap();
         let link = dir.path().join("link");
-        symlink(&target, &link);
+        if !symlink(&target, &link) {
+            return;
+        }
 
         let kind = inspect_path(&link);
         assert!(matches!(kind, PathKind::ReadOnlySymlink(_)), "{kind:?}");
@@ -410,7 +424,9 @@ mod tests {
         let dir = tempdir();
         let target = dir.path().join("missing-target");
         let link = dir.path().join("link");
-        symlink(&target, &link);
+        if !symlink(&target, &link) {
+            return;
+        }
         let outcome = write_preserving_symlinks(&link, b"created").unwrap();
         assert!(outcome.is_written());
         assert!(fs::symlink_metadata(&link).unwrap().file_type().is_symlink());

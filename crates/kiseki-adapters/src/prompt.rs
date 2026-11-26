@@ -107,6 +107,7 @@ impl Adapter for PromptAdapter {
             version: None,
             config_path,
             path_kind,
+            extra_config_paths: Vec::new(),
             active_in_session: platform.env_var("POSH_SESSION_ID").is_some(),
             notes,
         })
@@ -184,13 +185,13 @@ impl Adapter for PromptAdapter {
                         format!("generated prompt.omp.json does not parse: {error}"),
                     )),
                 },
-                artifact_names::PROMPT_OMP_PALETTE => {
-                    if serde_json::from_str::<serde_json::Value>(content).is_err() {
-                        report.push(Diagnostic::error(
-                            "adapter.prompt.invalid-json",
-                            "generated prompt palette fragment does not parse",
-                        ));
-                    }
+                artifact_names::PROMPT_OMP_PALETTE
+                    if serde_json::from_str::<serde_json::Value>(content).is_err() =>
+                {
+                    report.push(Diagnostic::error(
+                        "adapter.prompt.invalid-json",
+                        "generated prompt palette fragment does not parse",
+                    ));
                 }
                 artifact_names::STARSHIP_PALETTE => {
                     if content.contains("[custom.") {
@@ -285,6 +286,7 @@ mod tests {
             version: None,
             config_path: Some(PathBuf::from("/home/zz/.config/oh-my-posh/config.json")),
             path_kind: PathKind::Regular,
+            extra_config_paths: Vec::new(),
             active_in_session: false,
             notes,
         }
