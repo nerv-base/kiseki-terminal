@@ -323,7 +323,7 @@ mod tests {
             })
             .expect("anchor");
         assert!(anchor.0.starts_with("config-file = ?"));
-        assert!(anchor.0.ends_with("generated/ghostty.conf"));
+        assert!(anchor.0.replace('\\', "/").ends_with("generated/ghostty.conf"));
         assert_eq!(anchor.1, &config);
         let generated = plan.generated_writes().find(|(path, _)| *path == "ghostty.conf").unwrap().1;
         assert!(!generated.contains("shell-integration"));

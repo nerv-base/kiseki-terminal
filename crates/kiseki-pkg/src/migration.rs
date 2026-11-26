@@ -947,7 +947,9 @@ mod tests {
         let detection = detect_v1(&platform).unwrap().unwrap();
         let paths = detection.config_paths();
         assert!(paths.contains(&&ghostty_xdg), "{paths:?}");
-        assert!(paths.contains(&&ghostty_app), "{paths:?}");
+        if platform.os() == OsKind::MacOs {
+            assert!(paths.contains(&&ghostty_app), "{paths:?}");
+        }
         assert!(paths.contains(&&wezterm), "{paths:?}");
         assert!(paths.contains(&&wezterm_xdg), "{paths:?}");
 
@@ -968,7 +970,9 @@ mod tests {
         let ghostty = std::fs::read_to_string(&ghostty_xdg).unwrap();
         assert!(ghostty.contains("font-size = 13"));
         assert!(!ghostty.contains(V1_BEGIN));
-        assert!(!std::fs::read_to_string(&ghostty_app).unwrap().contains(V1_BEGIN));
+        if platform.os() == OsKind::MacOs {
+            assert!(!std::fs::read_to_string(&ghostty_app).unwrap().contains(V1_BEGIN));
+        }
         let lua = std::fs::read_to_string(&wezterm).unwrap();
         assert!(lua.contains("require 'wezterm'"));
         assert!(!lua.contains(V1_LUA_BEGIN));
