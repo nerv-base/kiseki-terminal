@@ -127,12 +127,17 @@ export class Kiseki3DStage {
   syncSize(): void {
     const rect = this.canvas.getBoundingClientRect();
     if (rect.width < 10 || rect.height < 10) return;
-    const dpr = Math.min(window.devicePixelRatio || 1, 2.0);
-    this.canvas.width = Math.round(rect.width * dpr);
-    this.canvas.height = Math.round(rect.height * dpr);
+    const rawDpr = Math.min(window.devicePixelRatio || 1, 2.0);
+    const rawW = rect.width * rawDpr;
+    const rawH = rect.height * rawDpr;
+    const capScale = Math.max(rawW, rawH) > 3840 ? 3840 / Math.max(rawW, rawH) : 1;
+    const cw = Math.max(1, Math.round(rawW * capScale));
+    const ch = Math.max(1, Math.round(rawH * capScale));
+    this.canvas.width = cw;
+    this.canvas.height = ch;
     this.w = rect.width;
     this.h = rect.height;
-    this.dpr = dpr;
+    this.dpr = cw / rect.width;
   }
 
   setMouse(nx: number, ny: number): void {
@@ -270,6 +275,7 @@ export class Kiseki3DStage {
     const acc2 = pal.accents.secondary;
     const burst = this.burstEnergy;
     this.burstEnergy = Math.max(0, this.burstEnergy - dt * 1.8);
+    const uiScale = Math.max(1, Math.min(1.6, Math.min(this.w, this.h * 1.778) / 1440));
 
     const halfW = this.w * 0.72;
     const halfH = this.h * 0.72;
@@ -287,7 +293,7 @@ export class Kiseki3DStage {
         const s = this.fov / (this.fov + z);
         const py = horizonY + gridY * s * 0.38;
         ctx.globalAlpha = Math.max(0, 0.22 * (1 - zi / 12));
-        ctx.lineWidth = 1;
+        ctx.lineWidth = uiScale;
         ctx.beginPath();
         ctx.moveTo(0, py);
         ctx.lineTo(this.w, py);
@@ -335,7 +341,7 @@ export class Kiseki3DStage {
 
         const pitchScale = Math.cos(p.rx);
         const rollScale = 0.45 + 0.55 * Math.abs(Math.sin(p.ry));
-        const sz = p.size * proj.scale;
+        const sz = p.size * proj.scale * uiScale;
         ctx.save();
         ctx.translate(proj.sx, proj.sy);
         ctx.rotate(p.rz);
@@ -353,7 +359,7 @@ export class Kiseki3DStage {
         const oy = Math.cos(t * p.speed * 0.8 + p.phase) * 24;
         const proj = this.project(p.x + ox, p.y + oy, p.z);
         const pulse = Math.pow(0.5 + 0.5 * Math.sin(t * 2.1 + p.phase), 2);
-        const r = (2.0 + 2.2 * pulse) * proj.scale;
+        const r = (2.0 + 2.2 * pulse) * proj.scale * uiScale;
         const alpha = 0.2 + 0.65 * pulse;
         ctx.fillStyle = acc2;
         ctx.globalAlpha = alpha * 0.22;
@@ -372,10 +378,10 @@ export class Kiseki3DStage {
           p.x = (Math.random() - 0.4) * this.w * 1.4;
         }
         const proj = this.project(p.x, p.y, p.z);
-        const len = p.len * proj.scale;
+        const len = p.len * proj.scale * uiScale;
         ctx.strokeStyle = p.z < 220 ? acc1 : '#8FF5E5';
         ctx.globalAlpha = Math.max(0.08, (1 - p.z / 760) * 0.42);
-        ctx.lineWidth = Math.max(0.7, 1.5 * proj.scale);
+        ctx.lineWidth = Math.max(0.7, 1.5 * proj.scale * uiScale);
         ctx.beginPath();
         ctx.moveTo(proj.sx, proj.sy);
         ctx.lineTo(proj.sx - len * 0.22, proj.sy + len);
@@ -386,20 +392,20 @@ export class Kiseki3DStage {
         ctx.globalAlpha = 0.05 + 0.09 * pulse;
         ctx.fillStyle = p.warm ? acc2 : acc1;
         ctx.beginPath();
-        ctx.arc(proj.sx, proj.sy, p.r * proj.scale, 0, Math.PI * 2);
+        ctx.arc(proj.sx, proj.sy, p.r * proj.scale * uiScale, 0, Math.PI * 2);
         ctx.fill();
       } else if (p.kind === 'hex') {
         p.rotZ += p.vRot * dt;
         p.rotY += p.vRot * 0.7 * dt;
         const proj = this.project(p.x + Math.sin(t * 0.6 + p.phase) * 16, p.y + Math.cos(t * 0.5 + p.phase) * 12, p.z);
-        const r = p.radius * proj.scale;
+        const r = p.radius * proj.scale * uiScale;
         ctx.save();
         ctx.translate(proj.sx, proj.sy);
         ctx.rotate(p.rotZ);
         ctx.scale(0.55 + 0.45 * Math.abs(Math.cos(p.rotY)), 1);
         ctx.strokeStyle = p.phase > 3.14 ? acc1 : acc2;
         ctx.globalAlpha = Math.max(0.12, (1 - p.z / 680) * 0.42);
-        ctx.lineWidth = 1.2;
+        ctx.lineWidth = 1.2 * uiScale;
         ctx.beginPath();
         for (let k = 0; k < 6; k++) {
           const ang = (Math.PI / 3) * k;
@@ -422,7 +428,7 @@ export class Kiseki3DStage {
         const tw = 0.4 + 0.6 * Math.pow(0.5 + 0.5 * Math.sin(t * 2.8 + p.phase), 2);
         const px = Math.round(proj.sx / 2) * 2;
         const py = Math.round(proj.sy / 2) * 2;
-        const sz = Math.max(2, Math.round(4 * proj.scale));
+        const sz = Math.max(2, Math.round(4 * proj.scale * uiScale));
         ctx.globalAlpha = Math.max(0.12, (1 - p.z / 800) * tw);
         ctx.fillStyle = p.tint;
         ctx.fillRect(px, py, sz, sz);
@@ -448,15 +454,15 @@ export class Kiseki3DStage {
         const m = this.meteors[i];
         if (!m) continue;
         m.life += dt;
-        m.x += 340 * dt;
-        m.y += 190 * dt;
+        m.x += 340 * uiScale * dt;
+        m.y += 190 * uiScale * dt;
         const alpha = Math.sin((m.life / m.maxLife) * Math.PI);
         ctx.strokeStyle = acc1;
         ctx.globalAlpha = Math.max(0, alpha * 0.85);
-        ctx.lineWidth = 2;
+        ctx.lineWidth = 2 * uiScale;
         ctx.beginPath();
         ctx.moveTo(m.x, m.y);
-        ctx.lineTo(m.x - 48, m.y - 27);
+        ctx.lineTo(m.x - 48 * uiScale, m.y - 27 * uiScale);
         ctx.stroke();
         if (m.life >= m.maxLife) this.meteors.splice(i, 1);
       }

@@ -125,25 +125,25 @@ export const LiveTerminal: FC<LiveTerminalProps> = ({
     <section id="terminal" className="relative z-10 py-24 sm:py-32 overflow-hidden">
       <div className="pointer-events-none absolute inset-0 k-blueprint-wash" />
       <div
-        className="pointer-events-none absolute -top-24 left-1/2 -translate-x-1/2 w-[780px] h-[360px] rounded-full blur-3xl opacity-[0.07]"
+        className="pointer-events-none absolute -top-24 left-1/2 -translate-x-1/2 w-[48rem] h-[22rem] rounded-full blur-3xl opacity-[0.07]"
         style={{ background: 'radial-gradient(circle, var(--k-accent-primary), transparent 70%)' }}
       />
 
       <div
         id="k-act1-watermark"
-        className="k-watermark pointer-events-none select-none absolute top-10 left-1/2 text-[88px] sm:text-[160px] lg:text-[210px] leading-none whitespace-nowrap"
+        className="k-watermark pointer-events-none select-none absolute top-10 left-1/2 text-[5.5rem] sm:text-[10rem] lg:text-[13rem] leading-none whitespace-nowrap"
         style={{ color: 'var(--k-text-primary)', opacity: 0.032 }}
       >
         {meta.watermark}
       </div>
 
-      <div className="k-reveal relative z-10 max-w-6xl mx-auto px-6 sm:px-10 space-y-10">
+      <div className="k-reveal relative z-10 max-w-7xl mx-auto px-6 sm:px-10 space-y-10">
         <div
-          className="max-w-4xl mx-auto flex items-end justify-between gap-6 border-b pb-5"
+          className="max-w-5xl mx-auto flex items-end justify-between gap-6 border-b pb-5"
           style={{ borderColor: 'color-mix(in srgb, var(--k-border) 28%, transparent)' }}
         >
           <div className="space-y-2">
-            <div className="font-k-hud text-[11px] tracking-[0.26em] uppercase" style={{ color: 'var(--k-accent-primary)' }}>
+            <div className="font-k-hud text-xs tracking-[0.26em] uppercase" style={{ color: 'var(--k-accent-primary)' }}>
               01 // LIVE DEMO
             </div>
             <h2 className="k-act-heading text-2xl sm:text-4xl m-0" style={{ color: 'var(--k-text-primary)' }}>
@@ -180,13 +180,13 @@ export const LiveTerminal: FC<LiveTerminalProps> = ({
               const ry = ((x - 0.5) * 4.0).toFixed(2);
               shellRef.current.style.transform = `rotateX(${rx}deg) rotateY(${ry}deg)`;
               sheenRef.current.style.opacity = '1';
-              sheenRef.current.style.background = `radial-gradient(360px circle at ${(x * 100).toFixed(1)}% ${(y * 100).toFixed(1)}%, color-mix(in srgb, var(--k-accent-primary) 12%, transparent), transparent 70%)`;
+              sheenRef.current.style.background = `radial-gradient(24rem circle at ${(x * 100).toFixed(1)}% ${(y * 100).toFixed(1)}%, color-mix(in srgb, var(--k-accent-primary) 12%, transparent), transparent 70%)`;
             }}
             onMouseLeave={() => {
               if (shellRef.current) shellRef.current.style.transform = '';
               if (sheenRef.current) sheenRef.current.style.opacity = '0';
             }}
-            className={`k-terminal-bezel relative w-full ${narrowSplit ? 'max-w-sm' : 'max-w-4xl'} border overflow-hidden transition-all duration-300`}
+            className={`k-terminal-bezel relative w-full ${narrowSplit ? 'max-w-sm' : 'max-w-5xl'} border overflow-hidden transition-all duration-300`}
             style={{
               borderColor: 'color-mix(in srgb, var(--k-border) 55%, transparent)',
               borderRadius: 'var(--k-radius)',
@@ -197,7 +197,7 @@ export const LiveTerminal: FC<LiveTerminalProps> = ({
 
             {/* Titlebar */}
             <div
-              className="relative flex items-center justify-between px-4 py-2.5 border-b font-k-mono text-[11px]"
+              className="relative flex items-center justify-between px-4 py-2.5 border-b font-k-mono text-xs"
               style={{
                 background: 'var(--k-tab-bar-bg)',
                 borderColor: 'color-mix(in srgb, var(--k-border) 42%, transparent)',
@@ -213,14 +213,14 @@ export const LiveTerminal: FC<LiveTerminalProps> = ({
                   {promptCfg.consoleTitlePrefix} // ~/projects/kiseki-terminal
                 </span>
               </div>
-              <span id="k-term-compose-badge" className="hidden sm:inline text-[10px]" style={{ color: 'var(--k-accent-primary)' }}>
+              <span id="k-term-compose-badge" className="hidden sm:inline text-[0.6875rem]" style={{ color: 'var(--k-accent-primary)' }}>
                 {composeBadge}
               </span>
               <span className="absolute bottom-0 left-0 w-36 h-[1px]" style={{ background: 'var(--k-accent-primary)' }} />
             </div>
 
             {/* WebGL2 Live Shader Terminal Body */}
-            <div className="relative min-h-[420px] flex flex-col justify-between overflow-hidden" style={{ background: 'var(--k-base)' }}>
+            <div className="relative min-h-[27.5rem] flex flex-col justify-between overflow-hidden" style={{ background: 'var(--k-base)' }}>
               <canvas ref={termCanvasRef} id="k-term-canvas" className="absolute inset-0 w-full h-full block" />
 
               <div className="relative z-10 p-5 sm:p-6 flex-1 flex flex-col justify-between gap-4 font-k-mono text-xs">
@@ -234,7 +234,7 @@ export const LiveTerminal: FC<LiveTerminalProps> = ({
                       className="k-ansi-logo shrink-0"
                       dangerouslySetInnerHTML={{ __html: atmPack.logoHtml }}
                     />
-                    <div className="min-w-0 space-y-1 text-[11px] leading-snug">
+                    <div className="min-w-0 space-y-1 text-xs leading-snug">
                       <div id="k-ff-header" className="font-bold tracking-wide" style={{ color: 'var(--k-accent-primary)' }}>
                         {ffCfg.headerTitle}
                       </div>
@@ -261,7 +261,7 @@ export const LiveTerminal: FC<LiveTerminalProps> = ({
                   </div>
 
                   <div
-                    className="p-3 border text-[11px] leading-relaxed max-w-[90%] sm:max-w-[60%]"
+                    className="p-3 border text-xs leading-relaxed max-w-[90%] sm:max-w-[60%]"
                     style={{
                       background: 'color-mix(in srgb, var(--k-crust) 72%, transparent)',
                       borderColor: 'color-mix(in srgb, var(--k-border) 32%, transparent)',
@@ -284,7 +284,7 @@ export const LiveTerminal: FC<LiveTerminalProps> = ({
                     </pre>
                   </div>
 
-                  <div ref={logBoxRef} id="k-term-log" className="k-term-scroll max-h-24 overflow-y-auto space-y-1 text-[11px] max-w-[92%] sm:max-w-[68%]">
+                  <div ref={logBoxRef} id="k-term-log" className="k-term-scroll max-h-24 overflow-y-auto space-y-1 text-xs max-w-[92%] sm:max-w-[68%]">
                     {logLines.map((line) => (
                       <div key={line.id}>
                         {line.tone === 'cmd' ? (
@@ -309,7 +309,7 @@ export const LiveTerminal: FC<LiveTerminalProps> = ({
                       }}
                     >
                       <div
-                        className="flex items-center justify-between text-[10px] pb-1 border-b"
+                        className="flex items-center justify-between text-[0.6875rem] pb-1 border-b"
                         style={{
                           borderColor: 'color-mix(in srgb, var(--k-border) 35%, transparent)',
                           color: 'var(--k-accent-primary)',
@@ -318,7 +318,7 @@ export const LiveTerminal: FC<LiveTerminalProps> = ({
                         <span>kiseki pick // Ratatui</span>
                         <span style={{ color: 'var(--k-text-muted)' }}>[↑↓] 预览 · [Enter] 应用 · [Esc] 取消</span>
                       </div>
-                      <div id="k-term-picker-list" className="space-y-0.5 text-[11px]">
+                      <div id="k-term-picker-list" className="space-y-0.5 text-xs">
                         {THEME_ORDER.map((id, idx) => {
                           const sel = idx === pickerIndex;
                           const m = WORLD_META[id];
@@ -355,7 +355,7 @@ export const LiveTerminal: FC<LiveTerminalProps> = ({
                 >
                   <span
                     id="k-prompt-badge"
-                    className="px-1.5 py-0.5 text-[10px] font-bold shrink-0"
+                    className="px-1.5 py-0.5 text-[0.6875rem] font-bold shrink-0"
                     style={{
                       borderRadius: '2px',
                       background: promptCfg.segmentColors.badgeBg,
@@ -366,7 +366,7 @@ export const LiveTerminal: FC<LiveTerminalProps> = ({
                   </span>
                   <span
                     id="k-prompt-path"
-                    className="px-1.5 py-0.5 text-[10px] shrink-0 hidden sm:inline"
+                    className="px-1.5 py-0.5 text-[0.6875rem] shrink-0 hidden sm:inline"
                     style={{
                       borderRadius: '2px',
                       background: promptCfg.segmentColors.pathBg,
@@ -397,7 +397,7 @@ export const LiveTerminal: FC<LiveTerminalProps> = ({
 
           {/* Glass-Hairline Dock Bar */}
           <div
-            className="w-full max-w-4xl px-4 py-2.5 border backdrop-blur-sm flex flex-wrap items-center justify-between gap-4 font-k-mono text-[11px]"
+            className="w-full max-w-5xl px-4 py-2.5 border backdrop-blur-sm flex flex-wrap items-center justify-between gap-4 font-k-mono text-xs"
             style={{
               background: 'color-mix(in srgb, var(--k-mantle) 65%, transparent)',
               borderColor: 'color-mix(in srgb, var(--k-border) 30%, transparent)',

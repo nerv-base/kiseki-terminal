@@ -14,7 +14,7 @@ export const BootCurtain: FC<BootCurtainProps> = ({ done }) => (
       className="font-k-display text-sm tracking-[0.34em] uppercase"
       style={{ color: 'var(--k-text-primary)', fontWeight: 'var(--k-display-weight)' }}
     >
-      KISEKI <span className="font-k-mono text-[10px] opacity-55 tracking-[0.2em]">//</span>{' '}
+      KISEKI <span className="font-k-mono text-[0.6875rem] opacity-55 tracking-[0.2em]">//</span>{' '}
       <span className="font-k-serif" style={{ color: 'var(--k-accent-primary)' }}>
         奇蹟端末
       </span>

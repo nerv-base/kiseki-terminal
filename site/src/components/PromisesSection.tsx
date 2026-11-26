@@ -16,17 +16,17 @@ export const PromisesSection: FC<PromisesSectionProps> = ({ lang }) => {
       style={{ borderColor: 'color-mix(in srgb, var(--k-border) 22%, transparent)' }}
     >
       <div
-        className="pointer-events-none absolute -bottom-24 right-1/4 w-[620px] h-[300px] rounded-full blur-3xl opacity-[0.06]"
+        className="pointer-events-none absolute -bottom-24 right-1/4 w-[38rem] h-[19rem] rounded-full blur-3xl opacity-[0.06]"
         style={{ background: 'radial-gradient(circle, var(--k-accent-secondary), transparent 70%)' }}
       />
 
-      <div className="k-reveal max-w-6xl mx-auto px-6 sm:px-10 space-y-14">
+      <div className="k-reveal max-w-7xl mx-auto px-6 sm:px-10 space-y-14">
         <div
           className="flex items-end justify-between gap-6 border-b pb-5"
           style={{ borderColor: 'color-mix(in srgb, var(--k-border) 28%, transparent)' }}
         >
           <div className="space-y-2 max-w-2xl">
-            <div className="font-k-hud text-[11px] tracking-[0.26em] uppercase" style={{ color: 'var(--k-accent-secondary)' }}>
+            <div className="font-k-hud text-xs tracking-[0.26em] uppercase" style={{ color: 'var(--k-accent-secondary)' }}>
               02 // WHY KISEKI
             </div>
             <h2 className="k-act-heading text-2xl sm:text-4xl m-0" style={{ color: 'var(--k-text-primary)' }}>
@@ -78,7 +78,7 @@ export const PromisesSection: FC<PromisesSectionProps> = ({ lang }) => {
               )}
             </p>
             <pre
-              className="m-0 pt-3 border-t font-k-mono text-[11px] leading-relaxed overflow-x-auto"
+              className="m-0 pt-3 border-t font-k-mono text-xs leading-relaxed overflow-x-auto"
               style={{
                 borderColor: 'color-mix(in srgb, var(--k-border) 28%, transparent)',
                 color: 'var(--k-success)',
@@ -115,7 +115,7 @@ export const PromisesSection: FC<PromisesSectionProps> = ({ lang }) => {
               )}
             </p>
             <div
-              className="pt-3 border-t font-k-mono text-[11px]"
+              className="pt-3 border-t font-k-mono text-xs"
               style={{
                 borderColor: 'color-mix(in srgb, var(--k-border) 28%, transparent)',
                 color: 'var(--k-accent-primary)',
@@ -146,14 +146,14 @@ export const PromisesSection: FC<PromisesSectionProps> = ({ lang }) => {
               )}
             </p>
             <div
-              className="pt-3 border-t flex items-center gap-6 font-k-mono"
+              className="pt-3 border-t flex flex-wrap items-center gap-x-6 gap-y-2 font-k-mono"
               style={{ borderColor: 'color-mix(in srgb, var(--k-border) 28%, transparent)' }}
             >
               <div>
                 <span className="text-base font-bold k-tabular" style={{ color: 'var(--k-accent-primary)' }}>
                   4.3 ms
                 </span>
-                <span className="text-[10px] ml-1" style={{ color: 'var(--k-text-muted)' }}>
+                <span className="text-[0.6875rem] ml-1" style={{ color: 'var(--k-text-muted)' }}>
                   {t.m_start}
                 </span>
               </div>
@@ -161,7 +161,7 @@ export const PromisesSection: FC<PromisesSectionProps> = ({ lang }) => {
                 <span className="text-base font-bold k-tabular" style={{ color: 'var(--k-accent-secondary)' }}>
                   54.7 µs
                 </span>
-                <span className="text-[10px] ml-1" style={{ color: 'var(--k-text-muted)' }}>
+                <span className="text-[0.6875rem] ml-1" style={{ color: 'var(--k-text-muted)' }}>
                   {t.m_hook}
                 </span>
               </div>
@@ -169,7 +169,7 @@ export const PromisesSection: FC<PromisesSectionProps> = ({ lang }) => {
                 <span className="text-base font-bold k-tabular" style={{ color: 'var(--k-text-primary)' }}>
                   8.18 MB
                 </span>
-                <span className="text-[10px] ml-1" style={{ color: 'var(--k-text-muted)' }}>
+                <span className="text-[0.6875rem] ml-1" style={{ color: 'var(--k-text-muted)' }}>
                   {t.m_bin}
                 </span>
               </div>

@@ -249,7 +249,7 @@ vec4 kiseki_sample_ch0(vec2 uv) {
     vec2 wSize = max(u_wallSize, vec2(1.0));
     float scale = max(res.x / wSize.x, res.y / wSize.y);
     vec2 drawSize = wSize * scale;
-    vec2 drawOrigin = res - drawSize;
+    vec2 drawOrigin = vec2(res.x - drawSize.x, (res.y - drawSize.y) * 0.52);
     vec2 wuv = (uv * res - drawOrigin) / max(drawSize, vec2(1.0));
     vec3 wall = texture(iChannel0, clamp(wuv, 0.0, 1.0)).rgb;
 
@@ -363,7 +363,7 @@ void main() { gl_Position = vec4(aPos, 0.0, 1.0); }`;
     return entry;
   }
 
-  private renderFallback2D(img: HTMLImageElement, paletteId: ThemeId, atmosphereId: ThemeId, bgOpacity: number): void {
+  private renderFallback2D(img: HTMLImageElement, paletteId: ThemeId, bgOpacity: number): void {
     const ctx = this.canvas.getContext('2d');
     if (!ctx) return;
     const [w, h] = this.getTargetSize();
@@ -378,9 +378,9 @@ void main() { gl_Position = vec4(aPos, 0.0, 1.0); }`;
       const dh = img.naturalHeight * scale;
       ctx.save();
       ctx.globalAlpha = this.mode === 'kv' ? 1.0 : bgOpacity;
-      ctx.imageSmoothingEnabled = atmosphereId !== 'starlight-8bit';
+      ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = 'high';
-      ctx.drawImage(img, w - dw, h - dh, dw, dh);
+      ctx.drawImage(img, w - dw, (h - dh) * 0.52, dw, dh);
       ctx.restore();
     }
   }
@@ -396,7 +396,7 @@ void main() { gl_Position = vec4(aPos, 0.0, 1.0); }`;
 
     getWallpaperImage(atmosphereId, this.bundle, (img) => {
       if (!this.gl) {
-        this.renderFallback2D(img, this.paletteId, atmosphereId, this.bgOpacity);
+        this.renderFallback2D(img, this.paletteId, this.bgOpacity);
         onReady(null);
         return;
       }
@@ -417,16 +417,11 @@ void main() { gl_Position = vec4(aPos, 0.0, 1.0); }`;
       gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
 
-      if (atmosphereId === 'starlight-8bit') {
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-      } else {
-        gl.generateMipmap(gl.TEXTURE_2D);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-        if (this.anisoExt) {
-          gl.texParameterf(gl.TEXTURE_2D, this.anisoExt.TEXTURE_MAX_ANISOTROPY_EXT, Math.min(8, this.maxAniso));
-        }
+      gl.generateMipmap(gl.TEXTURE_2D);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      if (this.anisoExt) {
+        gl.texParameterf(gl.TEXTURE_2D, this.anisoExt.TEXTURE_MAX_ANISOTROPY_EXT, Math.min(8, this.maxAniso));
       }
 
       const entry: TextureEntry = { tex, width: img.naturalWidth, height: img.naturalHeight };
@@ -435,21 +430,21 @@ void main() { gl_Position = vec4(aPos, 0.0, 1.0); }`;
     });
   }
 
-  private getTargetSize(): [number, number] {
-    const rect = this.canvas.getBoundingClientRect();
+  private getTargetSize(rect = this.canvas.getBoundingClientRect()): [number, number] {
     const dpr = Math.min(window.devicePixelRatio || 1, 2.0);
+    const rawW = (rect.width || 1024) * dpr;
+    const rawH = (rect.height || 640) * dpr;
+    const capScale = Math.max(rawW, rawH) > 3840 ? 3840 / Math.max(rawW, rawH) : 1;
     return [
-      Math.max(64, Math.round((rect.width || 1024) * dpr)),
-      Math.max(64, Math.round((rect.height || 640) * dpr)),
+      Math.max(64, Math.round(rawW * capScale)),
+      Math.max(64, Math.round(rawH * capScale)),
     ];
   }
 
   syncSize(): void {
     const rect = this.canvas.getBoundingClientRect();
     if (rect.width < 10 || rect.height < 10) return;
-    const dpr = Math.min(window.devicePixelRatio || 1, 2.0);
-    const w = Math.round(rect.width * dpr);
-    const h = Math.round(rect.height * dpr);
+    const [w, h] = this.getTargetSize(rect);
     if (w !== this.lastWidth || h !== this.lastHeight) {
       this.lastWidth = w;
       this.lastHeight = h;
@@ -457,7 +452,7 @@ void main() { gl_Position = vec4(aPos, 0.0, 1.0); }`;
       this.canvas.height = h;
       if (!this.gl) {
         getWallpaperImage(this.atmosphereId, this.bundle, (img) => {
-          this.renderFallback2D(img, this.paletteId, this.atmosphereId, this.bgOpacity);
+          this.renderFallback2D(img, this.paletteId, this.bgOpacity);
         });
       } else if (this.profile === 'static' && this.isVisible && this.isLandingActive()) {
         this.renderFrame();

@@ -40,7 +40,7 @@ const CodeBlock: FC<{ code: string; lang: Lang }> = ({ code, lang }) => {
       <button
         type="button"
         onClick={handleCopy}
-        className="absolute top-2.5 right-2.5 bg-transparent border-0 p-0 cursor-pointer font-k-mono text-[10px] font-bold"
+        className="absolute top-2.5 right-2.5 bg-transparent border-0 p-0 cursor-pointer font-k-mono text-[0.6875rem] font-bold"
         style={{ color: 'var(--k-accent-primary)' }}
       >
         {copied ? t.copied : t.copy}
@@ -91,11 +91,11 @@ export const DocsHub: FC<DocsHubProps> = ({
   return (
     <div id="k-view-docs" className="relative z-10 min-h-screen pt-24 pb-24">
       <div className="pointer-events-none fixed inset-0 k-blueprint-wash opacity-70" />
-      <div className="relative z-10 max-w-6xl mx-auto px-5 sm:px-10">
+      <div className="relative z-10 max-w-7xl mx-auto px-5 sm:px-10">
         <div className="flex flex-col lg:flex-row gap-10 items-start">
-          <aside className="w-full lg:w-64 shrink-0 space-y-5 lg:sticky lg:top-24">
+          <aside className="w-full lg:w-72 shrink-0 space-y-5 lg:sticky lg:top-24">
             <div className="space-y-1">
-              <div className="font-k-mono text-[10px] tracking-[0.24em] uppercase" style={{ color: 'var(--k-accent-primary)' }}>
+              <div className="font-k-mono text-[0.6875rem] tracking-[0.24em] uppercase" style={{ color: 'var(--k-accent-primary)' }}>
                 DOCUMENTATION
               </div>
               <div className="font-k-serif text-xl" style={{ color: 'var(--k-text-primary)' }}>
@@ -148,7 +148,7 @@ export const DocsHub: FC<DocsHubProps> = ({
             </nav>
 
             <div
-              className="pt-4 border-t flex items-center justify-between font-k-mono text-[11px]"
+              className="pt-4 border-t flex items-center justify-between font-k-mono text-xs"
               style={{ borderColor: 'color-mix(in srgb, var(--k-border) 30%, transparent)' }}
             >
               <button
@@ -170,12 +170,12 @@ export const DocsHub: FC<DocsHubProps> = ({
             </div>
           </aside>
 
-          <article className="flex-1 min-w-0 w-full space-y-8">
+          <article className="flex-1 min-w-0 w-full max-w-4xl space-y-8">
             <div id="k-docs-article" className="k-docs-prose space-y-6">
               {activeCh.id === 'quickstart' && (
                 <div className="space-y-6">
                   <div className="space-y-2 border-b pb-4" style={{ borderColor: 'color-mix(in srgb, var(--k-border) 30%, transparent)' }}>
-                    <div className="font-k-mono text-[10px] tracking-[0.2em]" style={{ color: 'var(--k-accent-primary)' }}>
+                    <div className="font-k-mono text-[0.6875rem] tracking-[0.2em]" style={{ color: 'var(--k-accent-primary)' }}>
                       CHAPTER 01 // QUICKSTART
                     </div>
                     <h1 className="k-act-heading text-3xl m-0">{lang === 'zh' ? '快速开始' : 'Quickstart'}</h1>
@@ -233,7 +233,7 @@ export const DocsHub: FC<DocsHubProps> = ({
               {activeCh.id === 'cli' && (
                 <div className="space-y-6">
                   <div className="space-y-2 border-b pb-4" style={{ borderColor: 'color-mix(in srgb, var(--k-border) 30%, transparent)' }}>
-                    <div className="font-k-mono text-[10px] tracking-[0.2em]" style={{ color: 'var(--k-accent-primary)' }}>
+                    <div className="font-k-mono text-[0.6875rem] tracking-[0.2em]" style={{ color: 'var(--k-accent-primary)' }}>
                       CHAPTER 02 // CLI REFERENCE
                     </div>
                     <h1 className="k-act-heading text-3xl m-0">{lang === 'zh' ? '全部 15 个核心命令' : 'All 15 Core Commands'}</h1>
@@ -258,7 +258,7 @@ export const DocsHub: FC<DocsHubProps> = ({
               {activeCh.id === 'compose' && (
                 <div className="space-y-6">
                   <div className="space-y-2 border-b pb-4" style={{ borderColor: 'color-mix(in srgb, var(--k-border) 30%, transparent)' }}>
-                    <div className="font-k-mono text-[10px] tracking-[0.2em]" style={{ color: 'var(--k-accent-primary)' }}>
+                    <div className="font-k-mono text-[0.6875rem] tracking-[0.2em]" style={{ color: 'var(--k-accent-primary)' }}>
                       CHAPTER 03 // THEMES & COMPOSE
                     </div>
                     <h1 className="k-act-heading text-3xl m-0">{lang === 'zh' ? '主题架构与 5 层混搭' : '5-Layer Token Composition'}</h1>
@@ -289,7 +289,7 @@ export const DocsHub: FC<DocsHubProps> = ({
               {activeCh.id === 'sdk' && (
                 <div className="space-y-6">
                   <div className="space-y-2 border-b pb-4" style={{ borderColor: 'color-mix(in srgb, var(--k-border) 30%, transparent)' }}>
-                    <div className="font-k-mono text-[10px] tracking-[0.2em]" style={{ color: 'var(--k-accent-primary)' }}>
+                    <div className="font-k-mono text-[0.6875rem] tracking-[0.2em]" style={{ color: 'var(--k-accent-primary)' }}>
                       CHAPTER 04 // THEME SDK
                     </div>
                     <h1 className="k-act-heading text-3xl m-0">{lang === 'zh' ? '制作与校验社区主题包' : 'Building Community Theme Packs'}</h1>
@@ -331,7 +331,7 @@ export const DocsHub: FC<DocsHubProps> = ({
               {activeCh.id === 'faq' && (
                 <div className="space-y-6">
                   <div className="space-y-2 border-b pb-4" style={{ borderColor: 'color-mix(in srgb, var(--k-border) 30%, transparent)' }}>
-                    <div className="font-k-mono text-[10px] tracking-[0.2em]" style={{ color: 'var(--k-accent-primary)' }}>
+                    <div className="font-k-mono text-[0.6875rem] tracking-[0.2em]" style={{ color: 'var(--k-accent-primary)' }}>
                       CHAPTER 05 // ARCHITECTURE & FAQ
                     </div>
                     <h1 className="k-act-heading text-3xl m-0">{lang === 'zh' ? '架构设计与常见问题' : 'Architecture & FAQ'}</h1>

@@ -109,21 +109,21 @@ export const HeroSection: FC<HeroSectionProps> = ({
         className="pointer-events-none select-none absolute inset-3 sm:inset-5 z-10 border"
         style={{ borderColor: 'color-mix(in srgb, var(--k-text-primary) 11%, transparent)' }}
       >
-        <span className="absolute -top-2 -left-1.5 font-k-mono text-[11px] leading-none opacity-60" style={{ color: 'var(--k-accent-primary)' }}>
+        <span className="absolute -top-2 -left-1.5 font-k-mono text-xs leading-none opacity-60" style={{ color: 'var(--k-accent-primary)' }}>
           +
         </span>
-        <span className="absolute -top-2 -right-1.5 font-k-mono text-[11px] leading-none opacity-60" style={{ color: 'var(--k-accent-primary)' }}>
+        <span className="absolute -top-2 -right-1.5 font-k-mono text-xs leading-none opacity-60" style={{ color: 'var(--k-accent-primary)' }}>
           +
         </span>
-        <span className="absolute -bottom-2 -left-1.5 font-k-mono text-[11px] leading-none opacity-60" style={{ color: 'var(--k-accent-secondary)' }}>
+        <span className="absolute -bottom-2 -left-1.5 font-k-mono text-xs leading-none opacity-60" style={{ color: 'var(--k-accent-secondary)' }}>
           +
         </span>
-        <span className="absolute -bottom-2 -right-1.5 font-k-mono text-[11px] leading-none opacity-60" style={{ color: 'var(--k-accent-secondary)' }}>
+        <span className="absolute -bottom-2 -right-1.5 font-k-mono text-xs leading-none opacity-60" style={{ color: 'var(--k-accent-secondary)' }}>
           +
         </span>
         <div
           id="k-hero-coords"
-          className="hidden md:block absolute top-12 right-4 font-k-hud text-[10px] tracking-[0.22em] opacity-65"
+          className="hidden md:block absolute top-14 right-5 font-k-hud text-[0.6875rem] tracking-[0.22em] opacity-65"
           style={{ color: 'var(--k-text-secondary)' }}
         >
           {meta.coords}
@@ -144,13 +144,13 @@ export const HeroSection: FC<HeroSectionProps> = ({
       <div className="h-16 shrink-0" />
 
       {/* Left Negative Space: Poster Lockup */}
-      <div className="relative z-10 w-full max-w-7xl mx-auto px-6 sm:px-12 py-8 flex items-center">
-        <div id="k-hero-lockup" ref={lockupRef} className="k-lockup-anim flex items-start gap-5 sm:gap-7 max-w-[520px] lg:max-w-[560px]">
+      <div className="relative z-10 w-full max-w-[120rem] mx-auto px-6 sm:px-12 lg:px-14 py-8 flex items-center">
+        <div id="k-hero-lockup" ref={lockupRef} className="k-lockup-anim flex items-start gap-5 sm:gap-7 max-w-[34rem] lg:max-w-[38rem]">
           {/* Vertical Japanese Catchphrase + Square Hanko Seal */}
           <div className="hidden sm:flex flex-col items-center gap-3.5 pt-1 select-none shrink-0">
             <span
               id="k-hero-hanko"
-              className="k-vertical-jp font-k-serif text-[10px] px-1 py-1.5 border leading-none tracking-[0.2em]"
+              className="k-vertical-jp font-k-serif text-[0.6875rem] px-1 py-1.5 border leading-none tracking-[0.2em]"
               style={{
                 borderColor: 'color-mix(in srgb, var(--k-accent-secondary) 75%, transparent)',
                 color: 'var(--k-accent-secondary)',
@@ -176,10 +176,10 @@ export const HeroSection: FC<HeroSectionProps> = ({
             <div className="space-y-2">
               <div className="flex items-center gap-2.5 flex-wrap">
                 <span className="w-5 h-px shrink-0 opacity-75" style={{ background: 'var(--k-accent-primary)' }} />
-                <span id="k-hero-katakana" className="font-k-serif text-[11px] tracking-[0.28em] opacity-90" style={{ color: 'var(--k-accent-secondary)' }}>
+                <span id="k-hero-katakana" className="font-k-serif text-xs tracking-[0.28em] opacity-90" style={{ color: 'var(--k-accent-secondary)' }}>
                   {meta.katakana}
                 </span>
-                <span id="k-hero-type-tag" className="font-k-hud text-[9px] tracking-[0.2em] uppercase opacity-65" style={{ color: 'var(--k-text-muted)' }}>
+                <span id="k-hero-type-tag" className="font-k-hud text-[0.625rem] tracking-[0.2em] uppercase opacity-65" style={{ color: 'var(--k-text-muted)' }}>
                   {typoMeta.typeTag}
                 </span>
               </div>
@@ -189,7 +189,7 @@ export const HeroSection: FC<HeroSectionProps> = ({
                 <span className="k-wordmark-cursor k-cursor-blink" style={{ background: 'var(--k-accent-secondary)' }} />
               </h1>
 
-              <div className="pt-0.5 max-w-[360px]">
+              <div className="pt-0.5 max-w-[24rem]">
                 <div
                   className="h-px w-full"
                   style={{ background: 'linear-gradient(90deg, color-mix(in srgb, var(--k-accent-primary) 55%, transparent), transparent)' }}
@@ -198,7 +198,7 @@ export const HeroSection: FC<HeroSectionProps> = ({
                   <span id="k-hero-jp-title" className="font-k-serif text-xs tracking-[0.24em] opacity-85" style={{ color: 'var(--k-text-secondary)' }}>
                     {meta.jpSubtitle}
                   </span>
-                  <span className="font-k-hud text-[9px] tracking-[0.2em] uppercase opacity-55 shrink-0" style={{ color: 'var(--k-text-muted)' }}>
+                  <span className="font-k-hud text-[0.625rem] tracking-[0.2em] uppercase opacity-55 shrink-0" style={{ color: 'var(--k-text-muted)' }}>
                     RUST // LIVE SHADER
                   </span>
                 </div>
@@ -214,13 +214,13 @@ export const HeroSection: FC<HeroSectionProps> = ({
               <p className="text-base sm:text-lg font-medium leading-snug m-0 drop-shadow" style={{ color: 'var(--k-text-primary)' }}>
                 {t.hero_sub}
               </p>
-              <p className="font-k-mono text-[11px] m-0 opacity-75" style={{ color: 'var(--k-text-secondary)' }}>
+              <p className="font-k-mono text-xs m-0 opacity-75" style={{ color: 'var(--k-text-secondary)' }}>
                 Ghostty · Windows Terminal · Zsh · PowerShell
               </p>
             </div>
 
             {/* Single Frosted Install Bar */}
-            <div className="max-w-sm pt-1">
+            <div className="w-full max-w-[32rem] pt-1">
               <div
                 className="flex items-center justify-between gap-3 px-3.5 py-2.5 border backdrop-blur-md font-k-mono text-xs"
                 style={{
@@ -240,7 +240,7 @@ export const HeroSection: FC<HeroSectionProps> = ({
                   id="k-hero-copy-btn"
                   type="button"
                   onClick={handleCopy}
-                  className="shrink-0 bg-transparent border-0 p-0 cursor-pointer font-k-mono text-[10px] tracking-widest uppercase font-bold"
+                  className="shrink-0 bg-transparent border-0 p-0 cursor-pointer font-k-mono text-[0.6875rem] tracking-widest uppercase font-bold"
                   style={{ color: 'var(--k-accent-secondary)' }}
                 >
                   {copied ? t.copied : t.copy}
@@ -249,7 +249,7 @@ export const HeroSection: FC<HeroSectionProps> = ({
             </div>
 
             {/* Direct Action Links */}
-            <div className="flex flex-wrap items-center gap-5 pt-1 font-k-mono text-[11px] tracking-[0.12em]">
+            <div className="flex flex-wrap items-center gap-5 pt-1 font-k-mono text-xs tracking-[0.12em]">
               <button
                 type="button"
                 onClick={() => onNavigate('download')}
@@ -281,9 +281,9 @@ export const HeroSection: FC<HeroSectionProps> = ({
       </div>
 
       {/* Hero Bottom Bar: Pre-mounted Miniature Filmstrip World Selector + 3D FX / Scroll */}
-      <div className="relative z-10 w-full max-w-7xl mx-auto px-6 sm:px-12 pb-8 flex items-end justify-between gap-6">
+      <div className="relative z-10 w-full max-w-[120rem] mx-auto px-6 sm:px-12 lg:px-14 pb-8 flex items-end justify-between gap-6">
         <div className="space-y-2">
-          <div className="font-k-hud text-[10px] tracking-[0.22em] uppercase opacity-65" style={{ color: 'var(--k-text-secondary)' }}>
+          <div className="font-k-hud text-[0.6875rem] tracking-[0.22em] uppercase opacity-65" style={{ color: 'var(--k-text-secondary)' }}>
             {t.world_hint}
           </div>
           <div id="k-world-selector" className="flex flex-wrap items-center gap-2.5 sm:gap-3">
@@ -314,10 +314,10 @@ export const HeroSection: FC<HeroSectionProps> = ({
                   />
                   <div className="absolute inset-0" style={{ background: 'linear-gradient(180deg, rgba(6,6,12,0.12) 0%, rgba(6,6,12,0.82) 100%)' }} />
                   <div className="relative z-10 h-full px-2 py-1.5 flex flex-col justify-between font-k-mono leading-none">
-                    <span className="k-thumb-num text-[9px] tracking-widest" style={{ color: active ? acc : 'rgba(255,255,255,0.65)' }}>
+                    <span className="k-thumb-num text-[0.625rem] tracking-widest" style={{ color: active ? acc : 'rgba(255,255,255,0.65)' }}>
                       {m.num}
                     </span>
-                    <span className="k-thumb-lbl text-[10px] font-bold truncate" style={{ color: '#fff' }}>
+                    <span className="k-thumb-lbl text-[0.6875rem] font-bold truncate" style={{ color: '#fff' }}>
                       {lang === 'zh' ? m.shortZh : m.shortEn}
                     </span>
                   </div>
@@ -336,7 +336,7 @@ export const HeroSection: FC<HeroSectionProps> = ({
             id="k-hero-shader-btn"
             type="button"
             onClick={onToggleShader}
-            className="hidden sm:inline-flex items-center gap-2 bg-transparent border-0 p-0 cursor-pointer font-k-mono text-[10px] tracking-[0.18em] uppercase opacity-80 hover:opacity-100"
+            className="hidden sm:inline-flex items-center gap-2 bg-transparent border-0 p-0 cursor-pointer font-k-mono text-[0.6875rem] tracking-[0.18em] uppercase opacity-80 hover:opacity-100"
             style={{ color: 'var(--k-text-secondary)' }}
           >
             <span className="w-1.5 h-1.5 rounded-full inline-block" id="k-shader-dot" style={{ background: isLive ? 'var(--k-success)' : 'var(--k-text-muted)' }} />
@@ -348,7 +348,7 @@ export const HeroSection: FC<HeroSectionProps> = ({
             className="flex flex-col items-center gap-2 no-underline opacity-75 hover:opacity-100"
             style={{ color: 'var(--k-text-secondary)' }}
           >
-            <span className="font-k-mono text-[9px] tracking-[0.3em] uppercase" style={{ writingMode: 'vertical-rl' }}>
+            <span className="font-k-mono text-[0.625rem] tracking-[0.3em] uppercase" style={{ writingMode: 'vertical-rl' }}>
               SCROLL
             </span>
             <span className="w-px h-9 relative overflow-hidden block" style={{ background: 'color-mix(in srgb, var(--k-text-muted) 35%, transparent)' }}>
