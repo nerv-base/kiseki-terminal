@@ -94,7 +94,7 @@ const NERV_EVA_FILES: &[BundledFile] = &[
 
 const NERV_EVA: BundledTheme = BundledTheme {
     id: "nerv-eva",
-    version: "2.0.1",
+    version: "2.0.2",
     name: "NERV UNIT-02",
     tagline: "特務機関 NERV 弐号機 · 战术蓝图暗红橙",
     files: NERV_EVA_FILES,
@@ -126,7 +126,7 @@ const KYOTO_SAKURA_FILES: &[BundledFile] = &[
 
 const KYOTO_SAKURA: BundledTheme = BundledTheme {
     id: "kyoto-sakura",
-    version: "2.0.1",
+    version: "2.0.2",
     name: "Kyoto Sakura",
     tagline: "夜樱绘卷 · 和风月夜神社与垂枝樱",
     files: KYOTO_SAKURA_FILES,
@@ -158,7 +158,7 @@ const SHINKAI_RAIN_FILES: &[BundledFile] = &[
 
 const SHINKAI_RAIN: BundledTheme = BundledTheme {
     id: "shinkai-rain",
-    version: "2.0.1",
+    version: "2.0.2",
     name: "Shinkai Rain",
     tagline: "言叶之雨 · 新海诚东京雨夜电影感",
     files: SHINKAI_RAIN_FILES,

@@ -167,8 +167,8 @@ pub struct ComposeArgs {
 
 #[derive(Debug, clap::Args)]
 pub struct FontArgs {
-    /// Font Catalog ID, family name, or `reset`.
-    pub style: String,
+    /// Font Catalog ID, family name, or `reset` (optional when using `--lock` / `--unlock`).
+    pub style: Option<String>,
     /// Point size override.
     pub size: Option<f64>,
     /// Prevent later theme switches from changing the stack.
@@ -1021,6 +1021,11 @@ impl App {
         if args.lock && args.unlock {
             return Err(KisekiError::other("--lock and --unlock are mutually exclusive"));
         }
+        if args.style.is_none() && !args.lock && !args.unlock {
+            return Err(KisekiError::other(
+                "specify a font family/catalog ID, `reset`, `--lock`, or `--unlock`",
+            ));
+        }
         if args.lock {
             self.config.font_locked = true;
             self.save_config()?;
@@ -1030,31 +1035,44 @@ impl App {
             self.save_config()?;
         }
         let mut state = self.state_or_initial();
+        if args.lock {
+            state.typography.locked = true;
+        }
         if args.unlock {
             // Unlocking is a single concept stored in two places: the config
             // flag and the persisted state bit. Clear both or the next
             // `kiseki use` would still treat the font as locked.
             state.typography.locked = false;
         }
-        let font_label = if args.style == "reset" {
-            state.typography.style_override = None;
-            state.typography.size_override_pt = None;
-            state.typography.locked = false;
-            "字体设置：恢复主题默认".to_string()
-        } else {
-            state.typography.style_override = Some(args.style.clone());
-            if let Some(size) = args.size {
-                if !(6.0..=36.0).contains(&size) {
-                    return Err(KisekiError::other("font size must be within 6..36 points"));
+        let font_label = match args.style.as_deref() {
+            Some("reset") => {
+                state.typography.style_override = None;
+                state.typography.size_override_pt = None;
+                state.typography.locked = false;
+                "字体设置：恢复主题默认".to_string()
+            }
+            Some(style) => {
+                state.typography.style_override = Some(style.to_string());
+                if let Some(size) = args.size {
+                    if !(6.0..=36.0).contains(&size) {
+                        return Err(KisekiError::other("font size must be within 6..36 points"));
+                    }
+                    state.typography.size_override_pt = Some(size);
                 }
-                state.typography.size_override_pt = Some(size);
+                if self.config.font_locked {
+                    state.typography.locked = true;
+                }
+                match state.typography.size_override_pt {
+                    Some(size) => format!("字体设置：{style} · {size:.1}pt"),
+                    None => format!("字体设置：{style}"),
+                }
             }
-            if self.config.font_locked {
-                state.typography.locked = true;
-            }
-            match state.typography.size_override_pt {
-                Some(size) => format!("字体设置：{} · {size:.1}pt", args.style),
-                None => format!("字体设置：{}", args.style),
+            None => {
+                if args.lock {
+                    "字体锁定：已开启".to_string()
+                } else {
+                    "字体锁定：已解除".to_string()
+                }
             }
         };
         let id = state.active_theme.clone();

@@ -178,6 +178,17 @@ impl ThemeLibrary {
                 let Some(manifest) = read_manifest(&dir)? else {
                     continue;
                 };
+                // When an official pack on disk lags behind the version compiled
+                // into this binary, `load()` will upgrade it transparently; keep
+                // the newer bundled entry in `list()` so users see the version
+                // that will actually activate.
+                if *source == ThemeSource::Official {
+                    if let Some(bundled) = bundled_theme(manifest.id.as_str()) {
+                        if manifest.version != bundled.version {
+                            continue;
+                        }
+                    }
+                }
                 let entry = ThemeEntry::from_manifest(&manifest, *source, Some(dir.clone()));
                 entries.insert(entry.id.as_str().to_string(), entry);
             }

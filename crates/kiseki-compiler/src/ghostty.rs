@@ -123,7 +123,7 @@ pub fn render_with_scale(
         out.push_str(&format!("cursor-style-blink = {blink}\n"));
     }
 
-    if let Some(wallpaper) = wallpaper {
+    if let Some(wallpaper) = wallpaper.filter(|_| theme.wallpaper_opacity.is_none_or(|o| o > 0.0)) {
         let path = conf_value(&wallpaper.to_string_lossy())?;
         out.push_str(&format!("\nbackground-image = {path}\n"));
         if let Some(opacity) = theme.wallpaper_opacity {

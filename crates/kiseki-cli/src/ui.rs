@@ -345,11 +345,16 @@ impl Ui {
             } else {
                 (self.dim("·"), "未安装")
             };
+            let kind_label = if detection.installed && detection.config_path.is_none() {
+                "独立运行"
+            } else {
+                detection.path_kind.label()
+            };
             println!(
                 "  {mark} {:<18} {:<10} {}",
                 id,
                 state_txt,
-                self.dim(detection.path_kind.label())
+                self.dim(kind_label)
             );
             for note in &detection.notes {
                 println!("      {}", self.dim(note));
@@ -365,7 +370,7 @@ impl Ui {
         println!();
         println!(
             "  {}",
-            self.dim(&format!("配置目录: {}", paths.config_dir().display()))
+            self.dim(&format!("配置目录: {}", shorten_home(paths.config_dir())))
         );
     }
 
