@@ -41,9 +41,44 @@
 
 ---
 
-## 构建与快速开始
+## 安装与快速开始
 
-需要 Rust 1.85+：
+### 通过包管理器安装（推荐，发布后可用）
+
+```bash
+# Homebrew（macOS / Linux）
+brew install nerv-base/tap/kiseki
+
+# npm / bun / pnpm（全平台原生二进制，零 postinstall 脚本）
+npm install -g kiseki-terminal
+bun add -g kiseki-terminal
+pnpm add -g kiseki-terminal
+
+# 免全局安装直接运行
+npx kiseki-terminal init
+bunx kiseki-terminal init
+
+# Scoop（Windows）
+scoop install https://github.com/nerv-base/kiseki-terminal/releases/latest/download/kiseki.json
+# （v2 合并为默认分支后亦支持：scoop bucket add kiseki https://github.com/nerv-base/kiseki-terminal && scoop install kiseki）
+
+# Cargo Binstall（Rust）
+cargo binstall --git https://github.com/nerv-base/kiseki-terminal kiseki-cli
+```
+
+### 独立一键安装脚本（含 SHA-256 校验）
+
+```bash
+# macOS / Linux
+curl -fsSL https://raw.githubusercontent.com/nerv-base/kiseki-terminal/v2/scripts/install.sh | sh
+```
+
+```powershell
+# Windows PowerShell
+irm https://raw.githubusercontent.com/nerv-base/kiseki-terminal/v2/scripts/install.ps1 | iex
+```
+
+### 从源码构建（需要 Rust 1.85+）
 
 ```bash
 git clone -b v2 https://github.com/nerv-base/kiseki-terminal.git

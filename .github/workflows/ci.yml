@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: ["v2", "main"]
+  pull_request:
+    branches: ["v2", "main"]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    name: Rust (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Run workspace tests
+        run: cargo test --workspace
+      - name: Run clippy
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+  packaging-checks:
+    name: Packaging & Installers
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Check shell installer syntax
+        run: sh -n scripts/install.sh
+      - name: Check JS scripts syntax
+        run: |
+          node --check npm/kiseki-terminal/bin/kiseki.js
+          node --check scripts/release/stage-npm.mjs
+          node --check scripts/release/render-manifests.mjs
+      - name: Validate npm package manifest
+        run: node -e "JSON.parse(require('fs').readFileSync('npm/kiseki-terminal/package.json', 'utf8'))"

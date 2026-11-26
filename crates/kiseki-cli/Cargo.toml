@@ -1,11 +1,27 @@
 [package]
 name = "kiseki-cli"
+description = "Kiseki Terminal v2 — Universal anime-aesthetic terminal theming engine"
+homepage = "https://kisekiterm.dev"
+readme = "../../README.md"
+keywords = ["terminal", "theme", "ghostty", "shader", "cli"]
+categories = ["command-line-utilities", "config"]
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
+
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/kiseki-v{ version }-{ target }.{ archive-format }"
+bin-dir = "kiseki-v{ version }-{ target }/{ bin }{ binary-ext }"
+pkg-fmt = "tgz"
+
+[package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
+pkg-fmt = "zip"
+
+[package.metadata.binstall.overrides.aarch64-pc-windows-msvc]
+pkg-fmt = "zip"
 
 [dependencies]
 kiseki-types.workspace = true

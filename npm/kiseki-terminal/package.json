@@ -1,0 +1,52 @@
+{
+  "name": "kiseki-terminal",
+  "version": "2.0.0-alpha.1",
+  "description": "Kiseki Terminal v2 — Universal anime-aesthetic terminal theming engine (Rust single binary, 5-layer tokens, naga-validated shaders, zero-fork sync)",
+  "license": "MIT",
+  "homepage": "https://kisekiterm.dev",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nerv-base/kiseki-terminal.git",
+    "directory": "npm/kiseki-terminal"
+  },
+  "bugs": {
+    "url": "https://github.com/nerv-base/kiseki-terminal/issues"
+  },
+  "keywords": [
+    "terminal",
+    "theme",
+    "theming",
+    "anime",
+    "ghostty",
+    "windows-terminal",
+    "shader",
+    "glsl",
+    "hlsl",
+    "zsh",
+    "powershell",
+    "oh-my-posh",
+    "fastfetch",
+    "kiseki",
+    "cli"
+  ],
+  "bin": {
+    "kiseki": "bin/kiseki.js",
+    "kiseki-terminal": "bin/kiseki.js"
+  },
+  "files": [
+    "bin/",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "optionalDependencies": {
+    "kiseki-terminal-darwin-arm64": "2.0.0-alpha.1",
+    "kiseki-terminal-darwin-x64": "2.0.0-alpha.1",
+    "kiseki-terminal-linux-arm64": "2.0.0-alpha.1",
+    "kiseki-terminal-linux-x64": "2.0.0-alpha.1",
+    "kiseki-terminal-win32-arm64": "2.0.0-alpha.1",
+    "kiseki-terminal-win32-x64": "2.0.0-alpha.1"
+  }
+}
