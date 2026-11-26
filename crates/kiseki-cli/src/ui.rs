@@ -221,7 +221,7 @@ impl Ui {
                 "  {}",
                 self.dim(&format!(
                     "回滚快照: {}/{}（随时可 `kiseki rollback`）",
-                    report.journal_dir.display(),
+                    shorten_home(&report.journal_dir),
                     report.tx_id
                 ))
             );
@@ -399,14 +399,14 @@ impl Ui {
                 ThemeSource::Community => "社区包",
                 ThemeSource::UserDirectory => "本地目录",
             };
+            let padded_id = format!("{:<20}", entry.id.as_str());
             let id_col = if is_active {
-                self.brand(entry.id.as_str())
+                self.brand(&padded_id)
             } else {
-                entry.id.as_str().to_string()
+                padded_id
             };
             println!(
-                "  {marker} {:<20} {:<10} {}",
-                id_col,
+                "  {marker} {id_col} {:<10} {}",
                 entry.version,
                 self.dim(source)
             );

@@ -143,13 +143,21 @@ pub fn env_zsh(theme: &ResolvedTheme, config_dir: &Path, policy: PromptPolicy, a
                 shell_single_quote(&format!("{config_dir}/generated/prompt.omp.json"))
             ));
             // Initialize Oh My Posh ONCE per shell session (when POSH_CONFIG is
-            // not yet bound to POSH_THEME). Subsequent `kiseki use`/`crt`/`live`
-            // updates overwrite `prompt.omp.json` in place, so OMP picks up the
-            // new theme automatically without re-running `oh-my-posh init zsh`
-            // inside `precmd` (which would flash `zsh>` and spawn a subprocess).
+            // not yet bound to POSH_THEME). Subsequent `kiseki use`/`pick`/
+            // `compose` updates overwrite `prompt.omp.json` in place, so we
+            // rotate `POSH_SESSION_ID` (and stop any resident `oh-my-posh serve`
+            // daemon) to invalidate OMP's per-session config cache without
+            // re-running `oh-my-posh init zsh` inside `precmd`.
             out.push_str("if (( $+commands[oh-my-posh] )); then\n");
             out.push_str("  if [[ \"${POSH_CONFIG:-}\" != \"$POSH_THEME\" ]]; then\n");
             out.push_str("    eval \"$(oh-my-posh init zsh --config \"$POSH_THEME\")\"\n");
+            out.push_str("  else\n");
+            out.push_str("    (( $+functions[_omp_serve_stop] )) && _omp_serve_stop\n");
+            out.push_str("    export POSH_SESSION_ID=\"kiseki-${$}-${_KISEKI_LOADED_GEN:-$RANDOM}\"\n");
+            out.push_str("    if (( $+functions[_kiseki_sync_hook] )) && [[ \"${precmd_functions[1]:-}\" != \"_kiseki_sync_hook\" ]]; then\n");
+            out.push_str("      precmd_functions=(_kiseki_sync_hook ${precmd_functions:#_kiseki_sync_hook})\n");
+            out.push_str("      (( $+functions[_omp_precmd] )) && _omp_precmd\n");
+            out.push_str("    fi\n");
             out.push_str("  fi\n");
             out.push_str("else\n");
             out.push_str(&format!(
@@ -246,6 +254,7 @@ pub fn env_ps1(theme: &ResolvedTheme, config_dir: &Path, policy: PromptPolicy) -
                 "$env:POSH_THEME = {}\n",
                 powershell_single_quote(&format!("{config_dir}\\generated\\prompt.omp.json"))
             ));
+            out.push_str("if ($env:POSH_SESSION_ID) { $env:POSH_SESSION_ID = \"kiseki-$PID-$(Get-Random)\" }\n");
             out.push_str(&format!(
                 "$env:STARSHIP_CONFIG = {}\n",
                 powershell_single_quote(&format!("{config_dir}\\generated\\starship-palette.toml"))
@@ -299,24 +308,25 @@ pub fn zsh_init_script(config_dir: &Path, aliases: bool) -> String {
     out.push_str(&dir);
     out.push('\n');
     out.push_str("_KISEKI_LOADED_GEN=\"\"\n");
-    out.push_str("if [[ -r \"$_KISEKI_CONFIG_DIR/generated/env.zsh\" ]]; then\n");
-    out.push_str("  source \"$_KISEKI_CONFIG_DIR/generated/env.zsh\"\n");
-    out.push_str("  if [[ -r \"$_KISEKI_CONFIG_DIR/state.gen\" ]]; then\n");
-    out.push_str("    read -r _KISEKI_LOADED_GEN < \"$_KISEKI_CONFIG_DIR/state.gen\"\n");
-    out.push_str("  fi\n");
-    out.push_str("fi\n");
     out.push_str("_kiseki_sync_hook() {\n");
     out.push_str("  local gen\n");
     out.push_str("  if [[ -r \"$_KISEKI_CONFIG_DIR/state.gen\" ]]; then\n");
     out.push_str("    read -r gen < \"$_KISEKI_CONFIG_DIR/state.gen\" || return 0\n");
     out.push_str("    if [[ \"$gen\" != \"$_KISEKI_LOADED_GEN\" ]]; then\n");
-    out.push_str("      source \"$_KISEKI_CONFIG_DIR/generated/env.zsh\"\n");
     out.push_str("      _KISEKI_LOADED_GEN=\"$gen\"\n");
+    out.push_str("      source \"$_KISEKI_CONFIG_DIR/generated/env.zsh\"\n");
     out.push_str("    fi\n");
     out.push_str("  fi\n");
     out.push_str("}\n");
+    out.push_str("if [[ -r \"$_KISEKI_CONFIG_DIR/generated/env.zsh\" ]]; then\n");
+    out.push_str("  if [[ -r \"$_KISEKI_CONFIG_DIR/state.gen\" ]]; then\n");
+    out.push_str("    read -r _KISEKI_LOADED_GEN < \"$_KISEKI_CONFIG_DIR/state.gen\"\n");
+    out.push_str("  fi\n");
+    out.push_str("  source \"$_KISEKI_CONFIG_DIR/generated/env.zsh\"\n");
+    out.push_str("fi\n");
     out.push_str("autoload -Uz add-zsh-hook\n");
     out.push_str("add-zsh-hook precmd _kiseki_sync_hook\n");
+    out.push_str("precmd_functions=(_kiseki_sync_hook ${precmd_functions:#_kiseki_sync_hook})\n");
     if aliases {
         out.push_str("alias theme='kiseki use'\n");
         out.push_str("alias themes='kiseki pick'\n");
@@ -431,6 +441,7 @@ mod tests {
         assert!(content.contains("export FZF_DEFAULT_OPTS='"));
         assert!(content.contains("export EZA_COLORS='"));
         assert!(content.contains("export POSH_THEME='/home/zz/.config/kiseki/generated/prompt.omp.json'"));
+        assert!(content.contains("export POSH_SESSION_ID=\"kiseki-${$}-${_KISEKI_LOADED_GEN:-$RANDOM}\""));
         assert!(content.contains("export STARSHIP_CONFIG="));
         assert!(content.contains("ZSH_HIGHLIGHT_STYLES[command]"));
         assert!(!content.contains("alias cat"));
@@ -471,6 +482,7 @@ mod tests {
         assert!(script.contains("read -r gen < \"$_KISEKI_CONFIG_DIR/state.gen\""));
         assert!(script.contains("if [[ \"$gen\" != \"$_KISEKI_LOADED_GEN\" ]]"));
         assert!(script.contains("add-zsh-hook precmd _kiseki_sync_hook"));
+        assert!(script.contains("precmd_functions=(_kiseki_sync_hook ${precmd_functions:#_kiseki_sync_hook})"));
         // No command substitution or external process on the hot path. `||`
         // and `[[` are shell builtins, not forks.
         for forbidden in ["$(", "`", "kiseki status", "exec ", "fork", "command "] {
