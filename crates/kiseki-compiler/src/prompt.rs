@@ -847,6 +847,10 @@ mod tests {
                 .into_iter()
                 .find(|(path, _)| *path == crate::artifact::names::PROMPT_OMP)
                 .unwrap();
+            // Snapshots are compared verbatim, but a Windows checkout with
+            // `core.autocrlf` can hand us CRLF even for files pinned to LF in
+            // `.gitattributes`. Normalise before comparing.
+            let snapshot = snapshot.replace("\r\n", "\n");
             assert_eq!(output, snapshot.trim_end(), "{preset}");
         }
     }
