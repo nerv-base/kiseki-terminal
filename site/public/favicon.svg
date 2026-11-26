@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="512" height="512" shape-rendering="crispEdges">
+  <!-- Chromatic arcade pixel drop shadows -->
+  <rect x="4" y="4" width="26" height="26" fill="#FF82B8" fill-opacity="0.34"/>
+  <rect x="2" y="2" width="26" height="26" fill="#66F0FF" fill-opacity="0.28"/>
+
+  <!-- Main midnight CRT window body -->
+  <rect x="3" y="3" width="26" height="26" fill="#0A0F25"/>
+
+  <!-- Crisp pixel outer border + neon corner pixels -->
+  <rect x="4" y="2" width="24" height="1" fill="#7AA2F7"/>
+  <rect x="4" y="29" width="24" height="1" fill="#7AA2F7"/>
+  <rect x="2" y="4" width="1" height="24" fill="#7AA2F7"/>
+  <rect x="29" y="4" width="1" height="24" fill="#7AA2F7"/>
+  <rect x="3" y="3" width="1" height="1" fill="#66F0FF"/>
+  <rect x="28" y="3" width="1" height="1" fill="#FF82B8"/>
+  <rect x="3" y="28" width="1" height="1" fill="#66F0FF"/>
+  <rect x="28" y="28" width="1" height="1" fill="#FF82B8"/>
+
+  <!-- Titlebar & traffic-light pixel dots -->
+  <rect x="4" y="4" width="24" height="4" fill="#172046"/>
+  <rect x="5" y="5" width="2" height="2" fill="#FF6B8B"/>
+  <rect x="8" y="5" width="2" height="2" fill="#FFD580"/>
+  <rect x="11" y="5" width="2" height="2" fill="#72F1B8"/>
+  <rect x="4" y="8" width="24" height="1" fill="#2A376E"/>
+
+  <!-- Glowing 8-bit chevron prompt > -->
+  <rect x="7" y="13" width="2" height="2" fill="#66F0FF"/>
+  <rect x="9" y="15" width="2" height="2" fill="#66F0FF"/>
+  <rect x="11" y="17" width="2" height="2" fill="#99F7FF"/>
+  <rect x="9" y="19" width="2" height="2" fill="#66F0FF"/>
+  <rect x="7" y="21" width="2" height="2" fill="#66F0FF"/>
+
+  <!-- Sakura-pink pixel cursor _ -->
+  <rect x="14" y="21" width="6" height="2" fill="#FF82B8"/>
+
+  <!-- 4-point pixel Kiseki star -->
+  <rect x="22" y="11" width="1" height="5" fill="#FFE5A3"/>
+  <rect x="20" y="13" width="5" height="1" fill="#FFE5A3"/>
+  <rect x="21" y="12" width="3" height="3" fill="#FFF8DC"/>
+  <rect x="22" y="13" width="1" height="1" fill="#FFFFFF"/>
+
+  <!-- Companion midnight sparkles -->
+  <rect x="17" y="11" width="1" height="1" fill="#FF82B8"/>
+  <rect x="25" y="17" width="1" height="1" fill="#66F0FF"/>
+  <rect x="23" y="22" width="2" height="2" fill="#B48EFE"/>
+
+  <!-- Subtle bottom CRT scanline bar -->
+  <rect x="5" y="26" width="22" height="1" fill="#1D2754"/>
+</svg>

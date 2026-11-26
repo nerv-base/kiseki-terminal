@@ -5,3 +5,8 @@ Thumbs.db
 *.bak
 *.tmp
 .vscode/
+site/node_modules/
+site/dist/
+site/src/generated/
+site/public/install.sh
+site/public/install.ps1

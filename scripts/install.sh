@@ -4,12 +4,13 @@
 # and installs the `kiseki` single binary to ~/.local/bin (or $KISEKI_INSTALL_DIR).
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/nerv-base/kiseki-terminal/v2/scripts/install.sh | sh
-#   curl -fsSL https://raw.githubusercontent.com/nerv-base/kiseki-terminal/v2/scripts/install.sh | KISEKI_VERSION=v2.0.0-alpha.1 sh
+#   curl -fsSL https://kisekiterm.dev/install.sh | sh
+#   curl -fsSL https://kisekiterm.dev/install.sh | KISEKI_VERSION=v2.0.0-alpha.1 sh
 
 set -eu
 
 REPO="${KISEKI_REPO:-nerv-base/kiseki-terminal}"
+DL_BASE="${KISEKI_DL_BASE:-https://dl.kisekiterm.dev/releases}"
 INSTALL_DIR="${KISEKI_INSTALL_DIR:-$HOME/.local/bin}"
 VERSION="${KISEKI_VERSION:-}"
 
@@ -85,7 +86,13 @@ resolve_version() {
     return
   fi
 
-  # Fetch latest published v2 release tag (never falls back to branch archives)
+  # Try Cloudflare R2 latest.json first for low-latency global resolution
+  if tag="$(curl -fsSL --connect-timeout 5 --max-time 10 "${DL_BASE}/latest.json" 2>/dev/null | sed -nE 's/.*"tag":[[:space:]]*"([^"]+)".*/\1/p' | head -n 1)" && [ -n "$tag" ]; then
+    printf '%s' "$tag"
+    return
+  fi
+
+  # Fallback: fetch latest published v2 release tag from GitHub Releases
   api_url="https://api.github.com/repos/${REPO}/releases"
   tag="$(curl -fsSL "$api_url" | grep -E '"tag_name":[[:space:]]*"v2\.' | head -n 1 | sed -E 's/.*"tag_name":[[:space:]]*"([^"]+)".*/\1/')"
   if [ -z "$tag" ]; then
@@ -120,14 +127,24 @@ verify_sha256() {
 TARGET="$(detect_target)"
 TAG="$(resolve_version)"
 ARCHIVE="kiseki-${TAG}-${TARGET}.tar.gz"
-BASE_URL="https://github.com/${REPO}/releases/download/${TAG}"
+R2_URL="${DL_BASE}/${TAG}"
+GH_URL="https://github.com/${REPO}/releases/download/${TAG}"
 
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT INT TERM
 
+fetch_asset() {
+  asset="$1"
+  dest="$2"
+  if curl -fsSL --connect-timeout 5 --max-time 60 "${R2_URL}/${asset}" -o "$dest" 2>/dev/null; then
+    return 0
+  fi
+  curl -fsSL "${GH_URL}/${asset}" -o "$dest"
+}
+
 echo "Installing Kiseki Terminal ${TAG} (${TARGET})..."
-curl -fsSL "${BASE_URL}/${ARCHIVE}" -o "${TMP_DIR}/${ARCHIVE}"
-curl -fsSL "${BASE_URL}/checksums.txt" -o "${TMP_DIR}/checksums.txt"
+fetch_asset "${ARCHIVE}" "${TMP_DIR}/${ARCHIVE}"
+fetch_asset "checksums.txt" "${TMP_DIR}/checksums.txt"
 
 EXPECTED_SHA="$(awk -v name="$ARCHIVE" '$2 == name || $2 == "*" name { print $1; exit }' "${TMP_DIR}/checksums.txt")"
 if [ -z "$EXPECTED_SHA" ]; then
