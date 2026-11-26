@@ -1,0 +1,22 @@
+{
+  "$schema": "../../schemas/manifest.v1.schema.json",
+  "schemaVersion": 1,
+  "id": "shinkai-rain",
+  "name": "Shinkai Rain",
+  "subtitle": "言叶之雨 · 新海诚东京雨夜电影感",
+  "version": "2.0.0",
+  "appearance": "dark",
+  "pairedTheme": null,
+  "tags": ["anime", "cinematic", "rain", "dark", "live-shader"],
+  "authors": [{ "name": "nerv-base", "url": "https://github.com/nerv-base" }],
+  "license": "MIT",
+  "creditsFile": "CREDITS.md",
+  "layers": ["palette", "syntax", "ui", "atmosphere", "typography", "overrides"],
+  "minEngineVersion": "2.0.0",
+  "preview": "previews/preview.png",
+  "provenance": {
+    "wallpaperOrigin": "original",
+    "shaderOrigin": "original",
+    "sourceRepo": "https://github.com/nerv-base/kiseki-terminal"
+  }
+}

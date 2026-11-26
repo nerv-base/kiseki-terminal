@@ -1,9 +1,9 @@
 //! Themes embedded in the binary so first-run is fully offline (ADR-013).
 //!
-//! Milestone 1 ships `nerv-eva`; the other three official themes migrate in
-//! Milestone 2. Files are materialised into `<kiseki_data>/themes/official/`
-//! on first use so absolute asset paths and `kiseki theme validate` work
-//! exactly like a community install.
+//! All four official themes (`nerv-eva`, `kyoto-sakura`, `shinkai-rain`, and
+//! `starlight-8bit`) are compiled into the binary and materialised into
+//! `<kiseki_data>/themes/official/` on first use so absolute asset paths and
+//! `kiseki theme validate` work identically to a community install.
 
 /// One embedded file.
 #[derive(Debug, Clone, Copy)]
@@ -100,7 +100,106 @@ const NERV_EVA: BundledTheme = BundledTheme {
     files: NERV_EVA_FILES,
 };
 
-const BUNDLED: &[BundledTheme] = &[NERV_EVA];
+const KYOTO_SAKURA_FILES: &[BundledFile] = &[
+    BundledFile::new("manifest.json", include_bytes!("../../../themes/kyoto-sakura/manifest.json")),
+    BundledFile::new("tokens.json", include_bytes!("../../../themes/kyoto-sakura/tokens.json")),
+    BundledFile::new("LICENSE", include_bytes!("../../../themes/kyoto-sakura/LICENSE")),
+    BundledFile::new("CREDITS.md", include_bytes!("../../../themes/kyoto-sakura/CREDITS.md")),
+    BundledFile::new("assets/logo.txt", include_bytes!("../../../themes/kyoto-sakura/assets/logo.txt")),
+    BundledFile::new(
+        "assets/wallpaper.png",
+        include_bytes!("../../../themes/kyoto-sakura/assets/wallpaper.png"),
+    ),
+    BundledFile::new(
+        "shaders/live.glsl",
+        include_bytes!("../../../themes/kyoto-sakura/shaders/live.glsl"),
+    ),
+    BundledFile::new(
+        "shaders/live.hlsl",
+        include_bytes!("../../../themes/kyoto-sakura/shaders/live.hlsl"),
+    ),
+    BundledFile::new(
+        "previews/preview.png",
+        include_bytes!("../../../themes/kyoto-sakura/previews/preview.png"),
+    ),
+];
+
+const KYOTO_SAKURA: BundledTheme = BundledTheme {
+    id: "kyoto-sakura",
+    version: "2.0.0",
+    name: "Kyoto Sakura",
+    tagline: "夜樱绘卷 · 和风月夜神社与垂枝樱",
+    files: KYOTO_SAKURA_FILES,
+};
+
+const SHINKAI_RAIN_FILES: &[BundledFile] = &[
+    BundledFile::new("manifest.json", include_bytes!("../../../themes/shinkai-rain/manifest.json")),
+    BundledFile::new("tokens.json", include_bytes!("../../../themes/shinkai-rain/tokens.json")),
+    BundledFile::new("LICENSE", include_bytes!("../../../themes/shinkai-rain/LICENSE")),
+    BundledFile::new("CREDITS.md", include_bytes!("../../../themes/shinkai-rain/CREDITS.md")),
+    BundledFile::new("assets/logo.txt", include_bytes!("../../../themes/shinkai-rain/assets/logo.txt")),
+    BundledFile::new(
+        "assets/wallpaper.png",
+        include_bytes!("../../../themes/shinkai-rain/assets/wallpaper.png"),
+    ),
+    BundledFile::new(
+        "shaders/live.glsl",
+        include_bytes!("../../../themes/shinkai-rain/shaders/live.glsl"),
+    ),
+    BundledFile::new(
+        "shaders/live.hlsl",
+        include_bytes!("../../../themes/shinkai-rain/shaders/live.hlsl"),
+    ),
+    BundledFile::new(
+        "previews/preview.png",
+        include_bytes!("../../../themes/shinkai-rain/previews/preview.png"),
+    ),
+];
+
+const SHINKAI_RAIN: BundledTheme = BundledTheme {
+    id: "shinkai-rain",
+    version: "2.0.0",
+    name: "Shinkai Rain",
+    tagline: "言叶之雨 · 新海诚东京雨夜电影感",
+    files: SHINKAI_RAIN_FILES,
+};
+
+const STARLIGHT_8BIT_FILES: &[BundledFile] = &[
+    BundledFile::new("manifest.json", include_bytes!("../../../themes/starlight-8bit/manifest.json")),
+    BundledFile::new("tokens.json", include_bytes!("../../../themes/starlight-8bit/tokens.json")),
+    BundledFile::new("LICENSE", include_bytes!("../../../themes/starlight-8bit/LICENSE")),
+    BundledFile::new("CREDITS.md", include_bytes!("../../../themes/starlight-8bit/CREDITS.md")),
+    BundledFile::new(
+        "assets/logo.txt",
+        include_bytes!("../../../themes/starlight-8bit/assets/logo.txt"),
+    ),
+    BundledFile::new(
+        "assets/wallpaper.png",
+        include_bytes!("../../../themes/starlight-8bit/assets/wallpaper.png"),
+    ),
+    BundledFile::new(
+        "shaders/live.glsl",
+        include_bytes!("../../../themes/starlight-8bit/shaders/live.glsl"),
+    ),
+    BundledFile::new(
+        "shaders/live.hlsl",
+        include_bytes!("../../../themes/starlight-8bit/shaders/live.hlsl"),
+    ),
+    BundledFile::new(
+        "previews/preview.png",
+        include_bytes!("../../../themes/starlight-8bit/previews/preview.png"),
+    ),
+];
+
+const STARLIGHT_8BIT: BundledTheme = BundledTheme {
+    id: "starlight-8bit",
+    version: "2.0.0",
+    name: "Starlight 8-Bit",
+    tagline: "星屑 8-Bit · 复古二次元像素夜空",
+    files: STARLIGHT_8BIT_FILES,
+};
+
+const BUNDLED: &[BundledTheme] = &[NERV_EVA, KYOTO_SAKURA, SHINKAI_RAIN, STARLIGHT_8BIT];
 
 /// All themes embedded in this build.
 pub fn bundled_themes() -> &'static [BundledTheme] {
@@ -144,9 +243,47 @@ mod tests {
 
     #[test]
     fn lookup_is_stable() {
-        assert!(bundled_theme("nerv-eva").is_some());
+        for id in ["nerv-eva", "kyoto-sakura", "shinkai-rain", "starlight-8bit"] {
+            assert!(bundled_theme(id).is_some(), "missing bundled theme {id}");
+        }
         assert!(bundled_theme("does-not-exist").is_none());
-        assert_eq!(bundled_themes().len(), 1);
+        assert_eq!(bundled_themes().len(), 4);
+    }
+
+    #[test]
+    fn every_bundled_theme_passes_full_pack_validation() {
+        use kiseki_platform::Platform;
+
+        let dir = tempfile::tempdir().unwrap();
+        let platform = kiseki_platform::MockPlatform::new(dir.path());
+        let library = crate::ThemeLibrary::open(&platform, &[]);
+        library.materialize_official(&platform).unwrap();
+        for theme in bundled_themes() {
+            let root = platform.paths().official_themes_dir().join(theme.id);
+            let validation = crate::validate_theme_dir(&root).unwrap();
+            let fatals: Vec<String> = validation
+                .diagnostics
+                .iter()
+                .filter(|d| d.is_fatal())
+                .map(|d| format!("{}: {}", d.code, d.message))
+                .collect();
+            assert!(
+                validation.is_valid(),
+                "bundled theme {} failed validation: {fatals:#?}",
+                theme.id
+            );
+            let non_advisory_warnings: Vec<String> = validation
+                .diagnostics
+                .iter()
+                .filter(|d| !d.is_fatal() && d.code != "wcag.contrast.recommended")
+                .map(|d| format!("{}: {}", d.code, d.message))
+                .collect();
+            assert!(
+                non_advisory_warnings.is_empty(),
+                "bundled theme {} emitted unexpected warnings: {non_advisory_warnings:#?}",
+                theme.id
+            );
+        }
     }
 
     #[test]

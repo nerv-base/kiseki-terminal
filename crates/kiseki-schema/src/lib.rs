@@ -16,7 +16,7 @@ pub use resolve::{Composition, ResolvedTheme, UserOverrides};
 pub use tokens::{
     AccentTokens, AnsiTokens, AtmosphereTokens, Author, CodeSafeZone, CursorShape, DiffTokens, FastfetchOverrides,
     FastfetchFieldLabels, FontWeight, InteractionTokens, LayerKind, OverrideTokens, Padding, PaletteTokens, PartialDiffTokens,
-    PartialSyntaxTokens, PartialUiTokens, PromptOverrides, Provenance, SemanticTokens, ShaderAtmosphere,
+    PartialSyntaxTokens, PartialUiTokens, PromptOverrides, PromptPreset, Provenance, SemanticTokens, ShaderAtmosphere,
     ShaderParamValue, SurfaceTokens, SyntaxTokens, TextTokens, ThemeManifest, ThemePack, ThemeTokens, TypographyTokens,
     UiTokens, WallpaperAlignment, WallpaperAtmosphere, WallpaperFit, WindowAtmosphere, SCHEMA_VERSION,
 };

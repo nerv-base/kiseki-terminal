@@ -1,0 +1,22 @@
+{
+  "$schema": "../../schemas/manifest.v1.schema.json",
+  "schemaVersion": 1,
+  "id": "kyoto-sakura",
+  "name": "Kyoto Sakura",
+  "subtitle": "夜樱绘卷 · 和风月夜神社与垂枝樱",
+  "version": "2.0.0",
+  "appearance": "dark",
+  "pairedTheme": null,
+  "tags": ["anime", "japanese", "sakura", "dark", "live-shader"],
+  "authors": [{ "name": "nerv-base", "url": "https://github.com/nerv-base" }],
+  "license": "MIT",
+  "creditsFile": "CREDITS.md",
+  "layers": ["palette", "syntax", "ui", "atmosphere", "typography", "overrides"],
+  "minEngineVersion": "2.0.0",
+  "preview": "previews/preview.png",
+  "provenance": {
+    "wallpaperOrigin": "original",
+    "shaderOrigin": "original",
+    "sourceRepo": "https://github.com/nerv-base/kiseki-terminal"
+  }
+}

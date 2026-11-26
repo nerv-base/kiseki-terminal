@@ -110,7 +110,7 @@ pub fn render(theme: &ResolvedTheme, logo: Option<&Path>) -> String {
             .map(|raw| sanitize_text(raw, 24))
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| fallback_label.to_string());
-        let padded = format!("{label:<6}");
+        let padded = format!("{label:<7}");
         modules.push(json!({
             "type": kind,
             "key": format!("{bar}┃ {}{padded}{reset}", fg(key_color)),

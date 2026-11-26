@@ -469,11 +469,14 @@ mod tests {
         let (_dir, platform) = platform();
         let library = ThemeLibrary::open(&platform, &[]);
         let entries = library.list(&platform).unwrap();
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].id.as_str(), "nerv-eva");
-        assert_eq!(entries[0].source, ThemeSource::Bundled);
-        assert!(entries[0].root.is_none());
-        assert!(entries[0].layers.contains(&"atmosphere".to_string()));
+        assert_eq!(entries.len(), 4);
+        let nerv = entries
+            .iter()
+            .find(|entry| entry.id.as_str() == "nerv-eva")
+            .expect("nerv-eva is listed");
+        assert_eq!(nerv.source, ThemeSource::Bundled);
+        assert!(nerv.root.is_none());
+        assert!(nerv.layers.contains(&"atmosphere".to_string()));
     }
 
     #[test]
@@ -491,9 +494,12 @@ mod tests {
         assert!(loaded.logo.as_deref().unwrap().contains("\u{1b}["));
         assert_eq!(loaded.pack.manifest.id.as_str(), "nerv-eva");
 
-        // Second load must not rewrite the pack.
+        // Materialising official packs writes only the remaining 3 themes,
+        // and a subsequent pass writes nothing.
         let written = library.materialize_official(&platform).unwrap();
-        assert_eq!(written, 0);
+        assert_eq!(written, 3);
+        let written_again = library.materialize_official(&platform).unwrap();
+        assert_eq!(written_again, 0);
     }
 
     #[test]
@@ -543,8 +549,12 @@ mod tests {
         assert_eq!(loaded.source, ThemeSource::Community);
         assert_eq!(loaded.pack.manifest.name, "Community NERV");
         let entries = library.list(&platform).unwrap();
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].source, ThemeSource::Community);
+        assert_eq!(entries.len(), 4);
+        let nerv = entries
+            .iter()
+            .find(|entry| entry.id.as_str() == "nerv-eva")
+            .expect("nerv-eva is listed");
+        assert_eq!(nerv.source, ThemeSource::Community);
     }
 
     #[test]

@@ -1131,7 +1131,7 @@ impl App {
             v1_detected,
             user_prompt_config,
             default_render_only: self.render_only,
-            default_theme: saved_theme.or(v1_theme),
+            default_theme: saved_theme.or(v1_theme).or(Some(fallback_theme)),
             default_profile: self
                 .state
                 .as_ref()

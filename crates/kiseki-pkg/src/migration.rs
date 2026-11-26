@@ -805,15 +805,34 @@ mod tests {
         assert!(!dir.path().join("bin").join("theme").exists());
 
         let state = report.state.unwrap();
-        // `kyoto-sakura` is not bundled in Milestone 1, so migration falls back
-        // to the available default theme (`nerv-eva`) and records a note.
-        assert_eq!(state.active_theme.as_str(), "nerv-eva");
-        assert!(report.notes.iter().any(|note| note.contains("kyoto-sakura")));
+        // `kyoto-sakura` is bundled as an official theme, so migration preserves it.
+        assert_eq!(state.active_theme.as_str(), "kyoto-sakura");
         assert_eq!(state.rendering.profile, RenderingProfile::Balanced);
         assert!(state.rendering.crt);
         assert_eq!(state.rendering.bg_opacity_override, Some(0.55));
         let loaded = State::load(&platform, platform.paths()).unwrap().unwrap();
-        assert_eq!(loaded.active_theme.as_str(), "nerv-eva");
+        assert_eq!(loaded.active_theme.as_str(), "kyoto-sakura");
+    }
+
+    #[test]
+    fn unavailable_v1_theme_falls_back_to_nerv_eva() {
+        let (dir, platform) = platform();
+        let legacy = seed_v1(&platform, dir.path());
+        platform
+            .write_preserving_symlinks(&legacy.join("current-theme.txt"), b"retired-v1-theme\n")
+            .unwrap();
+        platform.set_env("HOME", &dir.path().to_string_lossy());
+        let detection = detect_v1(&platform).unwrap().unwrap();
+        let report = plan_migration(&platform, detection)
+            .unwrap()
+            .execute(&platform)
+            .unwrap();
+        let state = report.state.unwrap();
+        assert_eq!(state.active_theme.as_str(), "nerv-eva");
+        assert!(report
+            .notes
+            .iter()
+            .any(|note| note.contains("retired-v1-theme")));
     }
 
     #[test]
@@ -987,7 +1006,7 @@ mod tests {
         // The legacy backup and the preference import still happen.
         assert!(report.backup_dir.join("legacy").join("current-theme.txt").exists());
         let state = report.state.expect("preferences are imported in render-only mode");
-        assert_eq!(state.active_theme.as_str(), "nerv-eva");
+        assert_eq!(state.active_theme.as_str(), "kyoto-sakura");
     }
 
     #[test]

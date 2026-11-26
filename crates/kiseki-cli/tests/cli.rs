@@ -109,9 +109,15 @@ fn theme_list_works_before_initialisation() {
     let sandbox = Sandbox::new();
     let json = sandbox.json(&["theme", "list", "--json"]);
     let themes = json["themes"].as_array().unwrap();
-    assert_eq!(themes.len(), 1);
-    assert_eq!(themes[0]["id"], "nerv-eva");
-    assert_eq!(themes[0]["source"], "bundled");
+    assert_eq!(themes.len(), 4);
+    let ids: Vec<&str> = themes
+        .iter()
+        .filter_map(|t| t["id"].as_str())
+        .collect();
+    for expected in ["nerv-eva", "kyoto-sakura", "shinkai-rain", "starlight-8bit"] {
+        assert!(ids.contains(&expected), "missing {expected} in {ids:?}");
+    }
+    assert!(themes.iter().all(|t| t["source"] == "bundled"));
 }
 
 #[test]
@@ -975,10 +981,22 @@ fn init_falls_back_when_the_v1_theme_is_not_available() {
     let sandbox = Sandbox::new();
     let legacy = sandbox.home().join(".config").join("kiseki-terminal");
     fs::create_dir_all(&legacy).unwrap();
-    fs::write(legacy.join("current-theme.txt"), "kyoto-sakura\n").unwrap();
+    fs::write(legacy.join("current-theme.txt"), "retired-v1-theme\n").unwrap();
     sandbox.run_ok(&["init", "--non-interactive", "--quiet"]);
     let status = sandbox.json(&["status", "--json"]);
     assert_eq!(status["state"]["activeTheme"], "nerv-eva");
+    assert!(sandbox.kiseki_home().join("generated/ghostty.conf").exists());
+}
+
+#[test]
+fn init_preserves_official_v1_theme() {
+    let sandbox = Sandbox::new();
+    let legacy = sandbox.home().join(".config").join("kiseki-terminal");
+    fs::create_dir_all(&legacy).unwrap();
+    fs::write(legacy.join("current-theme.txt"), "kyoto-sakura\n").unwrap();
+    sandbox.run_ok(&["init", "--non-interactive", "--quiet"]);
+    let status = sandbox.json(&["status", "--json"]);
+    assert_eq!(status["state"]["activeTheme"], "kyoto-sakura");
     assert!(sandbox.kiseki_home().join("generated/ghostty.conf").exists());
 }
 

@@ -5,7 +5,7 @@
 //! colours, static labels and glyphs, so switching themes can never execute
 //! code on every shell prompt.
 
-use kiseki_schema::{PromptOverrides, ResolvedTheme};
+use kiseki_schema::{PromptOverrides, PromptPreset, ResolvedTheme};
 use kiseki_types::{Color, PromptPolicy};
 use serde_json::{json, Value};
 
@@ -111,6 +111,9 @@ fn console_title(theme: &ResolvedTheme) -> String {
 pub fn omp_config(theme: &ResolvedTheme) -> Value {
     let colors = prompt_colors(theme);
     let p = &theme.palette;
+    let preset = prompt_overrides(theme)
+        .and_then(|prompt| prompt.preset)
+        .unwrap_or(PromptPreset::TacticalBar);
     let badge = badge_text(theme);
     let ok = ok_label(theme);
     let error = error_label(theme);
@@ -118,6 +121,7 @@ pub fn omp_config(theme: &ResolvedTheme) -> Value {
 
     let accent = p.accents.primary.to_hex();
     let accent2 = p.accents.secondary.to_hex();
+    let tertiary = p.accents.tertiary.to_hex();
     let canvas = p.surfaces.base.to_hex();
     let surface0 = p.surfaces.surface0.to_hex();
     let border = p.surfaces.surface2.to_hex();
@@ -127,7 +131,321 @@ pub fn omp_config(theme: &ResolvedTheme) -> Value {
     let err_hex = colors.error.to_hex();
     let badge_bg = colors.badge_bg.to_hex();
     let badge_fg = colors.badge_fg.to_hex();
+    let path_bg = colors.path_bg.to_hex();
+    let path_fg = colors.path_fg.to_hex();
+    let git_bg = colors.git_bg.to_hex();
+    let git_fg = colors.git_fg.to_hex();
     let muted = colors.muted.to_hex();
+    let secondary_text = p.text.secondary.to_hex();
+
+    let lang_segment = |kind: &str, label: &str, fg_hex: &str, bg_hex: &str, tmpl: String| {
+        json!({
+            "type": kind,
+            "style": "plain",
+            "foreground": fg_hex,
+            "background": bg_hex,
+            "template": tmpl.replace("{label}", label),
+            "properties": {
+                "fetch_version": true,
+                "display_mode": "files"
+            }
+        })
+    };
+
+    let (left_segments, right_segments, status_template) = match preset {
+        PromptPreset::TacticalBar => {
+            let left = vec![
+                json!({
+                    "type": "text",
+                    "style": "plain",
+                    "foreground": badge_fg,
+                    "background": badge_bg,
+                    "template": format!("<{badge_bg},transparent>▛</> <b>{badge}</b> <{badge_bg},transparent>▟</>")
+                }),
+                json!({
+                    "type": "path",
+                    "style": "plain",
+                    "foreground": path_fg,
+                    "background": path_bg,
+                    "template": format!("<{canvas},transparent> </><{accent}>┃</> <b>{{{{ .Path }}}}</b> "),
+                    "properties": {
+                        "style": "agnoster_short",
+                        "folder_separator_icon": "/",
+                        "home_icon": "~",
+                        "max_depth": 2
+                    }
+                }),
+                json!({
+                    "type": "git",
+                    "style": "plain",
+                    "foreground": git_fg,
+                    "background": git_bg,
+                    "template": format!(
+                        "<{canvas},transparent> </><{accent2}>┃</> {{{{ .HEAD }}}}{{{{ if .BranchStatus }}}} <{info}>{{{{ .BranchStatus }}}}</>{{{{ end }}}}{{{{ if .Working.Changed }}}} <{warning}>*{{{{ .Working.String }}}}</>{{{{ end }}}}{{{{ if .Staging.Changed }}}} <{success}>+{{{{ .Staging.String }}}}</>{{{{ end }}}} "
+                    ),
+                    "properties": {
+                        "branch_icon": "",
+                        "fetch_status": true,
+                        "fetch_upstream_icon": false
+                    }
+                }),
+                lang_segment("rust", "rs", &accent, &surface0, format!("<{canvas},transparent> </><{accent}>┃</> {{label}} {{{{ .Major }}}}.{{{{ .Minor }}}} ")),
+                lang_segment("node", "node", &success, &surface0, format!("<{canvas},transparent> </><{success}>┃</> {{label}} {{{{ .Major }}}}.{{{{ .Minor }}}} ")),
+                lang_segment("python", "py", &success, &surface0, format!("<{canvas},transparent> </><{success}>┃</> {{label}} {{{{ if .Venv }}}}{{{{ .Venv }}}} {{{{ end }}}}{{{{ .Major }}}}.{{{{ .Minor }}}} ")),
+                lang_segment("go", "go", &info, &surface0, format!("<{canvas},transparent> </><{info}>┃</> {{label}} {{{{ .Major }}}}.{{{{ .Minor }}}} ")),
+            ];
+            let right = vec![
+                json!({
+                    "type": "executiontime",
+                    "style": "plain",
+                    "foreground": warning,
+                    "background": surface0,
+                    "template": format!("<{warning}>┃ {{{{ .FormattedMs }}}} </>"),
+                    "properties": { "threshold": 1500, "style": "roundrock" }
+                }),
+                json!({
+                    "type": "time",
+                    "style": "plain",
+                    "foreground": secondary_text,
+                    "background": surface0,
+                    "template": format!("<{canvas},transparent> </><{accent}>┃</> {{{{ .CurrentDate | date .Format }}}} <{badge_bg},transparent>▜</>"),
+                    "properties": { "time_format": "15:04" }
+                }),
+            ];
+            let status = format!(
+                "<{border}>┗━</>{{{{ if gt .Code 0 }}}}<{err_hex}>{error} // ERR:{{{{ .Code }}}} {symbol}</>{{{{ else }}}}<{accent2}>{ok}</> <{accent}>{symbol}</>{{{{ end }}}}"
+            );
+            (left, right, status)
+        }
+        PromptPreset::ShrineRibbon => {
+            let left = vec![
+                json!({
+                    "type": "path",
+                    "style": "plain",
+                    "foreground": path_fg,
+                    "background": path_bg,
+                    "template": format!("<{accent},transparent>「</><{accent}> {badge}</> <b>{{{{ .Path }}}}</b> <{accent},transparent>」</>"),
+                    "properties": {
+                        "style": "agnoster_short",
+                        "folder_separator_icon": "/",
+                        "home_icon": "~",
+                        "max_depth": 2
+                    }
+                }),
+                json!({
+                    "type": "git",
+                    "style": "plain",
+                    "foreground": git_fg,
+                    "background": git_bg,
+                    "template": format!(
+                        "<{canvas},transparent> </> <{accent2}>·</> {{{{ .HEAD }}}}{{{{ if .BranchStatus }}}} <{success}>{{{{ .BranchStatus }}}}</>{{{{ end }}}}{{{{ if .Working.Changed }}}} <{warning}>*{{{{ .Working.String }}}}</>{{{{ end }}}}{{{{ if .Staging.Changed }}}} <{success}>+{{{{ .Staging.String }}}}</>{{{{ end }}}} "
+                    ),
+                    "properties": {
+                        "branch_icon": "",
+                        "fetch_status": true,
+                        "fetch_upstream_icon": false
+                    }
+                }),
+                lang_segment("rust", "rs", &warning, &surface0, format!("<{canvas},transparent> </> {{label}} {{{{ .Major }}}}.{{{{ .Minor }}}} ")),
+                lang_segment("node", "node", &success, &surface0, format!("<{canvas},transparent> </> {{label}} {{{{ .Major }}}}.{{{{ .Minor }}}} ")),
+                lang_segment("python", "py", &success, &surface0, format!("<{canvas},transparent> </> {{label}} {{{{ if .Venv }}}}{{{{ .Venv }}}} {{{{ end }}}}{{{{ .Major }}}}.{{{{ .Minor }}}} ")),
+                lang_segment("go", "go", &info, &surface0, format!("<{canvas},transparent> </> {{label}} {{{{ .Major }}}}.{{{{ .Minor }}}} ")),
+            ];
+            let right = vec![
+                json!({
+                    "type": "executiontime",
+                    "style": "plain",
+                    "foreground": warning,
+                    "background": surface0,
+                    "template": " {{ .FormattedMs }} ",
+                    "properties": { "threshold": 1500, "style": "roundrock" }
+                }),
+                json!({
+                    "type": "time",
+                    "style": "plain",
+                    "foreground": secondary_text,
+                    "background": surface0,
+                    "template": format!("<{canvas},transparent> </><{accent2},transparent>「</> {{{{ .CurrentDate | date .Format }}}} <{accent2},transparent>」</>"),
+                    "properties": { "time_format": "15:04" }
+                }),
+            ];
+            let status = format!(
+                "  {{{{ if gt .Code 0 }}}}<{err_hex}>「{error} {{{{ .Code }}}}」 {symbol}</>{{{{ else }}}}<{accent2}>{ok}</> <{accent}>{symbol}</>{{{{ end }}}}"
+            );
+            (left, right, status)
+        }
+        PromptPreset::CinematicLine => {
+            let left = vec![
+                json!({
+                    "type": "path",
+                    "style": "plain",
+                    "foreground": path_fg,
+                    "background": "transparent",
+                    "template": format!("<{border}>╭─</> <{info}>{badge}</> <b>{{{{ .Path }}}}</b>"),
+                    "properties": {
+                        "style": "agnoster_short",
+                        "folder_separator_icon": "/",
+                        "home_icon": "~",
+                        "max_depth": 2
+                    }
+                }),
+                json!({
+                    "type": "git",
+                    "style": "plain",
+                    "foreground": git_fg,
+                    "background": "transparent",
+                    "template": format!(
+                        " <{border}>·</> {{{{ .HEAD }}}}{{{{ if .BranchStatus }}}} <{accent}>{{{{ .BranchStatus }}}}</>{{{{ end }}}}{{{{ if .Working.Changed }}}} <{warning}>*{{{{ .Working.String }}}}</>{{{{ end }}}}{{{{ if .Staging.Changed }}}} <{success}>+{{{{ .Staging.String }}}}</>{{{{ end }}}}"
+                    ),
+                    "properties": {
+                        "branch_icon": "",
+                        "fetch_status": true,
+                        "fetch_upstream_icon": false
+                    }
+                }),
+                lang_segment("rust", "rs", &warning, "transparent", format!(" <{border}>·</> {{label}} {{{{ .Major }}}}.{{{{ .Minor }}}}")),
+                lang_segment("node", "node", &success, "transparent", format!(" <{border}>·</> {{label}} {{{{ .Major }}}}.{{{{ .Minor }}}}")),
+                lang_segment("python", "py", &success, "transparent", format!(" <{border}>·</> {{label}} {{{{ if .Venv }}}}{{{{ .Venv }}}} {{{{ end }}}}{{{{ .Major }}}}.{{{{ .Minor }}}}")),
+                lang_segment("go", "go", &accent, "transparent", format!(" <{border}>·</> {{label}} {{{{ .Major }}}}.{{{{ .Minor }}}}")),
+            ];
+            let right = vec![
+                json!({
+                    "type": "executiontime",
+                    "style": "plain",
+                    "foreground": warning,
+                    "background": surface0,
+                    "template": " {{ .FormattedMs }} ",
+                    "properties": { "threshold": 1500, "style": "roundrock" }
+                }),
+                json!({
+                    "type": "time",
+                    "style": "plain",
+                    "foreground": secondary_text,
+                    "background": surface0,
+                    "template": format!("<{canvas},transparent> </> <{accent2}>◦</> {{{{ .CurrentDate | date .Format }}}} <{border},transparent>─╮</>"),
+                    "properties": { "time_format": "15:04" }
+                }),
+            ];
+            let status = format!(
+                "<{border}>╰─</> {{{{ if gt .Code 0 }}}}<{err_hex}>× {{{{ .Code }}}} {symbol}</>{{{{ else }}}}<{accent}>{symbol}</>{{{{ end }}}}"
+            );
+            (left, right, status)
+        }
+        PromptPreset::PixelFrame => {
+            let left = vec![
+                json!({
+                    "type": "text",
+                    "style": "plain",
+                    "foreground": badge_bg,
+                    "background": "transparent",
+                    "template": format!("<{border}>┌─</>░▒▓")
+                }),
+                json!({
+                    "type": "path",
+                    "style": "plain",
+                    "foreground": path_fg,
+                    "background": path_bg,
+                    "template": format!(" {badge} <b>{{{{ .Path }}}}</b> "),
+                    "properties": {
+                        "style": "agnoster_short",
+                        "folder_separator_icon": "/",
+                        "home_icon": "~",
+                        "max_depth": 2
+                    }
+                }),
+                json!({
+                    "type": "text",
+                    "style": "plain",
+                    "foreground": badge_bg,
+                    "background": "transparent",
+                    "template": "▓▒░"
+                }),
+                json!({
+                    "type": "git",
+                    "style": "plain",
+                    "foreground": git_fg,
+                    "background": git_bg,
+                    "template": format!(
+                        "<{canvas},transparent> </><{accent2}>▌</><{git_fg}> {{{{ .HEAD }}}}</>{{{{ if .BranchStatus }}}} <{accent}>{{{{ .BranchStatus }}}}</>{{{{ end }}}}{{{{ if .Working.Changed }}}} <{warning}>*{{{{ .Working.String }}}}</>{{{{ end }}}}{{{{ if .Staging.Changed }}}} <{success}>+{{{{ .Staging.String }}}}</>{{{{ end }}}} "
+                    ),
+                    "properties": {
+                        "branch_icon": "",
+                        "fetch_status": true,
+                        "fetch_upstream_icon": false
+                    }
+                }),
+                lang_segment("rust", "rs", &warning, &surface0, format!("<{canvas},transparent> </><{accent2}>▌</> {{label}} {{{{ .Major }}}}.{{{{ .Minor }}}} ")),
+                lang_segment("node", "node", &success, &surface0, format!("<{canvas},transparent> </><{success}>▌</> {{label}} {{{{ .Major }}}}.{{{{ .Minor }}}} ")),
+                lang_segment("python", "py", &success, &surface0, format!("<{canvas},transparent> </><{success}>▌</> {{label}} {{{{ if .Venv }}}}{{{{ .Venv }}}} {{{{ end }}}}{{{{ .Major }}}}.{{{{ .Minor }}}} ")),
+                lang_segment("go", "go", &accent, &surface0, format!("<{canvas},transparent> </><{accent}>▌</> {{label}} {{{{ .Major }}}}.{{{{ .Minor }}}} ")),
+            ];
+            let right = vec![
+                json!({
+                    "type": "executiontime",
+                    "style": "plain",
+                    "foreground": warning,
+                    "background": surface0,
+                    "template": format!("<{warning}>▌ {{{{ .FormattedMs }}}} </>"),
+                    "properties": { "threshold": 1500, "style": "roundrock" }
+                }),
+                json!({
+                    "type": "time",
+                    "style": "plain",
+                    "foreground": secondary_text,
+                    "background": surface0,
+                    "template": format!("<{canvas},transparent> </><{tertiary}>▌</> <{tertiary}>✦</> {{{{ .CurrentDate | date .Format }}}} <{border},transparent>─┐</>"),
+                    "properties": { "time_format": "15:04" }
+                }),
+            ];
+            let status = format!(
+                "<{border}>└─</> {{{{ if gt .Code 0 }}}}<{err_hex}>{error} {{{{ .Code }}}} {symbol}</>{{{{ else }}}}<{accent2}>{ok}</> <{accent}>{symbol}</>{{{{ end }}}}"
+            );
+            (left, right, status)
+        }
+        PromptPreset::Minimal => {
+            let left = vec![
+                json!({
+                    "type": "path",
+                    "style": "plain",
+                    "foreground": accent,
+                    "background": "transparent",
+                    "template": "<b>{{ .Path }}</b>",
+                    "properties": {
+                        "style": "agnoster_short",
+                        "folder_separator_icon": "/",
+                        "home_icon": "~",
+                        "max_depth": 2
+                    }
+                }),
+                json!({
+                    "type": "git",
+                    "style": "plain",
+                    "foreground": git_fg,
+                    "background": "transparent",
+                    "template": format!(
+                        " {{{{ .HEAD }}}}{{{{ if .Working.Changed }}}} <{warning}>*</>{{{{ end }}}}{{{{ if .Staging.Changed }}}} <{success}>+</>{{{{ end }}}}"
+                    ),
+                    "properties": {
+                        "branch_icon": "",
+                        "fetch_status": true,
+                        "fetch_upstream_icon": false
+                    }
+                }),
+            ];
+            let right = vec![json!({
+                "type": "time",
+                "style": "plain",
+                "foreground": muted,
+                "background": "transparent",
+                "template": "{{ .CurrentDate | date .Format }}",
+                "properties": { "time_format": "15:04" }
+            })];
+            let status = format!(
+                "{{{{ if gt .Code 0 }}}}<{err_hex}>{{{{ .Code }}}} {symbol}</>{{{{ else }}}}<{accent}>{symbol}</>{{{{ end }}}}"
+            );
+            (left, right, status)
+        }
+    };
 
     json!({
         "$schema": "https://raw.githubusercontent.com/JanDeDobbeleer/oh-my-posh/main/themes/schema.json",
@@ -144,113 +462,12 @@ pub fn omp_config(theme: &ResolvedTheme) -> Value {
                 "type": "prompt",
                 "alignment": "left",
                 "newline": true,
-                "segments": [
-                    {
-                        "type": "text",
-                        "style": "plain",
-                        "foreground": badge_fg,
-                        "background": badge_bg,
-                        "template": format!("<{badge_bg},transparent>▛</> <b>{badge}</b> <{badge_bg},transparent>▟</>")
-                    },
-                    {
-                        "type": "path",
-                        "style": "plain",
-                        "foreground": colors.path_fg.to_hex(),
-                        "background": colors.path_bg.to_hex(),
-                        "template": format!("<{canvas},transparent> </><{accent}>┃</> <b>{{{{ .Path }}}}</b> "),
-                        "properties": {
-                            "style": "agnoster_short",
-                            "folder_separator_icon": "/",
-                            "home_icon": "~",
-                            "max_depth": 2
-                        }
-                    },
-                    {
-                        "type": "git",
-                        "style": "plain",
-                        "foreground": colors.git_fg.to_hex(),
-                        "background": colors.git_bg.to_hex(),
-                        "template": format!(
-                            "<{canvas},transparent> </><{accent2}>┃</> {{{{ .HEAD }}}}{{{{ if .BranchStatus }}}} <{info}>{{{{ .BranchStatus }}}}</>{{{{ end }}}}{{{{ if .Working.Changed }}}} <{warning}>*{{{{ .Working.String }}}}</>{{{{ end }}}}{{{{ if .Staging.Changed }}}} <{success}>+{{{{ .Staging.String }}}}</>{{{{ end }}}} "
-                        ),
-                        "properties": {
-                            "branch_icon": "",
-                            "fetch_status": true,
-                            "fetch_upstream_icon": false
-                        }
-                    },
-                    {
-                        "type": "rust",
-                        "style": "plain",
-                        "foreground": accent,
-                        "background": surface0,
-                        "template": format!("<{canvas},transparent> </><{accent}>┃</> rs {{{{ .Major }}}}.{{{{ .Minor }}}} "),
-                        "properties": {
-                            "fetch_version": true,
-                            "display_mode": "files"
-                        }
-                    },
-                    {
-                        "type": "node",
-                        "style": "plain",
-                        "foreground": success,
-                        "background": surface0,
-                        "template": format!("<{canvas},transparent> </><{success}>┃</> node {{{{ .Major }}}}.{{{{ .Minor }}}} "),
-                        "properties": {
-                            "fetch_version": true,
-                            "display_mode": "files"
-                        }
-                    },
-                    {
-                        "type": "python",
-                        "style": "plain",
-                        "foreground": success,
-                        "background": surface0,
-                        "template": format!("<{canvas},transparent> </><{success}>┃</> py {{{{ if .Venv }}}}{{{{ .Venv }}}} {{{{ end }}}}{{{{ .Major }}}}.{{{{ .Minor }}}} "),
-                        "properties": {
-                            "fetch_version": true,
-                            "display_mode": "files"
-                        }
-                    },
-                    {
-                        "type": "go",
-                        "style": "plain",
-                        "foreground": info,
-                        "background": surface0,
-                        "template": format!("<{canvas},transparent> </><{info}>┃</> go {{{{ .Major }}}}.{{{{ .Minor }}}} "),
-                        "properties": {
-                            "fetch_version": true,
-                            "display_mode": "files"
-                        }
-                    }
-                ]
+                "segments": left_segments
             },
             {
                 "type": "prompt",
                 "alignment": "right",
-                "segments": [
-                    {
-                        "type": "executiontime",
-                        "style": "plain",
-                        "foreground": warning,
-                        "background": surface0,
-                        "template": format!("<{warning}>┃ {{{{ .FormattedMs }}}} </>"),
-                        "properties": {
-                            "threshold": 1500,
-                            "style": "roundrock"
-                        }
-                    },
-                    {
-                        "type": "time",
-                        "style": "plain",
-                        "foreground": p.text.secondary.to_hex(),
-                        "background": surface0,
-                        "template": format!("<{canvas},transparent> </><{accent}>┃</> {{{{ .CurrentDate | date .Format }}}} <{badge_bg},transparent>▜</>"),
-                        "properties": {
-                            "time_format": "15:04"
-                        }
-                    }
-                ]
+                "segments": right_segments
             },
             {
                 "type": "prompt",
@@ -262,9 +479,7 @@ pub fn omp_config(theme: &ResolvedTheme) -> Value {
                         "style": "plain",
                         "foreground": accent,
                         "background": "transparent",
-                        "template": format!(
-                            "<{border}>┗━</>{{{{ if gt .Code 0 }}}}<{err_hex}>{error} // ERR:{{{{ .Code }}}} {symbol}</>{{{{ else }}}}<{accent2}>{ok}</> <{accent}>{symbol}</>{{{{ end }}}}"
-                        ),
+                        "template": status_template,
                         "properties": {
                             "always_enabled": true
                         }
@@ -572,6 +787,37 @@ mod tests {
         assert!(fragment.get("blocks").is_none());
         assert!(fragment["palette"]["list"]["kiseki_primary"].is_string());
         assert!(omp_is_declarative(&fragment));
+    }
+
+    #[test]
+    fn every_prompt_preset_is_declarative_and_distinct() {
+        for (preset, marker) in [
+            (PromptPreset::TacticalBar, "▛"),
+            (PromptPreset::ShrineRibbon, "「"),
+            (PromptPreset::CinematicLine, "╭─"),
+            (PromptPreset::PixelFrame, "░▒▓"),
+            (PromptPreset::Minimal, "{{ .Path }}"),
+        ] {
+            let mut t = theme();
+            t.overrides
+                .as_mut()
+                .unwrap()
+                .prompt
+                .get_or_insert_with(Default::default)
+                .preset = Some(preset);
+            let config = omp_config(&t);
+            assert!(omp_is_declarative(&config), "{preset:?} must be declarative");
+            let text = config.to_string();
+            assert!(
+                text.contains(marker),
+                "{preset:?} expected marker {marker:?} in {text}"
+            );
+            for block in config["blocks"].as_array().unwrap() {
+                for segment in block["segments"].as_array().unwrap() {
+                    assert_eq!(segment["style"], "plain");
+                }
+            }
+        }
     }
 
     #[test]
