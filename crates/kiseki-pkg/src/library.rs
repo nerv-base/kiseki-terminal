@@ -5,15 +5,18 @@
 //! user-configured directories > community > official > bundled. A higher
 //! precedence theme shadows a lower one without deleting it.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use kiseki_platform::Platform;
+use kiseki_platform::{Platform, SyncMode};
 use kiseki_schema::{ThemeManifest, ThemePack, ThemeTokens};
-use kiseki_types::{Appearance, KisekiError, OsKind, Result, ThemeId};
+use kiseki_types::{Appearance, KisekiError, OsKind, RenderingProfile, Result, ThemeId};
 
 use crate::bundled::{bundled_theme, bundled_themes, BundledFile, BundledTheme};
-use crate::validate::{collect_files, read_text_bounded, validate_theme_dir, MAX_JSON_BYTES};
+use crate::validate::{
+    collect_files, read_text_bounded, validate_theme_dir, validate_theme_dir_with_assets,
+    ValidationScope, MAX_JSON_BYTES,
+};
 
 /// Where a loaded theme came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -136,16 +139,29 @@ impl ThemeLibrary {
         {
             return Ok(false);
         }
+        let mut dirs_to_sync = BTreeSet::new();
         for file in theme.files {
-            platform.write_preserving_symlinks(&target.join(file.path), file.bytes)?;
+            let dest = target.join(file.path);
+            platform.write_preserving_symlinks_with_sync(&dest, file.bytes, SyncMode::AtomicNoSync)?;
+            if let Some(parent) = dest.parent() {
+                dirs_to_sync.insert(parent.to_path_buf());
+            }
         }
         // Clean up the marker used by pre-release builds; it lived inside the
         // pack and would fail the strict extension whitelist.
         platform.remove_file(&target.join(".kiseki-bundled-version"))?;
+        for dir in &dirs_to_sync {
+            platform.sync_dir(dir)?;
+        }
         versions.insert(theme.id.to_string(), theme.version.to_string());
         let encoded = serde_json::to_string_pretty(&versions)
             .map_err(|error| KisekiError::Json(error.to_string()))?;
-        platform.write_preserving_symlinks(&versions_path, format!("{encoded}\n").as_bytes())?;
+        platform.write_preserving_symlinks_with_sync(
+            &versions_path,
+            format!("{encoded}\n").as_bytes(),
+            SyncMode::FileOnly,
+        )?;
+        platform.sync_dir(&official)?;
         Ok(true)
     }
 
@@ -206,6 +222,54 @@ impl ThemeLibrary {
     /// a newer bundled version refreshes the on-disk official pack instead of
     /// serving stale files forever.
     pub fn load(&self, platform: &dyn Platform, id: &ThemeId) -> Result<LoadedTheme> {
+        self.load_inner(platform, id, ValidationScope::AllProfiles)
+    }
+
+    /// Loads a theme by ID, validating shaders only for `profile` and reusing
+    /// the content-hashed validation cache under `cache_dir`.
+    pub fn load_for_profile(
+        &self,
+        platform: &dyn Platform,
+        id: &ThemeId,
+        profile: RenderingProfile,
+    ) -> Result<LoadedTheme> {
+        self.load_inner(platform, id, ValidationScope::Profile(profile))
+    }
+
+    fn load_inner(
+        &self,
+        platform: &dyn Platform,
+        id: &ThemeId,
+        scope: ValidationScope,
+    ) -> Result<LoadedTheme> {
+        self.load_with_validation_inner(platform, id, scope, true)
+            .map(|(loaded, _)| loaded)
+    }
+
+    /// Loads a theme by ID and returns both [`LoadedTheme`] and its
+    /// [`ThemeValidation`] in a single pass.
+    pub fn load_with_validation(
+        &self,
+        platform: &dyn Platform,
+        id: &ThemeId,
+        scope: ValidationScope,
+        write_cache: bool,
+    ) -> Result<(LoadedTheme, crate::validate::ThemeValidation)> {
+        if write_cache {
+            self.load_with_validation_inner(platform, id, scope, true)
+        } else {
+            self.load_readonly_with_validation_inner(platform, id, scope)
+        }
+    }
+
+    fn load_with_validation_inner(
+        &self,
+        platform: &dyn Platform,
+        id: &ThemeId,
+        scope: ValidationScope,
+        write_cache: bool,
+    ) -> Result<(LoadedTheme, crate::validate::ThemeValidation)> {
+        let cache_dir = Some(platform.paths().cache_dir());
         for (source, root) in &self.roots {
             let dir = root.join(id.as_str());
             if *source == ThemeSource::Official {
@@ -214,13 +278,19 @@ impl ThemeLibrary {
                 }
             }
             if dir.join("manifest.json").exists() {
-                return load_from_dir(&dir, *source);
+                return load_from_dir_with_validation(&dir, *source, cache_dir, scope, write_cache);
             }
         }
         if let Some(theme) = bundled_theme(id.as_str()) {
             self.materialize_one(platform, theme)?;
             let dir = platform.paths().official_themes_dir().join(theme.id);
-            return load_from_dir(&dir, ThemeSource::Official);
+            return load_from_dir_with_validation(
+                &dir,
+                ThemeSource::Official,
+                cache_dir,
+                scope,
+                write_cache,
+            );
         }
         Err(KisekiError::ThemeNotFound(id.to_string()))
     }
@@ -237,10 +307,40 @@ impl ThemeLibrary {
     /// after materialisation. `--dry-run` uses this so a preview never creates
     /// `official/<id>` or `.versions.json`.
     pub fn load_readonly(&self, platform: &dyn Platform, id: &ThemeId) -> Result<LoadedTheme> {
+        self.load_readonly_inner(platform, id, ValidationScope::AllProfiles)
+    }
+
+    /// Read-only load scoped to `profile` (never writes cache or theme store).
+    pub fn load_readonly_for_profile(
+        &self,
+        platform: &dyn Platform,
+        id: &ThemeId,
+        profile: RenderingProfile,
+    ) -> Result<LoadedTheme> {
+        self.load_readonly_inner(platform, id, ValidationScope::Profile(profile))
+    }
+
+    fn load_readonly_inner(
+        &self,
+        platform: &dyn Platform,
+        id: &ThemeId,
+        scope: ValidationScope,
+    ) -> Result<LoadedTheme> {
+        self.load_readonly_with_validation_inner(platform, id, scope)
+            .map(|(loaded, _)| loaded)
+    }
+
+    fn load_readonly_with_validation_inner(
+        &self,
+        platform: &dyn Platform,
+        id: &ThemeId,
+        scope: ValidationScope,
+    ) -> Result<(LoadedTheme, crate::validate::ThemeValidation)> {
+        let cache_dir = Some(platform.paths().cache_dir());
         for (source, root) in &self.roots {
             let dir = root.join(id.as_str());
             if dir.join("manifest.json").exists() {
-                return load_from_dir(&dir, *source);
+                return load_from_dir_with_validation(&dir, *source, cache_dir, scope, false);
             }
         }
         let Some(theme) = bundled_theme(id.as_str()) else {
@@ -273,14 +373,26 @@ impl ThemeLibrary {
             .file(logo_relative)
             .and_then(BundledFile::text)
             .map(str::to_string);
-        Ok(LoadedTheme {
+        let balanced = kiseki_schema::ResolvedTheme::from_pack(&pack, RenderingProfile::Balanced);
+        let contrast =
+            kiseki_schema::lint_contrast(&balanced.palette, Some(&balanced.syntax));
+        let validation = crate::validate::ThemeValidation {
+            pack: Some(pack.clone()),
+            diagnostics: contrast.to_diagnostics(),
+            shader_reports: Vec::new(),
+            contrast: Some(contrast),
+            file_count: theme.files.len(),
+            total_bytes: theme.files.iter().map(|file| file.bytes.len() as u64).sum(),
+        };
+        let loaded = LoadedTheme {
             pack,
             source: ThemeSource::Official,
             root: platform.paths().official_themes_dir().join(theme.id),
             glsl,
             hlsl,
             logo,
-        })
+        };
+        Ok((loaded, validation))
     }
 
     /// Re-materialises the embedded copy of `id`, repairing a damaged install.
@@ -364,11 +476,23 @@ fn read_manifest(dir: &Path) -> Result<Option<ThemeManifest>> {
 }
 
 fn load_from_dir(dir: &Path, source: ThemeSource) -> Result<LoadedTheme> {
+    load_from_dir_with_validation(dir, source, None, ValidationScope::AllProfiles, false)
+        .map(|(loaded, _)| loaded)
+}
+
+fn load_from_dir_with_validation(
+    dir: &Path,
+    source: ThemeSource,
+    cache_dir: Option<&Path>,
+    scope: ValidationScope,
+    write_cache: bool,
+) -> Result<(LoadedTheme, crate::validate::ThemeValidation)> {
     // Validation is the security gate *and* the only place pack files are
     // read: structural failures abort before a manifest is opened and every
     // content read is bounded, so a hostile pack cannot make `use` allocate
     // unbounded memory.
-    let validation = validate_theme_dir(dir)?;
+    let (mut validation, assets) =
+        validate_theme_dir_with_assets(dir, cache_dir, scope, write_cache)?;
     if !validation.is_valid() {
         let failures: Vec<String> = validation
             .diagnostics
@@ -382,16 +506,16 @@ fn load_from_dir(dir: &Path, source: ThemeSource) -> Result<LoadedTheme> {
             failures.join("; ")
         )));
     }
-    let Some(pack) = validation.pack else {
+    let Some(pack) = validation.pack.take() else {
         return Err(KisekiError::security(format!(
             "theme pack at {} has no readable manifest",
             dir.display()
         )));
     };
+    validation.pack = Some(pack.clone());
 
-    let shader = pack.tokens.atmosphere.as_ref().and_then(|atmosphere| atmosphere.shader.as_ref());
-    let glsl = read_optional(dir, shader.and_then(|shader| shader.glsl.as_deref()))?;
-    let hlsl = read_optional(dir, shader.and_then(|shader| shader.hlsl.as_deref()))?;
+    let glsl = assets.glsl;
+    let hlsl = assets.hlsl;
     let logo_relative = pack
         .tokens
         .overrides
@@ -399,16 +523,23 @@ fn load_from_dir(dir: &Path, source: ThemeSource) -> Result<LoadedTheme> {
         .and_then(|overrides| overrides.fastfetch.as_ref())
         .and_then(|fastfetch| fastfetch.logo_path.as_deref())
         .unwrap_or("assets/logo.txt");
-    let logo = read_optional(dir, Some(logo_relative))?;
+    let logo = if logo_relative == "assets/logo.txt" {
+        assets.logo
+    } else {
+        read_optional(dir, Some(logo_relative))?
+    };
 
-    Ok(LoadedTheme {
-        pack,
-        source,
-        root: dir.to_path_buf(),
-        glsl,
-        hlsl,
-        logo,
-    })
+    Ok((
+        LoadedTheme {
+            pack,
+            source,
+            root: dir.to_path_buf(),
+            glsl,
+            hlsl,
+            logo,
+        },
+        validation,
+    ))
 }
 
 fn read_optional(dir: &Path, relative: Option<&str>) -> Result<Option<String>> {
@@ -726,5 +857,30 @@ mod tests {
             .load_pack_readonly(&ThemeId::new("nerv-eva").unwrap())
             .unwrap();
         assert_eq!(pack.manifest.name, "Installed Copy");
+    }
+
+    #[test]
+    fn load_readonly_does_not_write_validation_cache() {
+        let (_dir, platform) = platform();
+        let library = ThemeLibrary::open(&platform, &[]);
+        library
+            .load_for_profile(
+                &platform,
+                &ThemeId::new("nerv-eva").unwrap(),
+                RenderingProfile::Balanced,
+            )
+            .unwrap();
+        assert!(platform.paths().cache_dir().join("validation").exists());
+
+        // Clear cache, then ensure load_readonly_for_profile never creates it.
+        std::fs::remove_dir_all(platform.paths().cache_dir().join("validation")).unwrap();
+        library
+            .load_readonly_for_profile(
+                &platform,
+                &ThemeId::new("nerv-eva").unwrap(),
+                RenderingProfile::Balanced,
+            )
+            .unwrap();
+        assert!(!platform.paths().cache_dir().join("validation").exists());
     }
 }

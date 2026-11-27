@@ -1,0 +1,29 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+:root { color-scheme: light dark; }
+* { box-sizing: border-box; }
+body { margin: 0; font-family: var(--font-sans, ui-sans-serif, system-ui); color: var(--foreground); }
+h2 { font-size: 15px; margin: 0 0 4px; }
+p { margin: 0 0 14px; font-size: 12px; color: var(--muted); }
+.legend { display: flex; gap: 14px; font-size: 12px; margin: 0 0 10px; align-items: center; }
+.dot { width: 9px; height: 9px; border-radius: 3px; display: inline-block; margin-right: 5px; }
+.v2 { background: var(--chart-1, #4ba3ff); }
+.v1 { background: var(--chart-2, #f59f00); }
+.base { background: var(--border, #868e96); }
+.row { display: grid; grid-template-columns: 190px 1fr; grid-template-rows: 12px 12px;
+        row-gap: 3px; align-items: center; margin-bottom: 11px; }
+.name { grid-row: 1 / span 2; font-size: 11.5px; line-height: 1.25; padding-right: 10px; }
+.track { background: var(--secondary, rgba(127,127,127,.13)); border-radius: 5px; height: 12px; overflow: hidden; }
+.bar { height: 100%; border-radius: 5px; position: relative; min-width: 2px; }
+.bar span { position: absolute; right: 5px; top: -1px; font-size: 9.5px; line-height: 13px;
+            color: #fff; text-shadow: 0 0 3px rgba(0,0,0,.5); }
+</style></head><body>
+<h2>v2 vs v1.1.0 · median wall time per command (ms)</h2>
+<p>Same host, same isolated config, ghostty adapter only.</p>
+<div class="legend"><span><i class="dot v2"></i>v2 (Rust)</span><span><i class="dot v1"></i>v1.1.0 (Python)</span></div>
+<div class="row"><div class="name">first switch after fresh install</div><div class="track"><div class="bar v2" style="width:100.0%"><span>363.0</span></div></div><div class="track"><div class="bar v1" style="width:66.2%"><span>240.2</span></div></div></div><div class="row"><div class="name">version / startup floor</div><div class="track"><div class="bar v2" style="width:1.2%"><span>4.5</span></div></div><div class="track"><div class="bar v1" style="width:33.1%"><span>120.3</span></div></div></div><div class="row"><div class="name">list themes</div><div class="track"><div class="bar v2" style="width:1.4%"><span>5.1</span></div></div><div class="track"><div class="bar v1" style="width:30.9%"><span>112.2</span></div></div></div><div class="row"><div class="name">read active theme</div><div class="track"><div class="bar v2" style="width:1.8%"><span>6.7</span></div></div><div class="track"><div class="bar v1" style="width:30.9%"><span>112.2</span></div></div></div><div class="row"><div class="name">switch theme (ghostty only)</div><div class="track"><div class="bar v2" style="width:19.3%"><span>70.0</span></div></div><div class="track"><div class="bar v1" style="width:71.7%"><span>260.4</span></div></div></div><div class="row"><div class="name">switch + shell env (v1 `theme` cmd)</div><div class="track"><div class="bar v2" style="width:19.6%"><span>71.2</span></div></div><div class="track"><div class="bar v1" style="width:95.4%"><span>346.5</span></div></div></div><div class="row"><div class="name">shell init payload</div><div class="track"><div class="bar v2" style="width:1.2%"><span>4.5</span></div></div><div class="track"><div class="bar v1" style="width:33.3%"><span>121.0</span></div></div></div><div class="row"><div class="name">background opacity</div><div class="track"><div class="bar v2" style="width:18.2%"><span>65.9</span></div></div><div class="track"><div class="bar v1" style="width:66.7%"><span>242.1</span></div></div></div><div class="row"><div class="name">live shader toggle</div><div class="track"><div class="bar v2" style="width:15.5%"><span>56.2</span></div></div><div class="track"><div class="bar v1" style="width:69.6%"><span>252.8</span></div></div></div>
+
+<h2 style="margin-top:22px">v2 optimization impact · before (fe5fc82) vs after (ms)</h2>
+<p>Batch durability, SHA-256 validation cache, single-pass status, and host tool/font caches (Issues #1–#4).</p>
+<div class="legend"><span><i class="dot v2"></i>v2 after (#1–#4)</span><span><i class="dot base"></i>v2 before (fe5fc82)</span></div>
+<div class="row"><div class="name">first switch after fresh install</div><div class="track"><div class="bar v2" style="width:80.2%"><span>363.0</span></div></div><div class="track"><div class="bar base" style="width:100.0%"><span>452.4</span></div></div></div><div class="row"><div class="name">read active theme</div><div class="track"><div class="bar v2" style="width:1.5%"><span>6.7</span></div></div><div class="track"><div class="bar base" style="width:6.3%"><span>28.7</span></div></div></div><div class="row"><div class="name">switch theme (ghostty only)</div><div class="track"><div class="bar v2" style="width:15.5%"><span>70.0</span></div></div><div class="track"><div class="bar base" style="width:58.2%"><span>263.3</span></div></div></div><div class="row"><div class="name">switch + shell env (v1 `theme` cmd)</div><div class="track"><div class="bar v2" style="width:15.7%"><span>71.2</span></div></div><div class="track"><div class="bar base" style="width:58.8%"><span>266.0</span></div></div></div><div class="row"><div class="name">background opacity</div><div class="track"><div class="bar v2" style="width:14.6%"><span>65.9</span></div></div><div class="track"><div class="bar base" style="width:64.4%"><span>291.3</span></div></div></div><div class="row"><div class="name">live shader toggle</div><div class="track"><div class="bar v2" style="width:12.4%"><span>56.2</span></div></div><div class="track"><div class="bar base" style="width:53.9%"><span>244.0</span></div></div></div>
+</body></html>

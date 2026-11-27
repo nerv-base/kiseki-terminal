@@ -54,6 +54,9 @@ pub struct CompileOptions {
     /// (~72 DPI, 1.25x rounded to 0.5pt) when the user did not explicitly
     /// override font size.
     pub macos_font_scale: bool,
+    /// Skip redundant `naga` validation inside `compile` when the caller
+    /// already validated the exact `(theme, profile)` shader templates.
+    pub skip_shader_validation: bool,
 }
 
 impl CompileOptions {
@@ -68,7 +71,13 @@ impl CompileOptions {
             aliases: false,
             font_families: Vec::new(),
             macos_font_scale: false,
+            skip_shader_validation: false,
         }
+    }
+
+    pub fn with_skip_shader_validation(mut self, skip: bool) -> Self {
+        self.skip_shader_validation = skip;
+        self
     }
 
     pub fn with_macos_font_scale(mut self, enabled: bool) -> Self {
@@ -211,13 +220,15 @@ pub fn compile(input: &CompileInput<'_>) -> Result<CompileOutput> {
                     theme.glsl_path().unwrap_or_default()
                 ))
             })?;
-            let report = kiseki_shader::validate_glsl(theme, template);
-            if report.has_fatal() {
-                return Err(KisekiError::shader(format!(
-                    "GLSL template rejected at {}: {}",
-                    theme.profile,
-                    summarize(&report.diagnostics)
-                )));
+            if !options.skip_shader_validation {
+                let report = kiseki_shader::validate_glsl(theme, template);
+                if report.has_fatal() {
+                    return Err(KisekiError::shader(format!(
+                        "GLSL template rejected at {}: {}",
+                        theme.profile,
+                        summarize(&report.diagnostics)
+                    )));
+                }
             }
             let program = kiseki_shader::compile_glsl_for(theme, template);
             artifacts.insert(artifact::names::SHADER_GLSL, program.source)?;
@@ -234,13 +245,15 @@ pub fn compile(input: &CompileInput<'_>) -> Result<CompileOutput> {
                     theme.hlsl_path().unwrap_or_default()
                 ))
             })?;
-            let report = kiseki_shader::validate_hlsl(theme, template);
-            if report.has_fatal() {
-                return Err(KisekiError::shader(format!(
-                    "HLSL template rejected at {}: {}",
-                    theme.profile,
-                    summarize(&report.diagnostics)
-                )));
+            if !options.skip_shader_validation {
+                let report = kiseki_shader::validate_hlsl(theme, template);
+                if report.has_fatal() {
+                    return Err(KisekiError::shader(format!(
+                        "HLSL template rejected at {}: {}",
+                        theme.profile,
+                        summarize(&report.diagnostics)
+                    )));
+                }
             }
             let program = kiseki_shader::compile_hlsl_for(theme, template);
             artifacts.insert(artifact::names::SHADER_HLSL, program.source)?;
@@ -482,6 +495,16 @@ mod tests {
         let second = compile_at(RenderingProfile::Ultra);
         assert_eq!(first, second);
         assert_eq!(first.artifacts.paths(), second.artifacts.paths());
+
+        let (theme, opts) = input(RenderingProfile::Ultra);
+        let skipped = compile(
+            &CompileInput::new(&theme, opts.with_skip_shader_validation(true))
+                .with_glsl(Some(GLSL))
+                .with_hlsl(Some(HLSL))
+                .with_logo(Some(LOGO)),
+        )
+        .unwrap();
+        assert_eq!(first.artifacts, skipped.artifacts);
     }
 
     #[test]

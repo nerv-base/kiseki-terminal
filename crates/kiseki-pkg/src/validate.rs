@@ -14,11 +14,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use kiseki_platform::Platform;
+use kiseki_platform::{Platform, SyncMode};
 use kiseki_schema::{
     lint_contrast, security, validate_pack, ContrastReport, PackAssets, ResolvedTheme, ThemePack, ThemeTokens,
 };
 use kiseki_types::{Diagnostic, DiagnosticReport, KisekiError, RenderingProfile, Result};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 /// Maximum number of files in a theme pack.
 pub const MAX_FILES: usize = 64;
@@ -34,6 +36,70 @@ pub const MAX_JSON_BYTES: usize = 1024 * 1024;
 pub const MAX_IMAGE_HEADER_BYTES: usize = 64 * 1024;
 /// Largest width or height a pack image may declare.
 pub const MAX_IMAGE_DIMENSION: u32 = 8192;
+/// Bump whenever validation rules or cache serialization change.
+const VALIDATION_CACHE_VERSION: u32 = 1;
+
+/// Which rendering profiles `naga` should validate during a pack check.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValidationScope {
+    /// Full install/audit gate: validate `eco`, `balanced`, and `ultra`.
+    AllProfiles,
+    /// Runtime load gate: validate only the active profile (skips `naga` for `static`/`accessibility`).
+    Profile(RenderingProfile),
+}
+
+/// Pack text assets already read during validation so callers do not re-read disk.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct LoadedPackAssets {
+    pub glsl: Option<String>,
+    pub hlsl: Option<String>,
+    pub logo: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CachedValidation {
+    version: u32,
+    all_profiles: bool,
+    validated_profiles: Vec<RenderingProfile>,
+    file_count: usize,
+    total_bytes: u64,
+    pack_diagnostics: DiagnosticReport,
+    shader_reports: Vec<kiseki_shader::ShaderReport>,
+    contrast: Option<ContrastReport>,
+}
+
+impl CachedValidation {
+    fn covers(&self, scope: ValidationScope) -> bool {
+        if self.version != VALIDATION_CACHE_VERSION {
+            return false;
+        }
+        if self.all_profiles {
+            return true;
+        }
+        match scope {
+            ValidationScope::AllProfiles => false,
+            ValidationScope::Profile(profile) => self.validated_profiles.contains(&profile),
+        }
+    }
+
+    fn into_validation(self, pack: ThemePack) -> ThemeValidation {
+        let mut diagnostics = self.pack_diagnostics;
+        for report in &self.shader_reports {
+            diagnostics.extend(report.diagnostics.iter().cloned());
+        }
+        if let Some(contrast) = self.contrast.as_ref() {
+            diagnostics.extend(contrast.to_diagnostics().items);
+        }
+        ThemeValidation {
+            pack: Some(pack),
+            diagnostics,
+            shader_reports: self.shader_reports,
+            contrast: self.contrast,
+            file_count: self.file_count,
+            total_bytes: self.total_bytes,
+        }
+    }
+}
 
 /// One file discovered under a pack root.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -165,8 +231,34 @@ pub fn allowed_file(relative: &str) -> std::result::Result<(), String> {
     ))
 }
 
-/// Validates a complete theme directory.
+/// Validates a complete theme directory (uncached, all dynamic profiles).
 pub fn validate_theme_dir(root: &Path) -> Result<ThemeValidation> {
+    Ok(validate_theme_dir_with_assets(
+        root,
+        None,
+        ValidationScope::AllProfiles,
+        false,
+    )?
+    .0)
+}
+
+/// Validates a theme directory with optional content-hashed disk caching and
+/// profile scoping.
+pub fn validate_theme_dir_cached(
+    root: &Path,
+    cache_dir: Option<&Path>,
+    scope: ValidationScope,
+    write_cache: bool,
+) -> Result<ThemeValidation> {
+    Ok(validate_theme_dir_with_assets(root, cache_dir, scope, write_cache)?.0)
+}
+
+pub(crate) fn validate_theme_dir_with_assets(
+    root: &Path,
+    cache_dir: Option<&Path>,
+    scope: ValidationScope,
+    write_cache: bool,
+) -> Result<(ThemeValidation, LoadedPackAssets)> {
     let mut validation = ThemeValidation::default();
 
     let files = match collect_files(root) {
@@ -176,7 +268,7 @@ pub fn validate_theme_dir(root: &Path) -> Result<ThemeValidation> {
                 "validation.pack.missing",
                 error.to_string(),
             ));
-            return Ok(validation);
+            return Ok((validation, LoadedPackAssets::default()));
         }
     };
 
@@ -258,50 +350,168 @@ pub fn validate_theme_dir(root: &Path) -> Result<ThemeValidation> {
 
     // --- 2. Early abort: never open a pack that already failed structurally --
     if validation.diagnostics.has_fatal() {
-        return Ok(validation);
+        return Ok((validation, LoadedPackAssets::default()));
     }
     if !regular.contains("manifest.json") || !regular.contains("tokens.json") {
         validation.diagnostics.push(Diagnostic::error(
             "validation.pack.missing",
             "manifest.json and tokens.json must be regular files inside the pack",
         ));
-        return Ok(validation);
+        return Ok((validation, LoadedPackAssets::default()));
     }
 
-    // --- 3. Manifest + tokens (bounded reads) -------------------------------
-    let manifest_raw = match read_text_bounded(root, "manifest.json", MAX_JSON_BYTES) {
-        Ok(Some(raw)) => raw,
-        Ok(None) => {
-            validation.diagnostics.push(Diagnostic::error(
-                "validation.manifest.missing",
-                "manifest.json is missing",
-            ));
-            return Ok(validation);
+    // --- 3. Bounded reads + single-pass content SHA-256 --------------------
+    let mut hasher = Sha256::new();
+    hasher.update(b"kiseki-validation\0");
+    hasher.update(VALIDATION_CACHE_VERSION.to_le_bytes());
+
+    let mut manifest_raw: Option<String> = None;
+    let mut tokens_raw: Option<String> = None;
+    let mut logo_text: Option<String> = None;
+    let mut shader_files: BTreeMap<String, std::result::Result<String, String>> = BTreeMap::new();
+    let mut image_heads: Vec<(String, std::result::Result<Vec<u8>, String>)> = Vec::new();
+
+    for relative in &regular {
+        let size = sizes.get(relative).copied().unwrap_or(0);
+        hasher.update(relative.as_bytes());
+        hasher.update([0u8]);
+        hasher.update(size.to_le_bytes());
+
+        if relative == "manifest.json" {
+            match read_bounded(&root.join(relative), MAX_JSON_BYTES) {
+                Ok(Some(bytes)) => {
+                    hasher.update(&bytes);
+                    match String::from_utf8(bytes) {
+                        Ok(text) => manifest_raw = Some(text),
+                        Err(_) => {
+                            validation.diagnostics.push(Diagnostic::error(
+                                "validation.manifest.read",
+                                "manifest.json is not valid UTF-8",
+                            ));
+                            return Ok((validation, LoadedPackAssets::default()));
+                        }
+                    }
+                }
+                Ok(None) => {
+                    validation.diagnostics.push(Diagnostic::error(
+                        "validation.manifest.missing",
+                        "manifest.json is missing",
+                    ));
+                    return Ok((validation, LoadedPackAssets::default()));
+                }
+                Err(error) => {
+                    validation.diagnostics.push(Diagnostic::error(
+                        "validation.manifest.read",
+                        error.to_string(),
+                    ));
+                    return Ok((validation, LoadedPackAssets::default()));
+                }
+            }
+        } else if relative == "tokens.json" {
+            match read_bounded(&root.join(relative), MAX_JSON_BYTES) {
+                Ok(Some(bytes)) => {
+                    hasher.update(&bytes);
+                    match String::from_utf8(bytes) {
+                        Ok(text) => tokens_raw = Some(text),
+                        Err(_) => {
+                            validation.diagnostics.push(Diagnostic::error(
+                                "validation.tokens.read",
+                                "tokens.json is not valid UTF-8",
+                            ));
+                            return Ok((validation, LoadedPackAssets::default()));
+                        }
+                    }
+                }
+                Ok(None) => {
+                    validation.diagnostics.push(Diagnostic::error(
+                        "validation.tokens.missing",
+                        "tokens.json is missing",
+                    ));
+                    return Ok((validation, LoadedPackAssets::default()));
+                }
+                Err(error) => {
+                    validation.diagnostics.push(Diagnostic::error(
+                        "validation.tokens.read",
+                        error.to_string(),
+                    ));
+                    return Ok((validation, LoadedPackAssets::default()));
+                }
+            }
+        } else if relative == "assets/logo.txt" {
+            if size > MAX_LOGO_BYTES as u64 {
+                validation.diagnostics.push(Diagnostic::error(
+                    "security.logo-size",
+                    format!("assets/logo.txt exceeds the {MAX_LOGO_BYTES} byte limit"),
+                ));
+            } else {
+                match read_bounded(&root.join(relative), MAX_LOGO_BYTES) {
+                    Ok(Some(bytes)) => {
+                        hasher.update(&bytes);
+                        match String::from_utf8(bytes) {
+                            Ok(text) => logo_text = Some(text),
+                            Err(error) => validation.diagnostics.push(Diagnostic::error(
+                                "security.logo-text",
+                                format!("assets/logo.txt cannot be read as UTF-8 text: {error}"),
+                            )),
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(error) => validation.diagnostics.push(Diagnostic::error(
+                        "security.logo-text",
+                        format!("assets/logo.txt cannot be read as UTF-8 text: {error}"),
+                    )),
+                }
+            }
+        } else if relative.starts_with("shaders/") {
+            match read_bounded(&root.join(relative), MAX_SHADER_BYTES) {
+                Ok(Some(bytes)) => {
+                    hasher.update(&bytes);
+                    match String::from_utf8(bytes) {
+                        Ok(text) => {
+                            shader_files.insert(relative.clone(), Ok(text));
+                        }
+                        Err(_) => {
+                            shader_files.insert(
+                                relative.clone(),
+                                Err(format!("{relative} is not valid UTF-8")),
+                            );
+                        }
+                    }
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    shader_files.insert(relative.clone(), Err(error.to_string()));
+                }
+            }
+        } else if (relative.starts_with("assets/") || relative.starts_with("previews/"))
+            && is_allowed_image_path(relative)
+        {
+            match read_head(&root.join(relative), MAX_IMAGE_HEADER_BYTES) {
+                Ok(Some(head)) => {
+                    hasher.update(&head);
+                    image_heads.push((relative.clone(), Ok(head)));
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    image_heads.push((relative.clone(), Err(error.to_string())));
+                }
+            }
         }
-        Err(error) => {
-            validation.diagnostics.push(Diagnostic::error(
-                "validation.manifest.read",
-                error.to_string(),
-            ));
-            return Ok(validation);
-        }
+    }
+
+    let Some(manifest_raw) = manifest_raw else {
+        validation.diagnostics.push(Diagnostic::error(
+            "validation.manifest.missing",
+            "manifest.json is missing",
+        ));
+        return Ok((validation, LoadedPackAssets::default()));
     };
-    let tokens_raw = match read_text_bounded(root, "tokens.json", MAX_JSON_BYTES) {
-        Ok(Some(raw)) => raw,
-        Ok(None) => {
-            validation.diagnostics.push(Diagnostic::error(
-                "validation.tokens.missing",
-                "tokens.json is missing",
-            ));
-            return Ok(validation);
-        }
-        Err(error) => {
-            validation.diagnostics.push(Diagnostic::error(
-                "validation.tokens.read",
-                error.to_string(),
-            ));
-            return Ok(validation);
-        }
+    let Some(tokens_raw) = tokens_raw else {
+        validation.diagnostics.push(Diagnostic::error(
+            "validation.tokens.missing",
+            "tokens.json is missing",
+        ));
+        return Ok((validation, LoadedPackAssets::default()));
     };
 
     let manifest = match serde_json::from_str(&manifest_raw) {
@@ -311,7 +521,7 @@ pub fn validate_theme_dir(root: &Path) -> Result<ThemeValidation> {
                 "validation.manifest.json",
                 format!("manifest.json does not parse: {error}"),
             ));
-            return Ok(validation);
+            return Ok((validation, LoadedPackAssets::default()));
         }
     };
     let tokens: ThemeTokens = match serde_json::from_str(&tokens_raw) {
@@ -321,30 +531,50 @@ pub fn validate_theme_dir(root: &Path) -> Result<ThemeValidation> {
                 "validation.tokens.json",
                 format!("tokens.json does not parse: {error}"),
             ));
-            return Ok(validation);
+            return Ok((validation, LoadedPackAssets::default()));
         }
     };
     let pack = ThemePack { manifest, tokens };
 
-    // --- 4. Logo: invalid UTF-8 is a hard failure, never silently ignored ----
-    let mut logo_text = None;
-    if regular.contains("assets/logo.txt") {
-        if sizes.get("assets/logo.txt").is_some_and(|size| *size > MAX_LOGO_BYTES as u64) {
-            validation.diagnostics.push(Diagnostic::error(
-                "security.logo-size",
-                format!("assets/logo.txt exceeds the {MAX_LOGO_BYTES} byte limit"),
-            ));
-        } else {
-            match read_text_bounded(root, "assets/logo.txt", MAX_LOGO_BYTES) {
-                Ok(text) => logo_text = text,
-                Err(error) => validation.diagnostics.push(Diagnostic::error(
-                    "security.logo-text",
-                    format!("assets/logo.txt cannot be read as UTF-8 text: {error}"),
-                )),
+    let glsl_rel = pack
+        .tokens
+        .atmosphere
+        .as_ref()
+        .and_then(|atmosphere| atmosphere.shader.as_ref())
+        .and_then(|shader| shader.glsl.as_deref());
+    let hlsl_rel = pack
+        .tokens
+        .atmosphere
+        .as_ref()
+        .and_then(|atmosphere| atmosphere.shader.as_ref())
+        .and_then(|shader| shader.hlsl.as_deref());
+
+    let glsl = take_shader_asset(&shader_files, &regular, glsl_rel, &mut validation);
+    let hlsl = take_shader_asset(&shader_files, &regular, hlsl_rel, &mut validation);
+    let assets = LoadedPackAssets {
+        glsl: glsl.clone(),
+        hlsl: hlsl.clone(),
+        logo: logo_text.clone(),
+    };
+
+    let cache_path = cache_dir.map(|dir| {
+        let digest = hasher.finalize();
+        let mut hex = String::with_capacity(digest.len() * 2);
+        for byte in digest {
+            hex.push_str(&format!("{byte:02x}"));
+        }
+        dir.join("validation").join(format!("{hex}.json"))
+    });
+
+    if !validation.diagnostics.has_fatal() {
+        if let Some(path) = cache_path.as_deref() {
+            if let Some(cached) = read_validation_cache(path).filter(|c| c.covers(scope)) {
+                return Ok((cached.into_validation(pack), assets));
             }
         }
     }
 
+    // --- 4. Pack schema & logo audit ---------------------------------------
     let outcome = validate_pack(
         &pack,
         &PackAssets {
@@ -355,67 +585,55 @@ pub fn validate_theme_dir(root: &Path) -> Result<ThemeValidation> {
     validation.diagnostics.extend(outcome.diagnostics.items);
 
     // --- 5. Images: bounded header parsing, no full decode ------------------
-    check_image_headers(root, &regular, &mut validation);
+    check_image_headers_from_heads(&image_heads, &mut validation);
 
-    // --- 6. Shaders: only listed, validated relative paths are opened --------
-    let glsl = read_referenced(
-        root,
-        &regular,
-        pack.tokens
-            .atmosphere
-            .as_ref()
-            .and_then(|atmosphere| atmosphere.shader.as_ref())
-            .and_then(|shader| shader.glsl.as_deref()),
-        MAX_SHADER_BYTES,
-        &mut validation,
-    );
-    let hlsl = read_referenced(
-        root,
-        &regular,
-        pack.tokens
-            .atmosphere
-            .as_ref()
-            .and_then(|atmosphere| atmosphere.shader.as_ref())
-            .and_then(|shader| shader.hlsl.as_deref()),
-        MAX_SHADER_BYTES,
-        &mut validation,
-    );
-    for profile in [
-        RenderingProfile::Eco,
-        RenderingProfile::Balanced,
-        RenderingProfile::Ultra,
-    ] {
+    let pack_diagnostics = validation.diagnostics.clone();
+
+    // --- 6. Shaders: validate all profiles or only the active profile -------
+    let profiles: &[RenderingProfile] = match scope {
+        ValidationScope::AllProfiles => &[
+            RenderingProfile::Eco,
+            RenderingProfile::Balanced,
+            RenderingProfile::Ultra,
+        ],
+        ValidationScope::Profile(ref profile) => std::slice::from_ref(profile),
+    };
+    let mut validated_profiles = Vec::with_capacity(profiles.len());
+    for &profile in profiles {
         let theme = ResolvedTheme::from_pack(&pack, profile);
-        if let Some(path) = theme.glsl_path() {
-            match glsl.as_deref() {
-                Some(template) => {
-                    let report = kiseki_shader::validate_glsl(&theme, template);
-                    validation
-                        .diagnostics
-                        .extend(report.diagnostics.iter().cloned());
-                    validation.shader_reports.push(report);
+        if scope == ValidationScope::AllProfiles || theme.shader_enabled {
+            if let Some(path) = theme.glsl_path() {
+                match glsl.as_deref() {
+                    Some(template) => {
+                        let report = kiseki_shader::validate_glsl(&theme, template);
+                        validation
+                            .diagnostics
+                            .extend(report.diagnostics.iter().cloned());
+                        validation.shader_reports.push(report);
+                    }
+                    None => validation.diagnostics.push(Diagnostic::error(
+                        "validation.shader.missing-glsl",
+                        format!("{path} is declared but missing"),
+                    )),
                 }
-                None => validation.diagnostics.push(Diagnostic::error(
-                    "validation.shader.missing-glsl",
-                    format!("{path} is declared but missing"),
-                )),
+            }
+            if let Some(path) = theme.hlsl_path() {
+                match hlsl.as_deref() {
+                    Some(template) => {
+                        let report = kiseki_shader::validate_hlsl(&theme, template);
+                        validation
+                            .diagnostics
+                            .extend(report.diagnostics.iter().cloned());
+                        validation.shader_reports.push(report);
+                    }
+                    None => validation.diagnostics.push(Diagnostic::error(
+                        "validation.shader.missing-hlsl",
+                        format!("{path} is declared but missing"),
+                    )),
+                }
             }
         }
-        if let Some(path) = theme.hlsl_path() {
-            match hlsl.as_deref() {
-                Some(template) => {
-                    let report = kiseki_shader::validate_hlsl(&theme, template);
-                    validation
-                        .diagnostics
-                        .extend(report.diagnostics.iter().cloned());
-                    validation.shader_reports.push(report);
-                }
-                None => validation.diagnostics.push(Diagnostic::error(
-                    "validation.shader.missing-hlsl",
-                    format!("{path} is declared but missing"),
-                )),
-            }
-        }
+        validated_profiles.push(profile);
     }
 
     // --- 7. Contrast -------------------------------------------------------
@@ -424,10 +642,119 @@ pub fn validate_theme_dir(root: &Path) -> Result<ThemeValidation> {
     validation
         .diagnostics
         .extend(contrast.to_diagnostics().items);
-    validation.contrast = Some(contrast);
+    validation.contrast = Some(contrast.clone());
+
+    if write_cache && validation.is_valid() {
+        if let Some(path) = cache_path.as_deref() {
+            write_validation_cache(
+                path,
+                scope,
+                validated_profiles,
+                validation.file_count,
+                validation.total_bytes,
+                pack_diagnostics,
+                &validation.shader_reports,
+                Some(contrast),
+            );
+        }
+    }
+
     validation.pack = Some(pack);
 
-    Ok(validation)
+    Ok((validation, assets))
+}
+
+fn read_validation_cache(path: &Path) -> Option<CachedValidation> {
+    let raw = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str(&raw).ok()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_validation_cache(
+    path: &Path,
+    scope: ValidationScope,
+    validated_profiles: Vec<RenderingProfile>,
+    file_count: usize,
+    total_bytes: u64,
+    pack_diagnostics: DiagnosticReport,
+    shader_reports: &[kiseki_shader::ShaderReport],
+    contrast: Option<ContrastReport>,
+) {
+    let mut entry = read_validation_cache(path)
+        .filter(|existing| existing.version == VALIDATION_CACHE_VERSION)
+        .unwrap_or(CachedValidation {
+            version: VALIDATION_CACHE_VERSION,
+            all_profiles: false,
+            validated_profiles: Vec::new(),
+            file_count,
+            total_bytes,
+            pack_diagnostics,
+            shader_reports: Vec::new(),
+            contrast,
+        });
+    if scope == ValidationScope::AllProfiles {
+        entry.all_profiles = true;
+    }
+    for profile in validated_profiles {
+        if !entry.validated_profiles.contains(&profile) {
+            entry.validated_profiles.push(profile);
+        }
+    }
+    if [
+        RenderingProfile::Eco,
+        RenderingProfile::Balanced,
+        RenderingProfile::Ultra,
+    ]
+    .iter()
+    .all(|profile| entry.validated_profiles.contains(profile))
+    {
+        entry.all_profiles = true;
+    }
+    for report in shader_reports {
+        if !entry
+            .shader_reports
+            .iter()
+            .any(|existing| existing.stage == report.stage && existing.profile == report.profile)
+        {
+            entry.shader_reports.push(report.clone());
+        }
+    }
+    if let Ok(encoded) = serde_json::to_vec(&entry) {
+        let _ = kiseki_platform::fs::atomic_write_with_sync(
+            path,
+            &encoded,
+            SyncMode::AtomicNoSync,
+        );
+    }
+}
+
+fn is_allowed_image_path(relative: &str) -> bool {
+    let lower = relative.to_ascii_lowercase();
+    security::ALLOWED_ASSET_EXTENSIONS
+        .iter()
+        .any(|extension| lower.ends_with(&format!(".{extension}")))
+}
+
+fn take_shader_asset(
+    shader_files: &BTreeMap<String, std::result::Result<String, String>>,
+    regular: &BTreeSet<String>,
+    relative: Option<&str>,
+    validation: &mut ThemeValidation,
+) -> Option<String> {
+    let relative = relative?;
+    if security::validate_relative_path(relative).is_err() || !regular.contains(relative) {
+        return None;
+    }
+    match shader_files.get(relative)? {
+        Ok(text) => Some(text.clone()),
+        Err(error) => {
+            validation.diagnostics.push(Diagnostic::error(
+                "validation.asset.read",
+                format!("{relative} cannot be read: {error}"),
+            ));
+            None
+        }
+    }
 }
 
 /// Ensures `path` is a regular file (never a symlink, directory, FIFO, socket
@@ -510,48 +837,15 @@ pub(crate) fn read_text_bounded(root: &Path, relative: &str, limit: usize) -> Re
         .map_err(|_| KisekiError::security(format!("{relative} is not valid UTF-8")))
 }
 
-/// Reads a file referenced by `tokens.json`, but only when the path is safe and
-/// present on the validated regular-file listing.
-fn read_referenced(
-    root: &Path,
-    regular: &BTreeSet<String>,
-    relative: Option<&str>,
-    limit: usize,
-    validation: &mut ThemeValidation,
-) -> Option<String> {
-    let relative = relative?;
-    if security::validate_relative_path(relative).is_err() || !regular.contains(relative) {
-        // `validate_pack` reports `schema.asset.missing` for this case.
-        return None;
-    }
-    match read_text_bounded(root, relative, limit) {
-        Ok(text) => text,
-        Err(error) => {
-            validation.diagnostics.push(Diagnostic::error(
-                "validation.asset.read",
-                format!("{relative} cannot be read: {error}"),
-            ));
-            None
-        }
-    }
-}
-
 /// Parses the header of every shipped image and rejects spoofed or oversized
 /// dimensions. Nothing is decoded; only the first few KiB are read.
-fn check_image_headers(root: &Path, regular: &BTreeSet<String>, validation: &mut ThemeValidation) {
-    for relative in regular {
-        if !(relative.starts_with("assets/") || relative.starts_with("previews/")) {
-            continue;
-        }
-        if !security::ALLOWED_ASSET_EXTENSIONS
-            .iter()
-            .any(|extension| relative.to_ascii_lowercase().ends_with(&format!(".{extension}")))
-        {
-            continue;
-        }
-        let head = match read_head(&root.join(relative), MAX_IMAGE_HEADER_BYTES) {
-            Ok(Some(head)) => head,
-            Ok(None) => continue,
+fn check_image_headers_from_heads(
+    image_heads: &[(String, std::result::Result<Vec<u8>, String>)],
+    validation: &mut ThemeValidation,
+) {
+    for (relative, head_result) in image_heads {
+        let head = match head_result {
+            Ok(head) => head,
             Err(error) => {
                 validation.diagnostics.push(Diagnostic::error(
                     "validation.asset.read",
@@ -560,7 +854,7 @@ fn check_image_headers(root: &Path, regular: &BTreeSet<String>, validation: &mut
                 continue;
             }
         };
-        match image_dimensions(&head) {
+        match image_dimensions(head) {
             Err(reason) => validation.diagnostics.push(Diagnostic::error(
                 "security.image-header",
                 format!("{relative}: {reason}"),
@@ -1230,6 +1524,109 @@ mod tests {
             assert!(error.to_string().contains("community theme store"), "{error}");
             assert!(community.exists());
         }
+    }
+
+    #[test]
+    fn validation_cache_hits_and_invalidates_on_single_byte_change() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = dir.path().join("cache");
+        let pack = copy_nerv_eva();
+
+        let first = validate_theme_dir_cached(
+            pack.path(),
+            Some(&cache),
+            ValidationScope::Profile(RenderingProfile::Balanced),
+            true,
+        )
+        .unwrap();
+        assert!(first.is_valid());
+        assert_eq!(first.shader_reports.len(), 2);
+
+        let validation_dir = cache.join("validation");
+        let cache_files: Vec<_> = std::fs::read_dir(&validation_dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .collect();
+        assert_eq!(cache_files.len(), 1);
+        let cache_file = cache_files[0].path();
+        let mtime_before = cache_file.metadata().unwrap().modified().unwrap();
+
+        // Second lookup with the same content hits the cache without rewriting it.
+        let hit = validate_theme_dir_cached(
+            pack.path(),
+            Some(&cache),
+            ValidationScope::Profile(RenderingProfile::Balanced),
+            true,
+        )
+        .unwrap();
+        assert!(hit.is_valid());
+        assert_eq!(cache_file.metadata().unwrap().modified().unwrap(), mtime_before);
+
+        // Requesting AllProfiles misses the single-profile cache, runs all 6 reports,
+        // and upgrades the cache entry.
+        let upgraded = validate_theme_dir_cached(
+            pack.path(),
+            Some(&cache),
+            ValidationScope::AllProfiles,
+            true,
+        )
+        .unwrap();
+        assert!(upgraded.is_valid());
+        assert_eq!(upgraded.shader_reports.len(), 6);
+
+        // Mutating a single byte of tokens.json must change the key and reject invalid JSON.
+        let tokens_path = pack.path().join("tokens.json");
+        let mut raw = std::fs::read(&tokens_path).unwrap();
+        raw[0] = b'[';
+        std::fs::write(&tokens_path, &raw).unwrap();
+        let broken = validate_theme_dir_cached(
+            pack.path(),
+            Some(&cache),
+            ValidationScope::Profile(RenderingProfile::Balanced),
+            true,
+        )
+        .unwrap();
+        assert!(!broken.is_valid());
+
+        // Mutating shaders/live.glsl must also miss and reject broken GLSL.
+        let original_tokens = std::fs::read(nerv_eva_dir().join("tokens.json")).unwrap();
+        std::fs::write(&tokens_path, &original_tokens).unwrap();
+        std::fs::write(
+            pack.path().join("shaders/live.glsl"),
+            "void mainImage(out vec4 c, in vec2 p) { c = vec4(smoothstep(1.0, 0.0, p.x)); }",
+        )
+        .unwrap();
+        let broken_shader = validate_theme_dir_cached(
+            pack.path(),
+            Some(&cache),
+            ValidationScope::Profile(RenderingProfile::Balanced),
+            true,
+        )
+        .unwrap();
+        assert!(!broken_shader.is_valid());
+        assert!(broken_shader
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "shader.smoothstep.reversed"));
+
+        // Static profile on a fresh cache skips naga while still checking pack structure & contrast.
+        let static_cache = dir.path().join("static-cache");
+        std::fs::write(
+            pack.path().join("shaders/live.glsl"),
+            std::fs::read(nerv_eva_dir().join("shaders/live.glsl")).unwrap(),
+        )
+        .unwrap();
+        let static_val = validate_theme_dir_cached(
+            pack.path(),
+            Some(&static_cache),
+            ValidationScope::Profile(RenderingProfile::Static),
+            true,
+        )
+        .unwrap();
+        assert!(static_val.is_valid());
+        assert!(static_val.shader_reports.is_empty());
+
+        pack.close();
     }
 
     fn png_header(width: u32, height: u32) -> Vec<u8> {

@@ -9,12 +9,13 @@
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use kiseki_types::{KisekiError, OsKind, Result};
 
-use crate::fs::{self as fsutil, list_dir, read_bytes, read_to_string, PathKind, WriteOutcome};
+use crate::fs::{self as fsutil, list_dir, read_bytes, read_to_string, PathKind, SyncMode, WriteOutcome};
 use crate::lock::{Lock, DEFAULT_TIMEOUT};
 use crate::paths::KisekiPaths;
 
@@ -50,6 +51,17 @@ pub trait Platform: Send + Sync {
     fn read_bytes(&self, path: &Path) -> Result<Option<Vec<u8>>>;
     fn inspect(&self, path: &Path) -> PathKind;
     fn write_preserving_symlinks(&self, path: &Path, contents: &[u8]) -> Result<WriteOutcome>;
+    fn write_preserving_symlinks_with_sync(
+        &self,
+        path: &Path,
+        contents: &[u8],
+        _sync: SyncMode,
+    ) -> Result<WriteOutcome> {
+        self.write_preserving_symlinks(path, contents)
+    }
+    fn sync_dir(&self, _dir: &Path) -> Result<()> {
+        Ok(())
+    }
     fn remove_file(&self, path: &Path) -> Result<()>;
     fn create_dir_all(&self, path: &Path) -> Result<()>;
     fn list_dir(&self, path: &Path) -> Result<Vec<PathBuf>>;
@@ -71,17 +83,33 @@ pub trait Platform: Send + Sync {
 
     /// RFC-3339 UTC timestamp with second precision.
     fn now_rfc3339(&self) -> String;
+
+    /// True in tests substituting [`MockPlatform`] (bypasses persistent host caches).
+    fn is_mock(&self) -> bool {
+        false
+    }
+
+    /// True when callers may persist non-authoritative caches under `cache_dir()`.
+    ///
+    /// Returns `false` in `--dry-run` mode so read-only previews never write to disk.
+    fn allow_cache_writes(&self) -> bool {
+        true
+    }
 }
 
 /// The real host.
 #[derive(Debug, Clone)]
 pub struct SystemPlatform {
     paths: KisekiPaths,
+    dry_run: bool,
 }
 
 impl SystemPlatform {
     pub fn new(paths: KisekiPaths) -> Self {
-        Self { paths }
+        Self {
+            paths,
+            dry_run: false,
+        }
     }
 
     /// Detects the host layout from the real environment.
@@ -89,6 +117,12 @@ impl SystemPlatform {
         let os = OsKind::current();
         let paths = KisekiPaths::from_env(os, &|key| std::env::var(key).ok());
         Self::new(paths)
+    }
+
+    /// Disables persistent cache writes when running under `--dry-run`.
+    pub fn with_dry_run(mut self, dry_run: bool) -> Self {
+        self.dry_run = dry_run;
+        self
     }
 }
 
@@ -119,6 +153,19 @@ impl Platform for SystemPlatform {
 
     fn write_preserving_symlinks(&self, path: &Path, contents: &[u8]) -> Result<WriteOutcome> {
         fsutil::write_preserving_symlinks(path, contents)
+    }
+
+    fn write_preserving_symlinks_with_sync(
+        &self,
+        path: &Path,
+        contents: &[u8],
+        sync: SyncMode,
+    ) -> Result<WriteOutcome> {
+        fsutil::write_preserving_symlinks_with_sync(path, contents, sync)
+    }
+
+    fn sync_dir(&self, dir: &Path) -> Result<()> {
+        fsutil::sync_dir(dir)
     }
 
     fn remove_file(&self, path: &Path) -> Result<()> {
@@ -234,6 +281,10 @@ impl Platform for SystemPlatform {
     fn now_rfc3339(&self) -> String {
         format_rfc3339(SystemTime::now())
     }
+
+    fn allow_cache_writes(&self) -> bool {
+        !self.dry_run
+    }
 }
 
 fn is_executable(path: &Path) -> bool {
@@ -259,6 +310,15 @@ fn is_executable(path: &Path) -> bool {
 /// Using a real filesystem (rather than an in-memory fake) means symlink,
 /// permission and atomic-rename behaviour under test is exactly the behaviour
 /// users get.
+/// Sync mode counts observed by [`MockPlatform`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SyncStats {
+    pub full_writes: usize,
+    pub file_only_writes: usize,
+    pub no_sync_writes: usize,
+    pub dir_syncs: usize,
+}
+
 #[derive(Debug)]
 pub struct MockPlatform {
     paths: KisekiPaths,
@@ -268,6 +328,10 @@ pub struct MockPlatform {
     now: Mutex<String>,
     alive_pids: Mutex<Vec<u32>>,
     os: Mutex<Option<OsKind>>,
+    full_writes: AtomicUsize,
+    file_only_writes: AtomicUsize,
+    no_sync_writes: AtomicUsize,
+    dir_syncs: AtomicUsize,
 }
 
 /// One command invocation observed by [`MockPlatform`].
@@ -296,6 +360,10 @@ impl MockPlatform {
             now: Mutex::new("2026-11-26T09:15:00Z".to_string()),
             alive_pids: Mutex::new(Vec::new()),
             os: Mutex::new(None),
+            full_writes: AtomicUsize::new(0),
+            file_only_writes: AtomicUsize::new(0),
+            no_sync_writes: AtomicUsize::new(0),
+            dir_syncs: AtomicUsize::new(0),
         }
     }
 
@@ -308,6 +376,10 @@ impl MockPlatform {
             now: Mutex::new("2026-11-26T09:15:00Z".to_string()),
             alive_pids: Mutex::new(Vec::new()),
             os: Mutex::new(None),
+            full_writes: AtomicUsize::new(0),
+            file_only_writes: AtomicUsize::new(0),
+            no_sync_writes: AtomicUsize::new(0),
+            dir_syncs: AtomicUsize::new(0),
         }
     }
 
@@ -356,6 +428,22 @@ impl MockPlatform {
     pub fn clear_commands(&self) {
         self.commands.lock().unwrap().clear();
     }
+
+    pub fn sync_stats(&self) -> SyncStats {
+        SyncStats {
+            full_writes: self.full_writes.load(Ordering::Relaxed),
+            file_only_writes: self.file_only_writes.load(Ordering::Relaxed),
+            no_sync_writes: self.no_sync_writes.load(Ordering::Relaxed),
+            dir_syncs: self.dir_syncs.load(Ordering::Relaxed),
+        }
+    }
+
+    pub fn reset_sync_stats(&self) {
+        self.full_writes.store(0, Ordering::Relaxed);
+        self.file_only_writes.store(0, Ordering::Relaxed);
+        self.no_sync_writes.store(0, Ordering::Relaxed);
+        self.dir_syncs.store(0, Ordering::Relaxed);
+    }
 }
 
 impl Platform for MockPlatform {
@@ -385,6 +473,34 @@ impl Platform for MockPlatform {
 
     fn write_preserving_symlinks(&self, path: &Path, contents: &[u8]) -> Result<WriteOutcome> {
         fsutil::write_preserving_symlinks(path, contents)
+    }
+
+    fn write_preserving_symlinks_with_sync(
+        &self,
+        path: &Path,
+        contents: &[u8],
+        sync: SyncMode,
+    ) -> Result<WriteOutcome> {
+        let outcome = fsutil::write_preserving_symlinks_with_sync(path, contents, sync)?;
+        if outcome.is_written() {
+            match sync {
+                SyncMode::Full => {
+                    self.full_writes.fetch_add(1, Ordering::Relaxed);
+                }
+                SyncMode::FileOnly => {
+                    self.file_only_writes.fetch_add(1, Ordering::Relaxed);
+                }
+                SyncMode::AtomicNoSync => {
+                    self.no_sync_writes.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+        }
+        Ok(outcome)
+    }
+
+    fn sync_dir(&self, dir: &Path) -> Result<()> {
+        self.dir_syncs.fetch_add(1, Ordering::Relaxed);
+        fsutil::sync_dir(dir)
     }
 
     fn remove_file(&self, path: &Path) -> Result<()> {
@@ -428,6 +544,10 @@ impl Platform for MockPlatform {
 
     fn now_rfc3339(&self) -> String {
         self.now.lock().unwrap().clone()
+    }
+
+    fn is_mock(&self) -> bool {
+        true
     }
 }
 

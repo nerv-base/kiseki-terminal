@@ -1278,3 +1278,439 @@ fn uninstall_purge_reports_false_when_host_is_read_only() {
     assert_eq!(parsed["incomplete"], true);
     assert!(sandbox.kiseki_home().join("data").exists());
 }
+
+fn minimal_ttf_bytes(family: &str) -> Vec<u8> {
+    fn be16(value: u16) -> [u8; 2] {
+        value.to_be_bytes()
+    }
+    fn be32(value: u32) -> [u8; 4] {
+        value.to_be_bytes()
+    }
+
+    let mut head = vec![0u8; 54];
+    head[0..4].copy_from_slice(&be32(0x0001_0000));
+    head[12..16].copy_from_slice(&be32(0x5F0F_3CF5));
+    head[18..20].copy_from_slice(&be16(1000));
+
+    let mut hhea = vec![0u8; 36];
+    hhea[0..4].copy_from_slice(&be32(0x0001_0000));
+    hhea[34..36].copy_from_slice(&be16(1));
+
+    let mut maxp = vec![0u8; 6];
+    maxp[0..4].copy_from_slice(&be32(0x0000_5000));
+    maxp[4..6].copy_from_slice(&be16(1));
+
+    let hmtx = vec![0u8; 4];
+
+    let mut cmap_sub = vec![0u8; 32];
+    cmap_sub[0..2].copy_from_slice(&be16(4));
+    cmap_sub[2..4].copy_from_slice(&be16(32));
+    cmap_sub[6..8].copy_from_slice(&be16(4));
+    cmap_sub[14..16].copy_from_slice(&be16(0x20));
+    cmap_sub[16..18].copy_from_slice(&be16(0xFFFF));
+    cmap_sub[20..22].copy_from_slice(&be16(0x20));
+    cmap_sub[22..24].copy_from_slice(&be16(0xFFFF));
+    cmap_sub[26..28].copy_from_slice(&be16(1));
+    let mut cmap = vec![0u8; 12];
+    cmap[2..4].copy_from_slice(&be16(1));
+    cmap[4..8].copy_from_slice(&be32(3));
+    cmap[8..12].copy_from_slice(&be32(12));
+    cmap.extend_from_slice(&cmap_sub);
+
+    let mut utf16 = Vec::new();
+    for unit in family.encode_utf16() {
+        utf16.extend_from_slice(&be16(unit));
+    }
+    let mut records = Vec::new();
+    records.extend_from_slice(&be16(3));
+    records.extend_from_slice(&be16(1));
+    records.extend_from_slice(&be16(0x0409));
+    records.extend_from_slice(&be16(1));
+    records.extend_from_slice(&be16(utf16.len() as u16));
+    records.extend_from_slice(&be16(0));
+
+    let mut name = vec![0u8; 6];
+    name[2..4].copy_from_slice(&be16(1));
+    name[4..6].copy_from_slice(&be16((6 + records.len()) as u16));
+    name.extend_from_slice(&records);
+    name.extend_from_slice(&utf16);
+
+    let tables: Vec<(&str, Vec<u8>)> = vec![
+        ("cmap", cmap),
+        ("head", head),
+        ("hhea", hhea),
+        ("hmtx", hmtx),
+        ("maxp", maxp),
+        ("name", name),
+    ];
+    let count = tables.len() as u16;
+    let mut out = Vec::new();
+    out.extend_from_slice(&be32(0x0001_0000));
+    out.extend_from_slice(&be16(count));
+    out.extend_from_slice(&be16(64));
+    out.extend_from_slice(&be16(3));
+    out.extend_from_slice(&be16(0));
+    let mut offset = 12 + 16 * u32::from(count);
+    let mut records_out = Vec::new();
+    for (tag, data) in &tables {
+        records_out.extend_from_slice(tag.as_bytes());
+        records_out.extend_from_slice(&be32(0));
+        records_out.extend_from_slice(&be32(offset));
+        records_out.extend_from_slice(&be32(data.len() as u32));
+        offset += data.len() as u32;
+        offset += (4 - (data.len() % 4)) as u32 % 4;
+    }
+    out.extend_from_slice(&records_out);
+    for (_, data) in &tables {
+        out.extend_from_slice(data);
+        let padding = (4 - (data.len() % 4)) % 4;
+        out.resize(out.len() + padding, 0);
+    }
+    out
+}
+
+#[test]
+fn status_json_and_human_output_match_baseline_for_plain_and_composed() {
+    let sandbox = Sandbox::new();
+    sandbox.run_ok(&["use", "nerv-eva", "--only", "ghostty", "--quiet"]);
+
+    let plain_json = sandbox.json(&["status", "--json"]);
+    let mut top_keys: Vec<&str> = plain_json
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    top_keys.sort();
+    assert_eq!(
+        top_keys,
+        [
+            "adapters",
+            "artifacts",
+            "config",
+            "deps",
+            "environment",
+            "paths",
+            "state",
+            "theme",
+        ]
+    );
+    let mut cfg_keys: Vec<&str> = plain_json["config"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    cfg_keys.sort();
+    assert_eq!(
+        cfg_keys,
+        ["aliases", "fontLocked", "promptPolicy", "renderOnly"]
+    );
+    assert_eq!(plain_json["theme"]["id"], "nerv-eva");
+    assert_eq!(plain_json["theme"]["name"], "NERV UNIT-02");
+    assert_eq!(plain_json["theme"]["profile"], "balanced");
+    assert_eq!(plain_json["theme"]["shaderEnabled"], true);
+    assert_eq!(plain_json["theme"]["base"], "#0B090A");
+    assert_eq!(plain_json["theme"]["foreground"], "#ECE4DA");
+    assert_eq!(plain_json["theme"]["accent"], "#F06A22");
+    assert_eq!(
+        plain_json["artifacts"],
+        serde_json::json!([
+            "env.ps1",
+            "env.zsh",
+            "fastfetch.jsonc",
+            "ghostty.conf",
+            "prompt.omp.json",
+            "shaders/active.glsl",
+            "shaders/active.hlsl",
+            "starship-palette.toml",
+            "wt-visual.json"
+        ])
+    );
+
+    let plain_txt = String::from_utf8(sandbox.run_ok(&["status"]).stdout).unwrap();
+    for expected in [
+        "▸ 当前状态",
+        "主题             NERV UNIT-02 (nerv-eva, 暗色 (dark))",
+        "渲染档位         Balanced (推荐)",
+        "▸ 运行环境",
+        "▸ 终端与适配器",
+        "▸ 已编译产物",
+        "· generated/ghostty.conf",
+    ] {
+        assert!(plain_txt.contains(expected), "missing {expected:?} in:\n{plain_txt}");
+    }
+    assert!(!plain_txt.contains("按层混搭"));
+
+    sandbox.run_ok(&[
+        "compose",
+        "--palette",
+        "kyoto-sakura",
+        "--atmosphere",
+        "shinkai-rain",
+        "--quiet",
+    ]);
+    let composed_json = sandbox.json(&["status", "--json"]);
+    assert_eq!(
+        composed_json["state"]["composition"]["palette"],
+        "kyoto-sakura"
+    );
+    assert_eq!(
+        composed_json["state"]["composition"]["atmosphere"],
+        "shinkai-rain"
+    );
+    assert_eq!(composed_json["theme"]["accent"], "#FF9EC7");
+    assert_eq!(composed_json["theme"]["base"], "#0F0B19");
+    assert_eq!(composed_json["theme"]["foreground"], "#F7EBF4");
+    assert_eq!(composed_json["theme"]["wallpaperOpacity"], 0.42);
+    assert_eq!(composed_json["theme"]["windowOpacity"], 0.94);
+
+    let composed_txt = String::from_utf8(sandbox.run_ok(&["status"]).stdout).unwrap();
+    assert!(
+        composed_txt.contains(
+            "按层混搭         palette=kyoto-sakura · atmosphere=shinkai-rain · typography=base"
+        ),
+        "missing composition line in:\n{composed_txt}"
+    );
+}
+
+#[test]
+fn fonts_status_and_doctor_use_and_invalidate_font_cache() {
+    let sandbox = Sandbox::new();
+    let local_app_data = sandbox.home().join("AppData").join("Local");
+    let run_ok = |args: &[&str]| {
+        let output = sandbox
+            .command()
+            .env("LOCALAPPDATA", &local_app_data)
+            .args(args)
+            .output()
+            .expect("kiseki binary runs");
+        assert!(
+            output.status.success(),
+            "kiseki {args:?} failed ({}):\nstdout={}\nstderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        output
+    };
+    let run_json = |args: &[&str]| -> Value {
+        let output = run_ok(args);
+        serde_json::from_slice(&output.stdout).unwrap()
+    };
+
+    run_ok(&["use", "nerv-eva", "--render-only", "--quiet"]);
+    run_ok(&["--render-only", "font", "KisekiTestUniqueMono", "--quiet"]);
+
+    let font_cache = sandbox.kiseki_home().join("cache/font-cache.json");
+    let deps_cache = sandbox.kiseki_home().join("cache/deps-cache.json");
+    let ghostty_version_cache = sandbox.kiseki_home().join("cache/ghostty-version.json");
+    let _ = fs::remove_file(&font_cache);
+    let _ = fs::remove_file(&deps_cache);
+    let _ = fs::remove_file(&ghostty_version_cache);
+
+    let dry = run_json(&["fonts", "status", "--dry-run", "--json"]);
+    assert!(!font_cache.exists(), "dry-run must not write font-cache.json");
+    assert_eq!(dry["families"][0]["installed"], false);
+    run_ok(&["doctor", "--dry-run", "--json"]);
+    assert!(!font_cache.exists(), "doctor --dry-run must not write font-cache.json");
+    assert!(!deps_cache.exists(), "doctor --dry-run must not write deps-cache.json");
+    assert!(
+        !ghostty_version_cache.exists(),
+        "doctor --dry-run must not write ghostty-version.json"
+    );
+
+    let first = run_json(&["fonts", "status", "--json"]);
+    assert!(font_cache.is_file(), "fonts status must populate font-cache.json");
+    assert_eq!(first["families"][0]["installed"], false);
+
+    let user_font_dir = sandbox.home().join(if cfg!(target_os = "macos") {
+        "Library/Fonts"
+    } else if cfg!(target_os = "windows") {
+        "AppData/Local/Microsoft/Windows/Fonts"
+    } else {
+        ".local/share/fonts"
+    });
+    fs::create_dir_all(&user_font_dir).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    let font_path = user_font_dir.join("KisekiTestUniqueMono.ttf");
+    fs::write(&font_path, minimal_ttf_bytes("KisekiTestUniqueMono")).unwrap();
+
+    let after_add = run_json(&["fonts", "status", "--json"]);
+    assert_eq!(after_add["families"][0]["installed"], true);
+
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    fs::remove_file(&font_path).unwrap();
+
+    let doctor = run_json(&["doctor", "--json"]);
+    let missing = doctor["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|check| check["name"] == "fonts.missing")
+        .expect("fonts.missing check after deleting font");
+    assert!(missing["message"]
+        .as_str()
+        .unwrap()
+        .contains("KisekiTestUniqueMono"));
+
+    let after_delete = run_json(&["fonts", "status", "--json"]);
+    assert_eq!(after_delete["families"][0]["installed"], false);
+}
+
+#[test]
+fn batch_durability_rollback_regenerates_generated_artifacts() {
+    let sandbox = Sandbox::new();
+    sandbox.run_ok(&["use", "kyoto-sakura", "--only", "ghostty", "--quiet"]);
+    let ghostty_host_before = fs::read_to_string(sandbox.path("ghostty-config")).unwrap();
+    let ghostty_gen_before =
+        fs::read_to_string(sandbox.kiseki_home().join("generated/ghostty.conf")).unwrap();
+
+    let report = sandbox.json(&["use", "starlight-8bit", "--only", "ghostty", "--json"]);
+    let ghostty_target = report["targets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["target"] == sandbox.path("ghostty-config").to_str().unwrap())
+        .expect("ghostty host target recorded");
+    assert_eq!(ghostty_target["status"], "applied");
+    assert!(ghostty_target["notes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|note| note.as_str().unwrap().contains("unchanged")));
+
+    let journals = sandbox.json(&["rollback", "--list", "--json"]);
+    let latest_tx = PathBuf::from(journals["journals"][0]["path"].as_str().unwrap());
+    let manifest: Value =
+        serde_json::from_str(&fs::read_to_string(latest_tx.join("manifest.json")).unwrap())
+            .unwrap();
+    let gen_entry = manifest["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| {
+            entry["target"]
+                .as_str()
+                .unwrap()
+                .replace('\\', "/")
+                .ends_with("generated/ghostty.conf")
+        })
+        .expect("generated/ghostty.conf journal entry");
+    assert_eq!(gen_entry["regenerable"], true);
+    assert!(gen_entry.get("backup").is_none());
+
+    let host_entry = manifest["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["target"] == sandbox.path("ghostty-config").to_str().unwrap())
+        .expect("ghostty host journal entry");
+    assert!(host_entry.get("backup").is_some());
+
+    sandbox.run_ok(&["rollback", "--quiet"]);
+    let status = sandbox.json(&["status", "--json"]);
+    assert_eq!(status["state"]["activeTheme"], "kyoto-sakura");
+    assert_eq!(
+        fs::read_to_string(sandbox.path("ghostty-config")).unwrap(),
+        ghostty_host_before
+    );
+    assert_eq!(
+        fs::read_to_string(sandbox.kiseki_home().join("generated/ghostty.conf")).unwrap(),
+        ghostty_gen_before
+    );
+}
+
+#[test]
+fn validation_cache_populates_invalidates_on_edit_and_respects_dry_run() {
+    let sandbox = Sandbox::new();
+    sandbox.run_ok(&["use", "nerv-eva", "--dry-run", "--only", "ghostty", "--quiet"]);
+    assert!(
+        !sandbox.kiseki_home().exists(),
+        "--dry-run on fresh KISEKI_HOME must not create any directory or cache"
+    );
+
+    sandbox.run_ok(&["use", "nerv-eva", "--only", "ghostty", "--quiet"]);
+    let validation_dir = sandbox.kiseki_home().join("cache/validation");
+    let cache_files: Vec<_> = fs::read_dir(&validation_dir)
+        .unwrap()
+        .filter_map(|e| e.ok().map(|entry| entry.path()))
+        .collect();
+    assert!(!cache_files.is_empty(), "validation cache file should exist");
+
+    // 1-byte mutation that corrupts tokens.json invalidates the SHA-256 cache.
+    let tokens_path = sandbox
+        .kiseki_home()
+        .join("data/themes/official/nerv-eva/tokens.json");
+    let mut raw = fs::read(&tokens_path).unwrap();
+    raw[0] = b'!';
+    fs::write(&tokens_path, &raw).unwrap();
+
+    let output = sandbox.run(&["use", "nerv-eva", "--only", "ghostty", "--quiet"]);
+    assert!(
+        !output.status.success(),
+        "corrupted pack must bypass stale cache and fail"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn dry_run_with_ghostty_binary_writes_no_version_cache() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let sandbox = Sandbox::new();
+    let fake_ghostty = sandbox.dir.path().join("fake-ghostty");
+    fs::write(
+        &fake_ghostty,
+        "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  echo 'Ghostty 1.4.0'\n  exit 0\nfi\nif [ \"$1\" = \"+validate-config\" ]; then\n  exit 0\nfi\nexit 0\n",
+    )
+    .unwrap();
+    fs::set_permissions(&fake_ghostty, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let run_ghostty_ok = |args: &[&str]| {
+        let output = sandbox
+            .command()
+            .env("KISEKI_GHOSTTY_BIN", &fake_ghostty)
+            .args(args)
+            .output()
+            .expect("kiseki binary runs");
+        assert!(
+            output.status.success(),
+            "kiseki {args:?} failed ({}):\nstdout={}\nstderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+
+    run_ghostty_ok(&["use", "nerv-eva", "--dry-run", "--only", "ghostty", "--quiet"]);
+    run_ghostty_ok(&["doctor", "--dry-run", "--json"]);
+    assert!(
+        !sandbox.kiseki_home().exists(),
+        "--dry-run with a real ghostty binary on fresh KISEKI_HOME must write nothing"
+    );
+
+    run_ghostty_ok(&["use", "nerv-eva", "--only", "ghostty", "--quiet"]);
+    let ghostty_version_cache = sandbox.kiseki_home().join("cache/ghostty-version.json");
+    let deps_cache = sandbox.kiseki_home().join("cache/deps-cache.json");
+    let font_cache = sandbox.kiseki_home().join("cache/font-cache.json");
+    if cfg!(target_os = "macos") {
+        assert!(
+            ghostty_version_cache.is_file(),
+            "non-dry-run macOS use must populate ghostty-version.json"
+        );
+    }
+
+    let _ = fs::remove_file(&ghostty_version_cache);
+    let _ = fs::remove_file(&deps_cache);
+    let _ = fs::remove_file(&font_cache);
+
+    run_ghostty_ok(&["use", "kyoto-sakura", "--dry-run", "--only", "ghostty", "--quiet"]);
+    run_ghostty_ok(&["doctor", "--dry-run", "--json"]);
+    assert!(
+        !ghostty_version_cache.exists(),
+        "--dry-run must never write ghostty-version.json"
+    );
+    assert!(!deps_cache.exists(), "--dry-run must never write deps-cache.json");
+    assert!(!font_cache.exists(), "--dry-run must never write font-cache.json");
+}

@@ -7,11 +7,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use kiseki_types::{Diagnostic, DiagnosticReport};
+use serde::{Deserialize, Serialize};
 
 use crate::budget::Budget;
 
 /// Everything the linter learned about one source file.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SourceLint {
     pub diagnostics: DiagnosticReport,
     /// Static texture sample operations found.

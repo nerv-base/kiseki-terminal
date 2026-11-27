@@ -21,6 +21,7 @@ pub use migration::{
     V1_SHIM_MARKER, V1_SHIM_NAMES,
 };
 pub use validate::{
-    allowed_file, collect_files, install_from_dir, remove_installed, validate_theme_dir, InstalledTheme, ThemeFile,
-    ThemeValidation, MAX_BYTES, MAX_FILES, MAX_LOGO_BYTES,
+    allowed_file, collect_files, install_from_dir, remove_installed, validate_theme_dir,
+    validate_theme_dir_cached, InstalledTheme, ThemeFile, ThemeValidation, ValidationScope,
+    MAX_BYTES, MAX_FILES, MAX_LOGO_BYTES,
 };

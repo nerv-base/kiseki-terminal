@@ -4,6 +4,7 @@
 //! rendering repairs the errors instead of reporting them (see `resolve`).
 
 use kiseki_types::{Color, Diagnostic, DiagnosticReport, DiagnosticSeverity};
+use serde::{Deserialize, Serialize};
 
 use crate::tokens::{PaletteTokens, SyntaxTokens};
 
@@ -30,7 +31,7 @@ pub mod threshold {
 }
 
 /// One contrast measurement.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ContrastCheck {
     /// Stable identifier, e.g. `text.primary`.
     pub name: String,
@@ -54,7 +55,7 @@ impl ContrastCheck {
 }
 
 /// The full contrast report for one palette.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ContrastReport {
     pub checks: Vec<ContrastCheck>,
 }

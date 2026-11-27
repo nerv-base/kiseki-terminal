@@ -6,8 +6,10 @@
 
 pub mod ui;
 
+use std::collections::BTreeMap;
 use std::io::{IsTerminal, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::time::UNIX_EPOCH;
 
 use clap::builder::styling::{AnsiColor, Effects, Styles};
 use clap::{CommandFactory, Parser, Subcommand};
@@ -15,10 +17,10 @@ use kiseki_adapters::{AdapterRegistry, DetectionReport, PlanOptions};
 use kiseki_compiler::{compile, CompileInput, CompileOptions};
 use kiseki_pkg::{ThemeEntry, ThemeLibrary, ThemeSource};
 use kiseki_platform::{
-    capture_env, default_font_dirs, deps, detect, font_status, fonts::FontScanner, KisekiPaths,
-    Platform, SystemPlatform,
+    capture_env, default_font_dirs, deps, detect, font_status, fonts::FontScanner, FontInventory,
+    KisekiPaths, Platform, SyncMode, SystemPlatform,
 };
-use kiseki_schema::{Composition, ResolvedTheme, ThemePack, UserOverrides};
+use kiseki_schema::{Composition, ResolvedTheme, UserOverrides};
 use kiseki_state::{AppearanceMode, Config, PreviewSession, State};
 use kiseki_tui::{InitWizardChoices, InitWizardInput, PickerAction, PickerItem};
 use kiseki_tx::{
@@ -28,6 +30,7 @@ use kiseki_types::{
     Appearance, Diagnostic, DiagnosticSeverity, EnvContext, KisekiError, PromptPolicy,
     RenderingProfile, Result, ThemeId,
 };
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use ui::Ui;
@@ -364,7 +367,7 @@ struct App {
 
 impl App {
     fn new(json: bool, render_only: bool, dry_run: bool, ui: Ui, rescue: bool) -> Result<Self> {
-        let platform = SystemPlatform::detect();
+        let platform = SystemPlatform::detect().with_dry_run(dry_run);
         let paths = platform.paths().clone();
         let config = match Config::load(&platform, &paths) {
             Ok(config) => config,
@@ -426,13 +429,16 @@ impl App {
         ThemeId::new(raw)
     }
 
-    fn load_theme(&self, id: &ThemeId) -> Result<kiseki_pkg::LoadedTheme> {
-        // `--dry-run` promises zero filesystem mutations, so it must not
-        // materialise a bundled pack into the official store.
+    fn load_theme_for_profile(
+        &self,
+        id: &ThemeId,
+        profile: RenderingProfile,
+    ) -> Result<kiseki_pkg::LoadedTheme> {
         if self.dry_run {
-            self.library.load_readonly(&self.platform, id)
+            self.library
+                .load_readonly_for_profile(&self.platform, id, profile)
         } else {
-            self.library.load(&self.platform, id)
+            self.library.load_for_profile(&self.platform, id, profile)
         }
     }
 
@@ -463,12 +469,24 @@ impl App {
         }
     }
 
-    fn composition_sources(&self, composition: &Composition) -> Result<Vec<ThemePack>> {
-        let mut packs = Vec::new();
+    fn load_composition_donors(
+        &self,
+        composition: &Composition,
+        profile: RenderingProfile,
+        base: Option<&kiseki_pkg::LoadedTheme>,
+    ) -> Result<BTreeMap<ThemeId, kiseki_pkg::LoadedTheme>> {
+        let mut donors = BTreeMap::new();
         for id in composition.referenced_themes() {
-            packs.push(self.load_theme(id)?.pack);
+            if donors.contains_key(id) {
+                continue;
+            }
+            if let Some(loaded) = base.filter(|loaded| &loaded.pack.manifest.id == id) {
+                donors.insert(id.clone(), loaded.clone());
+            } else {
+                donors.insert(id.clone(), self.load_theme_for_profile(id, profile)?);
+            }
         }
-        Ok(packs)
+        Ok(donors)
     }
 
     fn user_overrides(&self, state: &State) -> UserOverrides {
@@ -481,14 +499,21 @@ impl App {
         }
     }
 
-    fn resolve(
+    fn resolve_with_donors(
         &self,
         loaded: &kiseki_pkg::LoadedTheme,
         state: &State,
         profile: RenderingProfile,
+        donors: &BTreeMap<ThemeId, kiseki_pkg::LoadedTheme>,
     ) -> Result<ResolvedTheme> {
         let composition = self.composition(state);
-        let sources = self.composition_sources(&composition)?;
+        let mut sources = Vec::new();
+        for id in composition.referenced_themes() {
+            let donor = donors
+                .get(id)
+                .ok_or_else(|| KisekiError::ThemeNotFound(id.to_string()))?;
+            sources.push(donor.pack.clone());
+        }
         ResolvedTheme::resolve(
             &loaded.pack,
             profile,
@@ -499,30 +524,57 @@ impl App {
         .map_err(KisekiError::Compiler)
     }
 
-    fn font_families(&self, theme: &ResolvedTheme) -> Vec<String> {
+    fn resolve(
+        &self,
+        loaded: &kiseki_pkg::LoadedTheme,
+        state: &State,
+        profile: RenderingProfile,
+    ) -> Result<ResolvedTheme> {
+        let composition = self.composition(state);
+        let donors = self.load_composition_donors(&composition, profile, Some(loaded))?;
+        self.resolve_with_donors(loaded, state, profile, &donors)
+    }
+
+    fn font_dirs(&self) -> Vec<PathBuf> {
         let home = self
             .platform
             .env_var("HOME")
             .or_else(|| self.platform.env_var("USERPROFILE"))
             .map(PathBuf::from);
-        let dirs = default_font_dirs(self.platform.os(), home.as_deref(), &|key| {
+        default_font_dirs(self.platform.os(), home.as_deref(), &|key| {
             self.platform.env_var(key)
-        });
+        })
+    }
+
+    fn font_inventory_in(&self, dirs: &[PathBuf]) -> FontInventory {
         let cache_file = self.paths.cache_dir().join("font-cache.json");
         let scanner = FontScanner::load_cache(&cache_file);
-        let inventory = scanner.scan(&dirs);
-        if !self.dry_run && scanner.parses() > 0 {
+        let inventory = scanner.scan(dirs);
+        if !self.dry_run && (scanner.parses() > 0 || scanner.is_dirty()) {
             scanner.save_cache(&cache_file);
         }
+        inventory
+    }
+
+    fn font_inventory(&self) -> (Vec<PathBuf>, FontInventory) {
+        let dirs = self.font_dirs();
+        let inventory = self.font_inventory_in(&dirs);
+        (dirs, inventory)
+    }
+
+    fn font_families(&self, theme: &ResolvedTheme) -> Vec<String> {
+        let (_, inventory) = self.font_inventory();
         let statuses = font_status(&theme.typography.families, &inventory, self.platform.os());
         kiseki_platform::config_families(&statuses)
     }
 
-    fn compile_theme(
+    fn compile_theme_with_donors(
         &self,
         loaded: &kiseki_pkg::LoadedTheme,
         theme: &ResolvedTheme,
         state: &State,
+        donors: &BTreeMap<ThemeId, kiseki_pkg::LoadedTheme>,
+        shader_validated_for_profile: bool,
     ) -> Result<kiseki_compiler::CompileOutput> {
         let families = self.font_families(theme);
         // `kiseki compose` may donate the atmosphere (wallpaper + shaders) and
@@ -530,39 +582,33 @@ impl App {
         // names the donor's assets, so the compile options must point at the
         // donor's roots as well.
         let composition = &state.composition;
-        let atmosphere_dir = composition
-            .atmosphere
-            .as_ref()
-            .and_then(|id| self.load_theme(id).ok())
-            .map(|donor| donor.root);
-        let overrides_dir = composition
-            .overrides
-            .as_ref()
-            .and_then(|id| self.load_theme(id).ok())
-            .map(|donor| donor.root);
-        let (glsl, hlsl) = match composition.atmosphere.as_ref() {
-            Some(id) => match self.load_theme(id) {
-                Ok(donor) => (donor.glsl, donor.hlsl),
-                Err(_) => (loaded.glsl.clone(), loaded.hlsl.clone()),
-            },
+        let atmosphere = composition.atmosphere.as_ref().and_then(|id| donors.get(id));
+        let overrides = composition.overrides.as_ref().and_then(|id| donors.get(id));
+        let atmosphere_dir = atmosphere.map(|donor| donor.root.clone());
+        let overrides_dir = overrides.map(|donor| donor.root.clone());
+        let (glsl, hlsl) = match atmosphere {
+            Some(donor) => (donor.glsl.clone(), donor.hlsl.clone()),
             None => (loaded.glsl.clone(), loaded.hlsl.clone()),
         };
-        let logo = match composition.overrides.as_ref() {
-            Some(id) => match self.load_theme(id) {
-                Ok(donor) => donor.logo,
-                Err(_) => loaded.logo.clone(),
-            },
+        let logo = match overrides {
+            Some(donor) => donor.logo.clone(),
             None => loaded.logo.clone(),
         };
         let macos_font_scale = self.platform.os() == kiseki_types::OsKind::MacOs
             && state.typography.size_override_pt.is_none();
+        let skip_shader_validation = shader_validated_for_profile
+            && composition.atmosphere.is_none()
+            && composition.palette.is_none()
+            && state.rendering.bg_opacity_override.is_none()
+            && !state.rendering.crt;
         let mut options = CompileOptions::new(self.paths.config_dir(), loaded.root.clone())
             .with_prompt_policy(self.config.prompt_policy)
             .with_aliases(self.config.shell_aliases)
             .with_font_families(families)
             .with_macos_font_scale(macos_font_scale)
             .with_atmosphere_dir(atmosphere_dir)
-            .with_overrides_dir(overrides_dir);
+            .with_overrides_dir(overrides_dir)
+            .with_skip_shader_validation(skip_shader_validation);
         if self.platform.os() == kiseki_types::OsKind::Windows {
             options.windows_vendor_bin = Some(deps::installer_bin(&self.platform));
         }
@@ -592,6 +638,7 @@ impl App {
             allow_create_host_files: allow_create,
             require_all_targets: false,
             lock_timeout: kiseki_platform::LOCK_TIMEOUT,
+            durability: self.config.durability,
         }
     }
 
@@ -613,6 +660,27 @@ impl App {
             allow_create,
             false,
         )
+        .map(|(report, _)| report)
+    }
+
+    fn apply_with_resolved(
+        &mut self,
+        loaded: &kiseki_pkg::LoadedTheme,
+        state_after: State,
+        profile: RenderingProfile,
+        command: &str,
+        cli_only: Option<&str>,
+        allow_create: bool,
+    ) -> Result<(TransactionReport, ResolvedTheme)> {
+        self.apply_inner(
+            loaded,
+            state_after,
+            profile,
+            command,
+            cli_only,
+            allow_create,
+            false,
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -625,9 +693,11 @@ impl App {
         cli_only: Option<&str>,
         allow_create: bool,
         require_all_targets: bool,
-    ) -> Result<TransactionReport> {
-        let theme = self.resolve(loaded, &state_after, profile)?;
-        let output = self.compile_theme(loaded, &theme, &state_after)?;
+    ) -> Result<(TransactionReport, ResolvedTheme)> {
+        let composition = self.composition(&state_after);
+        let donors = self.load_composition_donors(&composition, profile, Some(loaded))?;
+        let theme = self.resolve_with_donors(loaded, &state_after, profile, &donors)?;
+        let output = self.compile_theme_with_donors(loaded, &theme, &state_after, &donors, true)?;
         let state_before = self.state_or_initial();
         let mut state_after = state_after;
         state_after.active_theme = loaded.pack.manifest.id.clone();
@@ -661,7 +731,7 @@ impl App {
                 self.ui.warn(&diagnostic.message);
             }
         }
-        Ok(report)
+        Ok((report, theme))
     }
 
     /// Resolves the authoritative adapter allow-list.
@@ -693,26 +763,27 @@ impl App {
 
     // -------------------------------------------------------------- status
     fn status(&mut self) -> Result<()> {
-        let deps = deps::Summary::from_probes(&self.probe_deps());
+        let deps = self.probe_deps_summary();
         let adapters = self.detect_all();
-        let theme = self
-            .state
-            .as_ref()
-            .and_then(|state| self.load_theme(&state.active_theme).ok())
-            .and_then(|loaded| {
-                let state = self.state.as_ref()?;
-                self.resolve(&loaded, state, state.rendering.profile).ok()
-            });
-        let artifacts = self
-            .state
-            .as_ref()
-            .and_then(|state| self.load_theme(&state.active_theme).ok())
-            .and_then(|loaded| {
-                let state = self.state.as_ref()?;
-                let resolved = self.resolve(&loaded, state, state.rendering.profile).ok()?;
-                self.compile_theme(&loaded, &resolved, state).ok()
-            })
-            .map(|output| output.artifacts);
+        let mut theme = None;
+        let mut artifacts = None;
+        if let Some(state) = self.state.as_ref() {
+            let profile = state.rendering.profile;
+            if let Ok(loaded) = self.load_theme_for_profile(&state.active_theme, profile) {
+                let composition = self.composition(state);
+                if let Ok(donors) = self.load_composition_donors(&composition, profile, Some(&loaded))
+                {
+                    if let Ok(resolved) = self.resolve_with_donors(&loaded, state, profile, &donors)
+                    {
+                        artifacts = self
+                            .compile_theme_with_donors(&loaded, &resolved, state, &donors, true)
+                            .ok()
+                            .map(|output| output.artifacts);
+                        theme = Some(resolved);
+                    }
+                }
+            }
+        }
 
         if self.json {
             self.emit_json(json!({
@@ -770,7 +841,8 @@ impl App {
     // ----------------------------------------------------------------- use
     fn use_theme(&mut self, args: UseArgs) -> Result<()> {
         let id = self.theme_id(&args.theme)?;
-        let mut loaded = self.load_theme(&id)?;
+        let profile = self.resolve_profile(args.profile.as_deref())?;
+        let mut loaded = self.load_theme_for_profile(&id, profile)?;
         let mut state = self.state_or_initial();
         state.active_theme = id.clone();
         if !state.typography.locked && !self.config.font_locked {
@@ -794,7 +866,7 @@ impl App {
                     Appearance::Dark => state.pairing.dark.clone(),
                 };
                 if let Some(paired) = paired {
-                    if let Ok(paired_theme) = self.load_theme(&paired) {
+                    if let Ok(paired_theme) = self.load_theme_for_profile(&paired, profile) {
                         state.active_theme = paired_theme.pack.manifest.id.clone();
                         loaded = paired_theme;
                     }
@@ -808,14 +880,13 @@ impl App {
                 )?;
             }
         }
-        let profile = self.resolve_profile(args.profile.as_deref())?;
         if args.session {
             self.ui.warn(
                 "--session is not supported by the enabled terminals in Milestone 1; applying globally",
             );
         }
         let command = format!("use {}", state.active_theme);
-        let report = self.apply(
+        let (report, resolved) = self.apply_with_resolved(
             &loaded,
             state,
             profile,
@@ -826,10 +897,6 @@ impl App {
         if self.json {
             self.emit_json(transaction_json(&report));
         } else {
-            let state = report.state.clone();
-            let resolved = self
-                .resolve(&loaded, &state, profile)
-                .unwrap_or_else(|_| ResolvedTheme::from_pack(&loaded.pack, profile));
             let has_problem = report
                 .targets
                 .iter()
@@ -885,6 +952,7 @@ impl App {
 
     fn compose(&mut self, args: ComposeArgs) -> Result<()> {
         let mut state = self.state_or_initial();
+        let profile = state.rendering.profile;
         if args.reset {
             state.composition.clear();
         }
@@ -897,7 +965,7 @@ impl App {
         ] {
             let Some(raw) = raw else { continue };
             let id = self.theme_id(raw)?;
-            self.load_theme(&id)?;
+            self.load_theme_for_profile(&id, profile)?;
             match slot {
                 "palette" => state.composition.palette = Some(id),
                 "syntax" => state.composition.syntax = Some(id),
@@ -919,15 +987,14 @@ impl App {
                 }
                 other => {
                     let id = self.theme_id(other)?;
-                    self.load_theme(&id)?;
+                    self.load_theme_for_profile(&id, profile)?;
                     state.composition.overrides = Some(id);
                 }
             }
         }
 
         let id = state.active_theme.clone();
-        let loaded = self.load_theme(&id)?;
-        let profile = state.rendering.profile;
+        let loaded = self.load_theme_for_profile(&id, profile)?;
         let report = self.apply(&loaded, state.clone(), profile, "compose", None, false)?;
         if self.json {
             self.emit_json(json!({
@@ -954,7 +1021,7 @@ impl App {
         let mut state = self.state_or_initial();
         state.rendering.profile = profile;
         let id = state.active_theme.clone();
-        let loaded = self.load_theme(&id)?;
+        let loaded = self.load_theme_for_profile(&id, profile)?;
         let report = self.apply(
             &loaded,
             state,
@@ -987,7 +1054,7 @@ impl App {
         };
         state.rendering.profile = target;
         let id = state.active_theme.clone();
-        let loaded = self.load_theme(&id)?;
+        let loaded = self.load_theme_for_profile(&id, target)?;
         let report = self.apply(&loaded, state, target, "live", None, false)?;
         let label = if target == RenderingProfile::Static {
             "动态 Shader：关闭（已切至 Static 纯静态）".to_string()
@@ -1018,7 +1085,7 @@ impl App {
         }
         let id = state.active_theme.clone();
         let profile = state.rendering.profile;
-        let loaded = self.load_theme(&id)?;
+        let loaded = self.load_theme_for_profile(&id, profile)?;
         let report = self.apply(&loaded, state, profile, "crt", None, false)?;
         let label = if enable {
             if auto_promoted {
@@ -1062,7 +1129,7 @@ impl App {
         };
         let id = state.active_theme.clone();
         let profile = state.rendering.profile;
-        let loaded = self.load_theme(&id)?;
+        let loaded = self.load_theme_for_profile(&id, profile)?;
         let report = self.apply(&loaded, state, profile, "bg", None, false)?;
         self.after_simple(&report, &bg_label);
         Ok(())
@@ -1130,7 +1197,7 @@ impl App {
         };
         let id = state.active_theme.clone();
         let profile = state.rendering.profile;
-        let loaded = self.load_theme(&id)?;
+        let loaded = self.load_theme_for_profile(&id, profile)?;
         let report = self.apply(&loaded, state, profile, "font", None, false)?;
         self.after_simple(&report, &font_label);
         Ok(())
@@ -1280,12 +1347,13 @@ impl App {
         self.save_config()?;
 
         let id = self.theme_id(&choices.theme)?;
-        let loaded = self.load_theme(&id)?;
+        let profile = choices.profile;
+        let loaded = self.load_theme_for_profile(&id, profile)?;
         let mut state = self.state_or_initial();
         state.active_theme = id;
-        state.rendering.profile = choices.profile;
-        let profile = choices.profile;
-        let report = self.apply(&loaded, state, profile, "init", None, true)?;
+        state.rendering.profile = profile;
+        let (report, resolved) =
+            self.apply_with_resolved(&loaded, state, profile, "init", None, true)?;
         let probes = self.probe_deps();
         if self.json {
             self.emit_json(json!({
@@ -1300,15 +1368,12 @@ impl App {
                 "deps": probes,
             }));
         } else {
-            let resolved = self
-                .resolve(&loaded, &report.state, report.state.rendering.profile)
-                .ok();
             let on_path = self.platform.which("kiseki").is_some();
             let current_exe = std::env::current_exe().ok();
             self.ui.init_summary(
                 &self.config,
                 &report.state,
-                resolved.as_ref(),
+                Some(&resolved),
                 Some(&report),
                 &self.paths,
                 on_path,
@@ -1377,9 +1442,14 @@ impl App {
             }
         }
 
-        let theme_validation = match state.as_ref() {
-            Some(state) => match self.load_theme(&state.active_theme) {
-                Ok(loaded) => kiseki_pkg::validate_theme_dir(&loaded.root).ok(),
+        let (active_loaded, theme_validation) = match state.as_ref() {
+            Some(state) => match self.library.load_with_validation(
+                &self.platform,
+                &state.active_theme,
+                kiseki_pkg::ValidationScope::AllProfiles,
+                !self.dry_run,
+            ) {
+                Ok((loaded, validation)) => (Some(loaded), Some(validation)),
                 Err(error) => {
                     // A broken active pack is a blocking finding, not something
                     // doctor may silently skip with `.ok()`.
@@ -1391,10 +1461,10 @@ impl App {
                             state.active_theme
                         ),
                     ));
-                    None
+                    (None, None)
                 }
             },
-            None => None,
+            None => (None, None),
         };
 
         if let Some(validation) = theme_validation.as_ref() {
@@ -1416,45 +1486,32 @@ impl App {
             });
         }
 
-        if let Some(theme) = state
-            .as_ref()
-            .and_then(|state| self.load_theme(&state.active_theme).ok())
-            .and_then(|loaded| {
-                let state = self.state_or_initial();
-                self.resolve(&loaded, &state, state.rendering.profile).ok()
-            })
-        {
-            let home = self
-                .platform
-                .env_var("HOME")
-                .or_else(|| self.platform.env_var("USERPROFILE"))
-                .map(PathBuf::from);
-            let dirs = default_font_dirs(self.platform.os(), home.as_deref(), &|key| {
-                self.platform.env_var(key)
-            });
-            let scanner = FontScanner::new();
-            let inventory = scanner.scan(&dirs);
-            let statuses = font_status(&theme.typography.families, &inventory, self.platform.os());
-            let missing: Vec<&str> = statuses
-                .iter()
-                .filter(|status| !status.installed)
-                .map(|status| status.requested.as_str())
-                .collect();
-            if missing.is_empty() {
-                report.push(kiseki_tx::DoctorCheck::new(
-                    "fonts.installed",
-                    kiseki_tx::DoctorCheckStatus::Ok,
-                    format!("{} theme font families resolved", statuses.len()),
-                ));
-            } else {
-                report.push(
-                    kiseki_tx::DoctorCheck::new(
-                        "fonts.missing",
-                        kiseki_tx::DoctorCheckStatus::Warning,
-                        format!("missing theme fonts: {}", missing.join(", ")),
-                    )
-                    .with_hint("the terminal falls back to an installed monospace/CJK font"),
-                );
+        if let (Some(loaded), Some(state_ref)) = (active_loaded.as_ref(), state.as_ref()) {
+            if let Ok(theme) = self.resolve(loaded, state_ref, state_ref.rendering.profile) {
+                let (_, inventory) = self.font_inventory();
+                let statuses =
+                    font_status(&theme.typography.families, &inventory, self.platform.os());
+                let missing: Vec<&str> = statuses
+                    .iter()
+                    .filter(|status| !status.installed)
+                    .map(|status| status.requested.as_str())
+                    .collect();
+                if missing.is_empty() {
+                    report.push(kiseki_tx::DoctorCheck::new(
+                        "fonts.installed",
+                        kiseki_tx::DoctorCheckStatus::Ok,
+                        format!("{} theme font families resolved", statuses.len()),
+                    ));
+                } else {
+                    report.push(
+                        kiseki_tx::DoctorCheck::new(
+                            "fonts.missing",
+                            kiseki_tx::DoctorCheckStatus::Warning,
+                            format!("missing theme fonts: {}", missing.join(", ")),
+                        )
+                        .with_hint("the terminal falls back to an installed monospace/CJK font"),
+                    );
+                }
             }
         }
 
@@ -1464,7 +1521,7 @@ impl App {
             .paths
             .generated(kiseki_compiler::artifact_names::GHOSTTY_CONF);
         if self.platform.exists(&ghostty_conf) {
-            match kiseki_platform::validate_ghostty_config(&self.platform, &ghostty_conf) {
+            match self.validate_ghostty_config_cached(&ghostty_conf) {
                 Ok(Some(outcome)) if outcome.ok => report.push(kiseki_tx::DoctorCheck::new(
                     "adapter.ghostty.validate",
                     kiseki_tx::DoctorCheckStatus::Ok,
@@ -1491,7 +1548,7 @@ impl App {
             }
         }
 
-        let summary = deps::Summary::from_probes(&self.probe_deps());
+        let summary = self.probe_deps_summary();
         report.push(
             kiseki_tx::DoctorCheck::new(
                 "deps.summary",
@@ -1534,10 +1591,10 @@ impl App {
             return Ok(());
         }
         self.ui.doctor(&report);
-        if let (Some(validation), Some(state)) = (theme_validation.as_ref(), state.as_ref()) {
-            if let Ok(loaded) = self.load_theme(&state.active_theme) {
-                self.ui.validation(&loaded.root, validation);
-            }
+        if let (Some(validation), Some(loaded)) =
+            (theme_validation.as_ref(), active_loaded.as_ref())
+        {
+            self.ui.validation(&loaded.root, validation);
         }
         if report.has_errors() {
             return Err(KisekiError::other(
@@ -1547,11 +1604,134 @@ impl App {
         Ok(())
     }
 
+    fn load_deps_cache(&self) -> (PathBuf, DepsCache) {
+        let cache_path = self.paths.cache_dir().join("deps-cache.json");
+        let cache = std::fs::read_to_string(&cache_path)
+            .ok()
+            .and_then(|raw| serde_json::from_str::<DepsCache>(&raw).ok())
+            .filter(|loaded| loaded.version == DEPS_CACHE_VERSION)
+            .unwrap_or_else(|| DepsCache {
+                version: DEPS_CACHE_VERSION,
+                ..DepsCache::default()
+            });
+        (cache_path, cache)
+    }
+
+    fn save_deps_cache(&self, cache_path: &Path, cache: &DepsCache) {
+        if !self.dry_run {
+            if let Ok(encoded) = serde_json::to_vec(cache) {
+                let _ = kiseki_platform::fs::atomic_write_with_sync(
+                    cache_path,
+                    &encoded,
+                    SyncMode::AtomicNoSync,
+                );
+            }
+        }
+    }
+
+    fn validate_ghostty_config_cached(
+        &self,
+        ghostty_conf: &Path,
+    ) -> Result<Option<kiseki_platform::ghostty::ValidationOutcome>> {
+        let Some(binary) = kiseki_platform::ghostty::find_binary(&self.platform) else {
+            return Ok(None);
+        };
+        let binary_key = binary.to_string_lossy().into_owned();
+        let config_key = ghostty_conf.to_string_lossy().into_owned();
+        let stamps = binary_stamp(&binary)
+            .zip(binary_stamp(ghostty_conf))
+            .zip(ghostty_referenced_file_stamps(ghostty_conf));
+        if let Some((((b_len, b_s, b_n), (c_len, c_s, c_n)), refs)) = stamps.as_ref() {
+            let (_, cache) = self.load_deps_cache();
+            if let Some(cached) = cache.ghostty_validate.as_ref() {
+                if cached.binary_path == binary_key
+                    && cached.binary_len == *b_len
+                    && cached.binary_mtime_secs == *b_s
+                    && cached.binary_mtime_nanos == *b_n
+                    && cached.config_path == config_key
+                    && cached.config_len == *c_len
+                    && cached.config_mtime_secs == *c_s
+                    && cached.config_mtime_nanos == *c_n
+                    && cached.referenced_files == *refs
+                {
+                    return Ok(Some(kiseki_platform::ghostty::ValidationOutcome {
+                        ok: true,
+                        stdout: String::new(),
+                        stderr: String::new(),
+                    }));
+                }
+            }
+        }
+        let outcome = kiseki_platform::validate_ghostty_config(&self.platform, ghostty_conf)?;
+        if let (Some(out), Some((((b_len, b_s, b_n), (c_len, c_s, c_n)), refs))) =
+            (outcome.as_ref(), stamps)
+        {
+            if out.ok && !self.dry_run {
+                let (cache_path, mut cache) = self.load_deps_cache();
+                cache.ghostty_validate = Some(CachedGhosttyValidation {
+                    binary_path: binary_key,
+                    binary_len: b_len,
+                    binary_mtime_secs: b_s,
+                    binary_mtime_nanos: b_n,
+                    config_path: config_key,
+                    config_len: c_len,
+                    config_mtime_secs: c_s,
+                    config_mtime_nanos: c_n,
+                    referenced_files: refs,
+                });
+                self.save_deps_cache(&cache_path, &cache);
+            }
+        }
+        Ok(outcome)
+    }
+
     fn probe_deps(&self) -> Vec<deps::ToolProbe> {
-        let mut probes = deps::probe_all(&self.platform);
+        self.probe_deps_with_mode(false)
+    }
+
+    fn probe_deps_summary(&self) -> deps::Summary {
+        deps::Summary::from_probes(&self.probe_deps_with_mode(true))
+    }
+
+    fn probe_deps_with_mode(&self, summary_only: bool) -> Vec<deps::ToolProbe> {
+        let (cache_path, mut cache) = self.load_deps_cache();
+        let mut dirty = false;
+        let mut new_versions = Vec::new();
+        let mut probes = deps::probe_all_cached(
+            &self.platform,
+            summary_only,
+            |spec, path| {
+                let (len, mtime_secs, mtime_nanos) = binary_stamp(path)?;
+                let key = format!("{}:{}", spec.id, path.display());
+                let entry = cache.versions.get(&key)?;
+                (entry.len == len
+                    && entry.mtime_secs == mtime_secs
+                    && entry.mtime_nanos == mtime_nanos)
+                    .then(|| entry.binary_version.clone())
+            },
+            |spec, path, version| {
+                if let Some((len, mtime_secs, mtime_nanos)) = binary_stamp(path) {
+                    let key = format!("{}:{}", spec.id, path.display());
+                    new_versions.push((
+                        key,
+                        CachedBinaryVersion {
+                            len,
+                            mtime_secs,
+                            mtime_nanos,
+                            binary_version: version.map(str::to_string),
+                        },
+                    ));
+                }
+            },
+        );
+        if !new_versions.is_empty() {
+            cache.versions.extend(new_versions);
+            dirty = true;
+        }
         if let Some(prompt) = probes.iter_mut().find(|tool| tool.tool_id == "oh-my-posh") {
             if let Some(binary) = prompt.path.as_deref() {
-                prompt.compatible = self.check_prompt_template(binary);
+                prompt.compatible =
+                    self.check_prompt_template_cached(binary, &mut cache, &mut dirty);
                 if prompt.compatible == Some(false) && prompt.status == deps::ToolStatus::System {
                     prompt.remedy =
                         "更新 PATH 中的 oh-my-posh（Homebrew 使用 `brew upgrade oh-my-posh`）"
@@ -1559,12 +1739,20 @@ impl App {
                 }
             }
         }
+        if dirty {
+            self.save_deps_cache(&cache_path, &cache);
+        }
         probes
     }
 
     // Oh My Posh can migrate older config versions. Compare the segment types
     // to detect rejection even when export exits successfully with defaults.
-    fn check_prompt_template(&self, binary: &std::path::Path) -> Option<bool> {
+    fn check_prompt_template_cached(
+        &self,
+        binary: &Path,
+        cache: &mut DepsCache,
+        dirty: &mut bool,
+    ) -> Option<bool> {
         let spec = deps::TOOLS.iter().find(|tool| tool.id == "oh-my-posh")?;
         let deps::VersionRange::TemplateApi(api) = spec.version_range else {
             return None;
@@ -1601,6 +1789,20 @@ impl App {
                 .collect()
         };
         let expected = segments(&config)?;
+        let stamp = binary_stamp(binary);
+        let key = binary.to_string_lossy().into_owned();
+        if let Some((len, mtime_secs, mtime_nanos)) = stamp {
+            if let Some(entry) = cache.prompt_compat.get(&key) {
+                if entry.len == len
+                    && entry.mtime_secs == mtime_secs
+                    && entry.mtime_nanos == mtime_nanos
+                    && entry.api == api
+                    && entry.segments == expected
+                {
+                    return Some(entry.compatible);
+                }
+            }
+        }
         let output = self
             .platform
             .run(
@@ -1609,10 +1811,62 @@ impl App {
             )
             .ok()?;
         let exported = serde_json::from_str(&output.stdout).ok();
-        Some(output.success() && exported.as_ref().and_then(segments).as_ref() == Some(&expected))
+        let compatible =
+            output.success() && exported.as_ref().and_then(segments).as_ref() == Some(&expected);
+        if let Some((len, mtime_secs, mtime_nanos)) = stamp {
+            cache.prompt_compat.insert(
+                key,
+                CachedPromptCompat {
+                    len,
+                    mtime_secs,
+                    mtime_nanos,
+                    api,
+                    segments: expected,
+                    compatible,
+                },
+            );
+            *dirty = true;
+        }
+        Some(compatible)
     }
 
     // ------------------------------------------------------------ rollback
+    fn rollback_tx(
+        &self,
+        manager: &TransactionManager<'_>,
+        tx_id: &str,
+    ) -> Result<kiseki_tx::RollbackReport> {
+        let manifest = manager.read_journal(tx_id)?;
+        let needs_artifacts = manifest
+            .entries
+            .iter()
+            .any(|entry| entry.regenerable && entry.existed && entry.backup.is_none());
+        let artifacts = if needs_artifacts {
+            let before = &manifest.state_before;
+            let profile = before.rendering.profile;
+            match self
+                .load_theme_for_profile(&before.active_theme, profile)
+                .and_then(|loaded| {
+                    let composition = self.composition(before);
+                    let donors =
+                        self.load_composition_donors(&composition, profile, Some(&loaded))?;
+                    let resolved = self.resolve_with_donors(&loaded, before, profile, &donors)?;
+                    self.compile_theme_with_donors(&loaded, &resolved, before, &donors, true)
+                }) {
+                Ok(output) => Some(output.artifacts),
+                Err(error) => {
+                    self.ui.warn(&format!(
+                        "could not recompile generated artefacts for rollback ({error}); restoring host backups only"
+                    ));
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        manager.rollback_with_artifacts(tx_id, artifacts.as_ref())
+    }
+
     fn rollback(&mut self, args: RollbackArgs) -> Result<()> {
         let manager = TransactionManager::new(&self.platform, AdapterRegistry::milestone1());
         if args.list {
@@ -1643,7 +1897,7 @@ impl App {
             }
             return Ok(());
         }
-        let report = manager.rollback(&tx_id)?;
+        let report = self.rollback_tx(&manager, &tx_id)?;
         self.state = Some(report.state.clone());
         if self.json {
             self.emit_json(json!({
@@ -1667,7 +1921,7 @@ impl App {
         let manager = TransactionManager::new(&self.platform, AdapterRegistry::milestone1());
         if args.rollback && !self.dry_run {
             if let Some(summary) = manager.list_journals()?.first() {
-                let report = manager.rollback(&summary.tx_id)?;
+                let report = self.rollback_tx(&manager, &summary.tx_id)?;
                 self.state = Some(report.state.clone());
             }
         }
@@ -1699,10 +1953,13 @@ impl App {
         state.rendering.bg_opacity_override = None;
 
         let mut loaded = match if self.dry_run {
-            self.library
-                .load_readonly(&self.platform, &state.active_theme)
+            self.library.load_readonly_for_profile(
+                &self.platform,
+                &state.active_theme,
+                RenderingProfile::Static,
+            )
         } else {
-            self.load_theme(&state.active_theme)
+            self.load_theme_for_profile(&state.active_theme, RenderingProfile::Static)
         } {
             Ok(loaded) => loaded,
             Err(error) => {
@@ -1714,7 +1971,11 @@ impl App {
                 state.composition.clear();
                 state.active_theme = fallback.clone();
                 if self.dry_run {
-                    self.library.load_readonly(&self.platform, &fallback)?
+                    self.library.load_readonly_for_profile(
+                        &self.platform,
+                        &fallback,
+                        RenderingProfile::Static,
+                    )?
                 } else {
                     self.library
                         .repair_bundled(&self.platform, fallback.as_str())?
@@ -1740,7 +2001,11 @@ impl App {
                 ));
                 state.active_theme = fallback.clone();
                 loaded = if self.dry_run {
-                    self.library.load_readonly(&self.platform, &fallback)?
+                    self.library.load_readonly_for_profile(
+                        &self.platform,
+                        &fallback,
+                        RenderingProfile::Static,
+                    )?
                 } else {
                     self.library
                         .repair_bundled(&self.platform, fallback.as_str())?
@@ -1770,7 +2035,7 @@ impl App {
         manager.prepare_safe_state(&mut state)?;
         state.rendering.profile = RenderingProfile::Static;
 
-        let report = self.apply_inner(
+        let (report, _) = self.apply_inner(
             &loaded,
             state,
             RenderingProfile::Static,
@@ -1832,9 +2097,9 @@ impl App {
             }
             ThemeCommand::Info { theme } => {
                 let id = self.theme_id(&theme)?;
-                let loaded = self.load_theme(&id)?;
                 let state = self.state_or_initial();
                 let profile = state.rendering.profile;
+                let loaded = self.load_theme_for_profile(&id, profile)?;
                 let resolved = self.resolve(&loaded, &state, profile)?;
                 let contrast = resolved.contrast_report();
                 if self.json {
@@ -1959,18 +2224,10 @@ impl App {
         match args.command {
             FontsCommand::Status => {
                 let state = self.state_or_initial();
-                let loaded = self.load_theme(&state.active_theme)?;
+                let loaded =
+                    self.load_theme_for_profile(&state.active_theme, state.rendering.profile)?;
                 let theme = self.resolve(&loaded, &state, state.rendering.profile)?;
-                let home = self
-                    .platform
-                    .env_var("HOME")
-                    .or_else(|| self.platform.env_var("USERPROFILE"))
-                    .map(PathBuf::from);
-                let dirs = default_font_dirs(self.platform.os(), home.as_deref(), &|key| {
-                    self.platform.env_var(key)
-                });
-                let scanner = FontScanner::new();
-                let inventory = scanner.scan(&dirs);
+                let (dirs, inventory) = self.font_inventory();
                 let statuses =
                     font_status(&theme.typography.families, &inventory, self.platform.os());
                 if self.json {
@@ -2292,6 +2549,114 @@ impl App {
             })
             .collect()
     }
+}
+
+const DEPS_CACHE_VERSION: u32 = 2;
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct DepsCache {
+    version: u32,
+    #[serde(default)]
+    versions: BTreeMap<String, CachedBinaryVersion>,
+    #[serde(default)]
+    prompt_compat: BTreeMap<String, CachedPromptCompat>,
+    #[serde(default)]
+    ghostty_validate: Option<CachedGhosttyValidation>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CachedGhosttyValidation {
+    binary_path: String,
+    binary_len: u64,
+    binary_mtime_secs: u64,
+    binary_mtime_nanos: u32,
+    config_path: String,
+    config_len: u64,
+    config_mtime_secs: u64,
+    config_mtime_nanos: u32,
+    referenced_files: Vec<CachedFileStamp>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct CachedFileStamp {
+    path: String,
+    len: u64,
+    mtime_secs: u64,
+    mtime_nanos: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CachedBinaryVersion {
+    len: u64,
+    mtime_secs: u64,
+    mtime_nanos: u32,
+    binary_version: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CachedPromptCompat {
+    len: u64,
+    mtime_secs: u64,
+    mtime_nanos: u32,
+    api: u64,
+    segments: Vec<Vec<String>>,
+    compatible: bool,
+}
+
+fn unquote_ghostty_path(raw: &str) -> PathBuf {
+    let mut s = raw.trim();
+    if let Some(inner) = s.strip_prefix('"').and_then(|v| v.strip_suffix('"')) {
+        s = inner;
+    }
+    let s = s.strip_prefix('?').unwrap_or(s);
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(ch) = chars.next() {
+        if ch == '\\' {
+            if let Some(next) = chars.next() {
+                out.push(next);
+            } else {
+                out.push('\\');
+            }
+        } else {
+            out.push(ch);
+        }
+    }
+    PathBuf::from(out)
+}
+
+fn ghostty_referenced_file_stamps(ghostty_conf: &Path) -> Option<Vec<CachedFileStamp>> {
+    let content = std::fs::read_to_string(ghostty_conf).ok()?;
+    let mut stamps = Vec::new();
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let Some((key, value)) = trimmed.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        if key != "custom-shader" && key != "background-image" {
+            continue;
+        }
+        let path = unquote_ghostty_path(value);
+        let (len, mtime_secs, mtime_nanos) = binary_stamp(&path)?;
+        stamps.push(CachedFileStamp {
+            path: path.to_string_lossy().into_owned(),
+            len,
+            mtime_secs,
+            mtime_nanos,
+        });
+    }
+    Some(stamps)
+}
+
+fn binary_stamp(path: &Path) -> Option<(u64, u64, u32)> {
+    let metadata = std::fs::metadata(path).ok()?;
+    let modified = metadata.modified().ok()?;
+    let duration = modified.duration_since(UNIX_EPOCH).ok()?;
+    Some((metadata.len(), duration.as_secs(), duration.subsec_nanos()))
 }
 
 fn emit_json(value: serde_json::Value) {

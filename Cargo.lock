@@ -789,6 +789,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "kiseki-bench"
+version = "2.0.0"
+dependencies = [
+ "kiseki-adapters",
+ "kiseki-compiler",
+ "kiseki-pkg",
+ "kiseki-platform",
+ "kiseki-schema",
+ "kiseki-shader",
+ "kiseki-state",
+ "kiseki-tx",
+ "kiseki-types",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "kiseki-cli"
 version = "2.0.0"
 dependencies = [
@@ -834,6 +851,7 @@ dependencies = [
  "kiseki-types",
  "serde",
  "serde_json",
+ "sha2 0.11.2",
  "tempfile",
 ]
 
@@ -867,6 +885,7 @@ dependencies = [
  "kiseki-types",
  "naga",
  "regex",
+ "serde",
  "serde_json",
  "tempfile",
 ]

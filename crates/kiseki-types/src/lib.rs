@@ -17,7 +17,7 @@ pub use color::{Color, Oklch};
 pub use diagnostic::{Diagnostic, DiagnosticReport, DiagnosticSeverity};
 pub use env::{Appearance, EnvContext, Multiplexer, OsKind, PowerSource};
 pub use error::{KisekiError, Result};
-pub use policy::PromptPolicy;
+pub use policy::{Durability, PromptPolicy};
 pub use rendering::RenderingProfile;
 
 /// A validated lowercase kebab-case theme identifier (`^[a-z0-9][a-z0-9-]{1,47}$`).

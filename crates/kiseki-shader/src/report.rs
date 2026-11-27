@@ -1,11 +1,12 @@
 //! Validation report types shared by the GLSL and HLSL pipelines.
 
 use kiseki_types::{Diagnostic, DiagnosticSeverity, RenderingProfile};
+use serde::{Deserialize, Serialize};
 
 use crate::lint::SourceLint;
 
 /// Which shader language a report describes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ShaderStage {
     Glsl,
     Hlsl,
@@ -35,7 +36,7 @@ impl std::fmt::Display for ShaderStage {
 }
 
 /// Everything validation learned about one shader at one profile.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ShaderReport {
     pub stage: ShaderStage,
     pub profile: RenderingProfile,

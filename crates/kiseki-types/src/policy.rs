@@ -22,6 +22,51 @@ pub enum PromptPolicy {
     Disabled,
 }
 
+/// Persistence strategy for transaction file writes (`config.toml`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum Durability {
+    /// Fsync every temporary file and parent directory per file write.
+    Full,
+    /// Batch fsyncs per transaction directory and skip fsyncing regenerable
+    /// backups/artifacts that can be rebuilt from theme packs.
+    #[default]
+    Batch,
+    /// Atomic sibling-temp + rename without explicit fsyncs.
+    None,
+}
+
+impl Durability {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Full => "full",
+            Self::Batch => "batch",
+            Self::None => "none",
+        }
+    }
+}
+
+impl std::fmt::Display for Durability {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl std::str::FromStr for Durability {
+    type Err = KisekiError;
+
+    fn from_str(s: &str) -> Result<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "full" => Ok(Self::Full),
+            "batch" => Ok(Self::Batch),
+            "none" => Ok(Self::None),
+            other => Err(KisekiError::other(format!(
+                "invalid durability {other:?}: expected full|batch|none"
+            ))),
+        }
+    }
+}
+
 impl PromptPolicy {
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -96,5 +141,17 @@ mod tests {
         );
         let parsed: PromptPolicy = serde_json::from_str("\"disabled\"").unwrap();
         assert_eq!(parsed, PromptPolicy::Disabled);
+    }
+
+    #[test]
+    fn durability_parsing_and_serde() {
+        assert_eq!(Durability::default(), Durability::Batch);
+        assert_eq!("full".parse::<Durability>().unwrap(), Durability::Full);
+        assert_eq!("Batch".parse::<Durability>().unwrap(), Durability::Batch);
+        assert_eq!("NONE".parse::<Durability>().unwrap(), Durability::None);
+        assert!("bogus".parse::<Durability>().is_err());
+        assert_eq!(Durability::Full.as_str(), "full");
+        assert_eq!(Durability::Batch.to_string(), "batch");
+        assert_eq!(serde_json::to_string(&Durability::None).unwrap(), "\"none\"");
     }
 }

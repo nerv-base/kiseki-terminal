@@ -62,6 +62,18 @@ impl PathKind {
     }
 }
 
+/// How strictly an atomic write flushes data and directory metadata to disk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyncMode {
+    /// Fsync temporary file before rename and fsync parent directory after rename.
+    Full,
+    /// Fsync temporary file before rename, skipping parent directory sync so
+    /// the caller can call [`sync_dir`] once for a batch.
+    FileOnly,
+    /// Atomic sibling temporary file + rename without any fsync.
+    AtomicNoSync,
+}
+
 /// Result of a symlink-aware write.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WriteOutcome {
@@ -196,27 +208,34 @@ pub fn read_bytes(path: &Path) -> Result<Option<Vec<u8>>> {
     }
 }
 
-/// Atomically replaces `path` with `contents`.
+/// Atomically replaces `path` with `contents` using [`SyncMode::Full`].
 ///
 /// Writes a sibling temp file, fsyncs it, then renames over the destination so
 /// a crash can never leave a half-written config behind.
 pub fn atomic_write(path: &Path, contents: &[u8]) -> Result<()> {
+    atomic_write_with_sync(path, contents, SyncMode::Full)
+}
+
+/// Atomically replaces `path` with `contents` under the requested [`SyncMode`].
+pub fn atomic_write_with_sync(path: &Path, contents: &[u8], sync: SyncMode) -> Result<()> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(parent).map_err(|error| KisekiError::io(parent, error))?;
 
     let mut temp = tempfile::NamedTempFile::new_in(parent).map_err(|error| KisekiError::io(parent, error))?;
     temp.write_all(contents)
         .map_err(|error| KisekiError::io(temp.path(), error))?;
-    temp.as_file()
-        .sync_all()
-        .map_err(|error| KisekiError::io(temp.path(), error))?;
+    if matches!(sync, SyncMode::Full | SyncMode::FileOnly) {
+        temp.as_file()
+            .sync_all()
+            .map_err(|error| KisekiError::io(temp.path(), error))?;
+    }
 
     match temp.persist(path) {
         Ok(_) => {}
         Err(error) => {
             // Windows refuses to rename over an existing file; removing the
-            // destination first is still crash-safe because the temp file is
-            // fully written and fsynced.
+            // destination first is still crash-safe when the temp file is
+            // fully written (and fsynced when required).
             let io_error = error.error;
             if path.exists() {
                 fs::remove_file(path).map_err(|remove_error| KisekiError::io(path, remove_error))?;
@@ -229,25 +248,50 @@ pub fn atomic_write(path: &Path, contents: &[u8]) -> Result<()> {
         }
     }
 
-    #[cfg(unix)]
-    {
-        // Persist the directory entry too, otherwise a power loss can forget the
-        // rename even though the data blocks are on disk.
-        if let Ok(dir) = fs::File::open(parent) {
-            let _ = dir.sync_all();
-        }
+    if sync == SyncMode::Full {
+        sync_dir(parent)?;
     }
 
     Ok(())
 }
 
-/// Writes through symlinks instead of replacing them.
+/// Fsyncs directory metadata on Unix after a batch of atomic renames.
+pub fn sync_dir(dir: &Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        // Persist the directory entry too, otherwise a power loss can forget the
+        // rename even though the data blocks are on disk.
+        match fs::File::open(dir) {
+            Ok(handle) => {
+                let _ = handle.sync_all();
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(KisekiError::io(dir, error)),
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = dir;
+    }
+    Ok(())
+}
+
+/// Writes through symlinks instead of replacing them, using [`SyncMode::Full`].
 pub fn write_preserving_symlinks(path: &Path, contents: &[u8]) -> Result<WriteOutcome> {
+    write_preserving_symlinks_with_sync(path, contents, SyncMode::Full)
+}
+
+/// Writes through symlinks instead of replacing them under the requested [`SyncMode`].
+pub fn write_preserving_symlinks_with_sync(
+    path: &Path,
+    contents: &[u8],
+    sync: SyncMode,
+) -> Result<WriteOutcome> {
     let kind = inspect_path(path);
     match kind {
         PathKind::Missing | PathKind::Regular => {
             let created = !path.exists();
-            atomic_write(path, contents)?;
+            atomic_write_with_sync(path, contents, sync)?;
             Ok(WriteOutcome::Written {
                 path: path.to_path_buf(),
                 created,
@@ -255,7 +299,7 @@ pub fn write_preserving_symlinks(path: &Path, contents: &[u8]) -> Result<WriteOu
         }
         PathKind::WritableSymlink(target) => {
             let created = !target.exists();
-            atomic_write(&target, contents)?;
+            atomic_write_with_sync(&target, contents, sync)?;
             // The link itself is untouched: that is the whole point.
             Ok(WriteOutcome::Written {
                 path: target,
@@ -440,5 +484,37 @@ mod tests {
         assert_eq!(read_bytes(&dir.path().join("nope")).unwrap(), None);
         assert!(list_dir(&dir.path().join("nope")).unwrap().is_empty());
         remove_file(&dir.path().join("nope")).unwrap();
+    }
+
+    #[test]
+    fn sync_modes_preserve_symlinks_and_skip_readonly() {
+        let dir = tempdir();
+        for mode in [SyncMode::Full, SyncMode::FileOnly, SyncMode::AtomicNoSync] {
+            let file = dir.path().join(format!("file-{mode:?}"));
+            let outcome = write_preserving_symlinks_with_sync(&file, b"one", mode).unwrap();
+            assert!(outcome.is_written());
+            assert_eq!(fs::read_to_string(&file).unwrap(), "one");
+
+            let target = dir.path().join(format!("target-{mode:?}"));
+            fs::write(&target, "before").unwrap();
+            let link = dir.path().join(format!("link-{mode:?}"));
+            if symlink(&target, &link) {
+                let outcome = write_preserving_symlinks_with_sync(&link, b"after", mode).unwrap();
+                assert!(outcome.is_written());
+                assert!(fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+                assert_eq!(fs::read_to_string(&target).unwrap(), "after");
+            }
+
+            let locked = dir.path().join(format!("locked-{mode:?}"));
+            fs::write(&locked, "stay").unwrap();
+            let mut perms = fs::metadata(&locked).unwrap().permissions();
+            perms.set_readonly(true);
+            fs::set_permissions(&locked, perms).unwrap();
+            let outcome = write_preserving_symlinks_with_sync(&locked, b"nope", mode).unwrap();
+            assert!(matches!(outcome, WriteOutcome::SkippedReadOnly { .. }));
+            assert_eq!(fs::read_to_string(&locked).unwrap(), "stay");
+        }
+        sync_dir(dir.path()).unwrap();
+        sync_dir(&dir.path().join("missing-dir")).unwrap();
     }
 }

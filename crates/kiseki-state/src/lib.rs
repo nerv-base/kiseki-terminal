@@ -12,8 +12,8 @@
 
 use std::path::{Path, PathBuf};
 
-use kiseki_platform::{KisekiPaths, Platform, WriteOutcome};
-use kiseki_types::{KisekiError, PromptPolicy, RenderingProfile, Result, ThemeId};
+use kiseki_platform::{KisekiPaths, Platform, SyncMode, WriteOutcome};
+use kiseki_types::{Durability, KisekiError, PromptPolicy, RenderingProfile, Result, ThemeId};
 use serde::{Deserialize, Serialize};
 
 /// Schema version of `state.json` and `config.toml`.
@@ -185,11 +185,25 @@ impl State {
 
     /// Writes `state.json` atomically. Does not touch `state.gen`.
     pub fn save(&self, platform: &dyn Platform, paths: &KisekiPaths) -> Result<()> {
+        self.save_with_sync(platform, paths, SyncMode::Full)
+    }
+
+    /// Writes `state.json` atomically under the given [`SyncMode`].
+    pub fn save_with_sync(
+        &self,
+        platform: &dyn Platform,
+        paths: &KisekiPaths,
+        sync: SyncMode,
+    ) -> Result<()> {
         let encoded = serde_json::to_string_pretty(self).map_err(|error| KisekiError::Json(error.to_string()))?;
         platform
             .create_dir_all(paths.config_dir())?;
         reject_read_only(
-            platform.write_preserving_symlinks(&paths.state_file(), format!("{encoded}\n").as_bytes())?,
+            platform.write_preserving_symlinks_with_sync(
+                &paths.state_file(),
+                format!("{encoded}\n").as_bytes(),
+                sync,
+            )?,
             &paths.state_file(),
         )?;
         Ok(())
@@ -204,11 +218,22 @@ impl State {
 
     /// Writes `state.gen` atomically. Called *after* `save`.
     pub fn write_gen(&self, platform: &dyn Platform, paths: &KisekiPaths) -> Result<()> {
+        self.write_gen_with_sync(platform, paths, SyncMode::Full)
+    }
+
+    /// Writes `state.gen` atomically under the given [`SyncMode`].
+    pub fn write_gen_with_sync(
+        &self,
+        platform: &dyn Platform,
+        paths: &KisekiPaths,
+        sync: SyncMode,
+    ) -> Result<()> {
         platform.create_dir_all(paths.config_dir())?;
         reject_read_only(
-            platform.write_preserving_symlinks(
+            platform.write_preserving_symlinks_with_sync(
                 &paths.gen_file(),
                 format!("{}\n", self.generation).as_bytes(),
+                sync,
             )?,
             &paths.gen_file(),
         )?;
@@ -225,9 +250,36 @@ impl State {
 
     /// Saves the state and then advances the generation file.
     pub fn commit(&mut self, platform: &dyn Platform, paths: &KisekiPaths) -> Result<u64> {
+        self.commit_with_durability(platform, paths, Durability::Full)
+    }
+
+    /// Saves the state and advances `state.gen` according to `durability`.
+    ///
+    /// Under `Batch`, `state.json` is file-synced before `state.gen` is renamed
+    /// and the parent directory is synced once at the end, keeping `state.json`
+    /// durable ahead of `state.gen` with half as many fsyncs.
+    pub fn commit_with_durability(
+        &mut self,
+        platform: &dyn Platform,
+        paths: &KisekiPaths,
+        durability: Durability,
+    ) -> Result<u64> {
         let generation = self.bump(&platform.now_rfc3339());
-        self.save(platform, paths)?;
-        self.write_gen(platform, paths)?;
+        match durability {
+            Durability::Full => {
+                self.save_with_sync(platform, paths, SyncMode::Full)?;
+                self.write_gen_with_sync(platform, paths, SyncMode::Full)?;
+            }
+            Durability::Batch => {
+                self.save_with_sync(platform, paths, SyncMode::FileOnly)?;
+                self.write_gen_with_sync(platform, paths, SyncMode::AtomicNoSync)?;
+                platform.sync_dir(paths.config_dir())?;
+            }
+            Durability::None => {
+                self.save_with_sync(platform, paths, SyncMode::AtomicNoSync)?;
+                self.write_gen_with_sync(platform, paths, SyncMode::AtomicNoSync)?;
+            }
+        }
         Ok(generation)
     }
 
@@ -261,6 +313,8 @@ pub struct Config {
     pub auto_update_check: bool,
     /// Extra theme directories to scan for community packs.
     pub theme_dirs: Vec<PathBuf>,
+    /// Persistence strategy for transaction writes (`full` | `batch` | `none`).
+    pub durability: Durability,
 }
 
 impl Default for Config {
@@ -274,6 +328,7 @@ impl Default for Config {
             dpi_scale: 1.25,
             auto_update_check: false,
             theme_dirs: Vec::new(),
+            durability: Durability::Batch,
         }
     }
 }
@@ -527,12 +582,58 @@ mod tests {
             dpi_scale: 1.5,
             auto_update_check: true,
             theme_dirs: vec![PathBuf::from("/themes/extra")],
+            durability: Durability::Full,
         };
         config.save(&platform, &paths).unwrap();
         let loaded = Config::load(&platform, &paths).unwrap();
         assert_eq!(loaded, config);
         assert!(loaded.adapter_enabled("ghostty"));
         assert!(!loaded.adapter_enabled("zsh"));
+    }
+
+    #[test]
+    fn durability_defaults_to_batch_and_parses_all_variants() {
+        let (_dir, platform) = platform();
+        let paths = platform.paths().clone();
+        platform
+            .write_preserving_symlinks(&paths.config_file(), b"renderOnly = true\n")
+            .unwrap();
+        let loaded = Config::load(&platform, &paths).unwrap();
+        assert_eq!(loaded.durability, Durability::Batch);
+        assert!(loaded.render_only);
+
+        for (raw, expected) in [
+            ("durability = \"full\"\n", Durability::Full),
+            ("durability = \"batch\"\n", Durability::Batch),
+            ("durability = \"none\"\n", Durability::None),
+        ] {
+            platform
+                .write_preserving_symlinks(&paths.config_file(), raw.as_bytes())
+                .unwrap();
+            assert_eq!(Config::load(&platform, &paths).unwrap().durability, expected);
+        }
+    }
+
+    #[test]
+    fn commit_with_durability_respects_sync_modes() {
+        let (_dir, platform) = platform();
+        let paths = platform.paths().clone();
+
+        let mut state = State::new(theme("nerv-eva"), "2026-11-26T09:15:00Z");
+        platform.reset_sync_stats();
+        state.commit_with_durability(&platform, &paths, Durability::Batch).unwrap();
+        let stats = platform.sync_stats();
+        assert_eq!(stats.file_only_writes, 1);
+        assert_eq!(stats.no_sync_writes, 1);
+        assert_eq!(stats.dir_syncs, 1);
+        assert_eq!(stats.full_writes, 0);
+
+        platform.reset_sync_stats();
+        state.commit_with_durability(&platform, &paths, Durability::None).unwrap();
+        let stats = platform.sync_stats();
+        assert_eq!(stats.no_sync_writes, 2);
+        assert_eq!(stats.dir_syncs, 0);
+        assert_eq!(stats.full_writes, 0);
     }
 
     #[test]

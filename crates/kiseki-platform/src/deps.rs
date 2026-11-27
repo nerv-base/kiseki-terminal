@@ -287,7 +287,30 @@ impl std::fmt::Display for Summary {
 }
 
 pub fn probe_all(platform: &dyn Platform) -> Vec<ToolProbe> {
-    TOOLS.iter().map(|tool| probe(platform, tool)).collect()
+    probe_all_cached(platform, false, |_, _| None, |_, _, _| {})
+}
+
+/// Probes every tool in [`TOOLS`], allowing callers to cache `--version`
+/// results by binary path/metadata and skip version subprocesses for
+/// unconstrained tools when only [`Summary`] is needed.
+pub fn probe_all_cached(
+    platform: &dyn Platform,
+    summary_only: bool,
+    mut lookup_version: impl FnMut(&ToolSpec, &Path) -> Option<Option<String>>,
+    mut store_version: impl FnMut(&ToolSpec, &Path, Option<&str>),
+) -> Vec<ToolProbe> {
+    TOOLS
+        .iter()
+        .map(|tool| {
+            probe_with(
+                platform,
+                tool,
+                summary_only,
+                &mut lookup_version,
+                &mut store_version,
+            )
+        })
+        .collect()
 }
 
 pub fn installer_bin(platform: &dyn Platform) -> PathBuf {
@@ -328,6 +351,7 @@ fn locate(platform: &dyn Platform, tool: &ToolSpec) -> Option<(ToolStatus, PathB
         ProbeKind::KnownPaths(paths) | ProbeKind::KnownPathsOrVendored(paths) => {
             let system = paths
                 .iter()
+                .filter(|path| known_path_applicable(platform.os(), path))
                 .map(Path::new)
                 .find(|path| platform.exists(path))
                 .map(Path::to_path_buf);
@@ -348,24 +372,55 @@ fn locate(platform: &dyn Platform, tool: &ToolSpec) -> Option<(ToolStatus, PathB
     })
 }
 
+fn known_path_applicable(os: OsKind, path: &str) -> bool {
+    match os {
+        // On macOS `/home` triggers an `automountd` kernel RPC (~15 ms/miss).
+        OsKind::MacOs => !path.starts_with("/home/"),
+        OsKind::Windows => !path.starts_with('/'),
+        OsKind::Linux => true,
+    }
+}
+
+#[cfg(test)]
 fn probe(platform: &dyn Platform, tool: &ToolSpec) -> ToolProbe {
+    probe_with(platform, tool, false, &mut |_, _| None, &mut |_, _, _| {})
+}
+
+fn probe_with(
+    platform: &dyn Platform,
+    tool: &ToolSpec,
+    summary_only: bool,
+    lookup_version: &mut dyn FnMut(&ToolSpec, &Path) -> Option<Option<String>>,
+    store_version: &mut dyn FnMut(&ToolSpec, &Path, Option<&str>),
+) -> ToolProbe {
     let found = locate(platform, tool);
-    let version = found
-        .as_ref()
-        .filter(|_| tool.probe == ProbeKind::OnPath)
-        .and_then(|(_, path)| path.to_str())
-        .and_then(|path| platform.run(path, &["--version"]).ok())
-        .filter(|output| output.success())
-        .and_then(|output| {
-            output
-                .stdout
-                .split_whitespace()
-                .chain(output.stderr.split_whitespace())
-                .find_map(|word| {
-                    let word = word.strip_prefix('v').unwrap_or(word);
-                    version_parts(word).map(|_| word.to_string())
-                })
-        });
+    let need_version = tool.probe == ProbeKind::OnPath
+        && (!summary_only || matches!(tool.version_range, VersionRange::Major(_)));
+    let version = if need_version {
+        found.as_ref().and_then(|(_, path)| {
+            if let Some(cached) = lookup_version(tool, path) {
+                return cached;
+            }
+            let parsed = path
+                .to_str()
+                .and_then(|path_str| platform.run(path_str, &["--version"]).ok())
+                .filter(|output| output.success())
+                .and_then(|output| {
+                    output
+                        .stdout
+                        .split_whitespace()
+                        .chain(output.stderr.split_whitespace())
+                        .find_map(|word| {
+                            let word = word.strip_prefix('v').unwrap_or(word);
+                            version_parts(word).map(|_| word.to_string())
+                        })
+                });
+            store_version(tool, path, parsed.as_deref());
+            parsed
+        })
+    } else {
+        None
+    };
     let compatible = match tool.version_range {
         VersionRange::Major(_) => version
             .as_deref()
@@ -465,5 +520,98 @@ mod tests {
         for version in ["1.99.0", "2.0.0-rc.1", "3.0.0"] {
             assert!(!range.accepts_binary(version), "{version}");
         }
+    }
+
+    #[test]
+    fn linuxbrew_known_paths_are_skipped_on_macos() {
+        use std::sync::Mutex;
+
+        struct ProbeRecorder {
+            inner: MockPlatform,
+            probed: Mutex<Vec<PathBuf>>,
+        }
+
+        impl Platform for ProbeRecorder {
+            fn os(&self) -> OsKind {
+                self.inner.os()
+            }
+            fn paths(&self) -> &crate::KisekiPaths {
+                self.inner.paths()
+            }
+            fn env_var(&self, key: &str) -> Option<String> {
+                self.inner.env_var(key)
+            }
+            fn read_to_string(&self, path: &Path) -> kiseki_types::Result<Option<String>> {
+                self.inner.read_to_string(path)
+            }
+            fn read_bytes(&self, path: &Path) -> kiseki_types::Result<Option<Vec<u8>>> {
+                self.inner.read_bytes(path)
+            }
+            fn inspect(&self, path: &Path) -> crate::PathKind {
+                self.inner.inspect(path)
+            }
+            fn write_preserving_symlinks(
+                &self,
+                path: &Path,
+                contents: &[u8],
+            ) -> kiseki_types::Result<crate::WriteOutcome> {
+                self.inner.write_preserving_symlinks(path, contents)
+            }
+            fn remove_file(&self, path: &Path) -> kiseki_types::Result<()> {
+                self.inner.remove_file(path)
+            }
+            fn create_dir_all(&self, path: &Path) -> kiseki_types::Result<()> {
+                self.inner.create_dir_all(path)
+            }
+            fn list_dir(&self, path: &Path) -> kiseki_types::Result<Vec<PathBuf>> {
+                self.inner.list_dir(path)
+            }
+            fn exists(&self, path: &Path) -> bool {
+                self.probed.lock().unwrap().push(path.to_path_buf());
+                false
+            }
+            fn run(&self, program: &str, args: &[&str]) -> kiseki_types::Result<CommandOutput> {
+                self.inner.run(program, args)
+            }
+            fn which(&self, program: &str) -> Option<PathBuf> {
+                self.inner.which(program)
+            }
+            fn process_alive(&self, pid: u32) -> bool {
+                self.inner.process_alive(pid)
+            }
+            fn now_rfc3339(&self) -> String {
+                self.inner.now_rfc3339()
+            }
+        }
+
+        const KNOWN: &[&str] = &[
+            "/opt/mockbrew/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh",
+            "/home/linuxbrew/.linuxbrew/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh",
+        ];
+        let spec = ToolSpec {
+            probe: ProbeKind::KnownPaths(KNOWN),
+            ..TOOLS[6]
+        };
+
+        let dir = tempfile::tempdir().unwrap();
+        let inner = MockPlatform::new(dir.path());
+        inner.set_os(OsKind::MacOs);
+        let mac_rec = ProbeRecorder {
+            inner,
+            probed: Mutex::new(Vec::new()),
+        };
+        let _ = probe(&mac_rec, &spec);
+        let mac_probed = mac_rec.probed.lock().unwrap();
+        assert!(!mac_probed.iter().any(|p| p.starts_with("/home/linuxbrew")));
+
+        let inner_linux = MockPlatform::new(dir.path());
+        inner_linux.set_os(OsKind::Linux);
+        let linux_rec = ProbeRecorder {
+            inner: inner_linux,
+            probed: Mutex::new(Vec::new()),
+        };
+        let _ = probe(&linux_rec, &spec);
+        let linux_probed = linux_rec.probed.lock().unwrap();
+        assert!(linux_probed.iter().any(|p| p.starts_with("/home/linuxbrew")));
     }
 }

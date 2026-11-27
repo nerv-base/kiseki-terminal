@@ -85,6 +85,26 @@ pub fn validate_config(platform: &dyn Platform, config_path: &Path) -> Result<Op
     }))
 }
 
+const GHOSTTY_VERSION_CACHE_VERSION: u32 = 1;
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct CachedGhosttyVersion {
+    version: u32,
+    path: String,
+    len: u64,
+    mtime_secs: u64,
+    mtime_nanos: u32,
+    major: u64,
+    minor: u64,
+}
+
+fn binary_stamp(path: &Path) -> Option<(u64, u64, u32)> {
+    let metadata = std::fs::metadata(path).ok()?;
+    let modified = metadata.modified().ok()?;
+    let duration = modified.duration_since(std::time::UNIX_EPOCH).ok()?;
+    Some((metadata.len(), duration.as_secs(), duration.subsec_nanos()))
+}
+
 /// Parses `ghostty --version` into `(major, minor)`.
 ///
 /// Accepts the shapes Ghostty actually prints: `Ghostty 1.3.1`, `ghostty
@@ -92,11 +112,52 @@ pub fn validate_config(platform: &dyn Platform, config_path: &Path) -> Result<Op
 /// unavailable or its version cannot be understood.
 pub fn version_of(platform: &dyn Platform) -> Option<(u64, u64)> {
     let binary = find_binary(platform)?;
-    let output = platform.run(&binary.to_string_lossy(), &["--version"]).ok()?;
+    let allow_read = !platform.is_mock();
+    let allow_write = allow_read && platform.allow_cache_writes();
+    let stamp = allow_read.then(|| binary_stamp(&binary)).flatten();
+    let cache_path = allow_read.then(|| platform.paths().cache_dir().join("ghostty-version.json"));
+    let binary_key = binary.to_string_lossy();
+    if let (Some((len, mtime_secs, mtime_nanos)), Some(path)) = (stamp, cache_path.as_deref()) {
+        if let Some(cached) = std::fs::read_to_string(path)
+            .ok()
+            .and_then(|raw| serde_json::from_str::<CachedGhosttyVersion>(&raw).ok())
+        {
+            if cached.version == GHOSTTY_VERSION_CACHE_VERSION
+                && cached.path == binary_key
+                && cached.len == len
+                && cached.mtime_secs == mtime_secs
+                && cached.mtime_nanos == mtime_nanos
+            {
+                return Some((cached.major, cached.minor));
+            }
+        }
+    }
+    let output = platform.run(&binary_key, &["--version"]).ok()?;
     if !output.success() {
         return None;
     }
-    parse_version(&output.stdout).or_else(|| parse_version(&output.stderr))
+    let parsed = parse_version(&output.stdout).or_else(|| parse_version(&output.stderr))?;
+    if allow_write {
+        if let (Some((len, mtime_secs, mtime_nanos)), Some(path)) = (stamp, cache_path.as_deref()) {
+            let entry = CachedGhosttyVersion {
+                version: GHOSTTY_VERSION_CACHE_VERSION,
+                path: binary_key.into_owned(),
+                len,
+                mtime_secs,
+                mtime_nanos,
+                major: parsed.0,
+                minor: parsed.1,
+            };
+            if let Ok(encoded) = serde_json::to_vec(&entry) {
+                let _ = crate::fs::atomic_write_with_sync(
+                    path,
+                    &encoded,
+                    crate::fs::SyncMode::AtomicNoSync,
+                );
+            }
+        }
+    }
+    Some(parsed)
 }
 
 /// Extracts the first `major.minor` pair from a version banner.
@@ -493,5 +554,124 @@ mod tests {
             "config-file = ?/home/zz/.config/kiseki/generated/ghostty.conf"
         );
         assert!(include_line(Path::new("/tmp/a\nb")).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn version_of_respects_allow_cache_writes_and_caches_when_enabled() {
+        use std::os::unix::fs::PermissionsExt;
+
+        struct SystemWrapper {
+            inner: crate::platform::SystemPlatform,
+            ghostty_bin: String,
+        }
+
+        impl Platform for SystemWrapper {
+            fn os(&self) -> OsKind {
+                self.inner.os()
+            }
+            fn paths(&self) -> &crate::KisekiPaths {
+                self.inner.paths()
+            }
+            fn env_var(&self, key: &str) -> Option<String> {
+                if key == "KISEKI_GHOSTTY_BIN" {
+                    Some(self.ghostty_bin.clone())
+                } else {
+                    None
+                }
+            }
+            fn read_to_string(&self, path: &Path) -> Result<Option<String>> {
+                self.inner.read_to_string(path)
+            }
+            fn read_bytes(&self, path: &Path) -> Result<Option<Vec<u8>>> {
+                self.inner.read_bytes(path)
+            }
+            fn inspect(&self, path: &Path) -> crate::PathKind {
+                self.inner.inspect(path)
+            }
+            fn write_preserving_symlinks(
+                &self,
+                path: &Path,
+                contents: &[u8],
+            ) -> Result<crate::WriteOutcome> {
+                self.inner.write_preserving_symlinks(path, contents)
+            }
+            fn remove_file(&self, path: &Path) -> Result<()> {
+                self.inner.remove_file(path)
+            }
+            fn create_dir_all(&self, path: &Path) -> Result<()> {
+                self.inner.create_dir_all(path)
+            }
+            fn list_dir(&self, path: &Path) -> Result<Vec<PathBuf>> {
+                self.inner.list_dir(path)
+            }
+            fn exists(&self, path: &Path) -> bool {
+                self.inner.exists(path)
+            }
+            fn run(&self, program: &str, args: &[&str]) -> Result<crate::CommandOutput> {
+                self.inner.run(program, args)
+            }
+            fn which(&self, program: &str) -> Option<PathBuf> {
+                self.inner.which(program)
+            }
+            fn process_alive(&self, pid: u32) -> bool {
+                self.inner.process_alive(pid)
+            }
+            fn now_rfc3339(&self) -> String {
+                self.inner.now_rfc3339()
+            }
+            fn allow_cache_writes(&self) -> bool {
+                self.inner.allow_cache_writes()
+            }
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("kiseki-home");
+        let counter_file = dir.path().join("count.txt");
+        let script = dir.path().join("fake-ghostty");
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\necho x >> {}\necho 'Ghostty 1.4.0'\n",
+                counter_file.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let make_paths = || {
+            let home_str = home.to_string_lossy().into_owned();
+            crate::KisekiPaths::from_env(OsKind::current(), &|key| match key {
+                "KISEKI_HOME" => Some(home_str.clone()),
+                _ => None,
+            })
+        };
+        let cache_file = make_paths().cache_dir().join("ghostty-version.json");
+
+        // Under `--dry-run`, `version_of` must not create `ghostty-version.json` or `cache/`.
+        let dry = SystemWrapper {
+            inner: crate::platform::SystemPlatform::new(make_paths()).with_dry_run(true),
+            ghostty_bin: script.to_string_lossy().into_owned(),
+        };
+        assert_eq!(version_of(&dry), Some((1, 4)));
+        assert!(!cache_file.exists());
+        assert!(!home.exists());
+        assert_eq!(std::fs::read_to_string(&counter_file).unwrap().lines().count(), 1);
+
+        // With cache writes allowed, first call writes cache and second call hits cache.
+        let live = SystemWrapper {
+            inner: crate::platform::SystemPlatform::new(make_paths()).with_dry_run(false),
+            ghostty_bin: script.to_string_lossy().into_owned(),
+        };
+        assert_eq!(version_of(&live), Some((1, 4)));
+        assert!(cache_file.is_file());
+        assert_eq!(std::fs::read_to_string(&counter_file).unwrap().lines().count(), 2);
+
+        assert_eq!(version_of(&live), Some((1, 4)));
+        assert_eq!(std::fs::read_to_string(&counter_file).unwrap().lines().count(), 2);
+
+        // Even under `--dry-run`, an existing valid cache is still reused read-only.
+        assert_eq!(version_of(&dry), Some((1, 4)));
+        assert_eq!(std::fs::read_to_string(&counter_file).unwrap().lines().count(), 2);
     }
 }
