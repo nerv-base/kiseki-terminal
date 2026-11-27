@@ -1,0 +1,78 @@
+
+group      scenario                                          iters      median        mean       cv%       ops/s
+------------------------------------------------------------------------------------------------------
+parse      tokens.json · nerv-eva                             4923    18.01 µs    18.06 µs      0.8%       55.5k
+parse      manifest.json · nerv-eva                          33103     3.37 µs     3.66 µs     27.1%      296.4k
+parse      bundled pack (json+assets) · nerv-eva              4881    21.76 µs    21.75 µs      0.2%       46.0k
+parse      tokens.json · kyoto-sakura                         6605    17.85 µs    17.94 µs      0.9%       56.0k
+parse      manifest.json · kyoto-sakura                      35992     2.78 µs     2.78 µs      0.8%      359.9k
+parse      bundled pack (json+assets) · kyoto-sakura          4528    23.61 µs    61.40 µs    123.0%       42.4k
+parse      tokens.json · shinkai-rain                         4776    17.57 µs    17.85 µs      4.7%       56.9k
+parse      manifest.json · shinkai-rain                      33888     3.04 µs     3.00 µs      6.9%      328.5k
+parse      bundled pack (json+assets) · shinkai-rain          4965    22.57 µs    22.68 µs      3.8%       44.3k
+parse      tokens.json · starlight-8bit                       6682    18.57 µs    19.72 µs     19.7%       53.8k
+parse      manifest.json · starlight-8bit                    33879     2.83 µs     2.83 µs      0.7%      353.6k
+parse      bundled pack (json+assets) · starlight-8bit        4923    21.94 µs    22.02 µs      2.6%       45.6k
+resolve    L1→L2 balanced · nerv-eva                         40000     2.88 µs     3.16 µs     14.0%      347.7k
+resolve    L1→L2 balanced · kyoto-sakura                     38400     3.09 µs     3.30 µs     15.8%      324.1k
+resolve    L1→L2 balanced · shinkai-rain                     37890     3.09 µs     3.09 µs      0.6%      323.3k
+resolve    L1→L2 balanced · starlight-8bit                   40000     2.92 µs     2.93 µs      1.2%      342.2k
+resolve    L1→L2 static · nerv-eva                           40567     4.45 µs     4.59 µs     26.8%      224.5k
+resolve    L1→L2 eco · nerv-eva                              30000     4.00 µs     5.86 µs     52.3%      249.8k
+resolve    L1→L2 ultra · nerv-eva                            35555     2.85 µs     2.85 µs      1.2%      351.2k
+resolve    L1→L2 accessibility · nerv-eva                     1374    87.87 µs    87.92 µs      0.4%       11.4k
+resolve    WCAG contrast report · nerv-eva                   68571     1.30 µs     1.33 µs      5.1%      772.1k
+resolve    WCAG contrast report · kyoto-sakura               84685     1.44 µs     1.50 µs     12.9%      693.4k
+resolve    WCAG contrast report · shinkai-rain               87272     1.41 µs     1.40 µs      0.4%      711.7k
+resolve    WCAG contrast report · starlight-8bit             87272     1.39 µs     1.46 µs     13.2%      720.7k
+shader     GLSL header+wrap · nerv-eva                       19458     4.42 µs     4.55 µs      5.3%      226.0k
+shader     GLSL naga validate · nerv-eva                        71    1.764 ms    1.759 ms      4.5%         567
+shader     HLSL naga validate · nerv-eva                       106    1.010 ms    1.012 ms      1.6%         990
+shader     GLSL header+wrap · kyoto-sakura                   27958     4.07 µs     4.10 µs      4.5%      245.8k
+shader     GLSL naga validate · kyoto-sakura                    74    1.589 ms    1.588 ms      0.8%         629
+shader     HLSL naga validate · kyoto-sakura                   119    1.001 ms    1.004 ms      0.9%         999
+shader     GLSL header+wrap · shinkai-rain                   27428     3.79 µs     3.79 µs      0.5%      264.2k
+shader     GLSL naga validate · shinkai-rain                    79    1.454 ms    1.555 ms     14.4%         688
+shader     HLSL naga validate · shinkai-rain                   127   931.17 µs   979.96 µs      7.7%        1.1k
+shader     GLSL header+wrap · starlight-8bit                 29090     5.26 µs     5.81 µs     53.4%      190.2k
+shader     GLSL naga validate · starlight-8bit                  57    1.490 ms    1.674 ms     22.4%         671
+shader     HLSL naga validate · starlight-8bit                 129   899.91 µs   900.50 µs      0.5%        1.1k
+compile    artifacts balanced · nerv-eva                        38    3.018 ms    3.098 ms      6.2%         331
+compile    artifacts balanced · kyoto-sakura                    39    3.137 ms    3.118 ms      2.0%         319
+compile    artifacts balanced · shinkai-rain                    38    2.794 ms    2.814 ms      1.4%         358
+compile    artifacts balanced · starlight-8bit                  43    2.656 ms    2.684 ms      2.5%         377
+compile    artifacts static · nerv-eva                         608   181.71 µs   182.70 µs      2.1%        5.5k
+adapters   ghostty detect                                     1900    53.44 µs    61.20 µs     23.9%       18.7k
+adapters   ghostty plan (dry-run)                           100000      736 ns      736 ns      0.5%       1.36M
+adapters   registry detect_all (6 adapters)                    481   241.85 µs   243.09 µs      1.9%        4.1k
+pkg        ThemeLibrary::open                               410958      352 ns      345 ns     24.1%       2.84M
+pkg        library list (4 official)                          3799    28.61 µs    28.85 µs      1.3%       35.0k
+pkg        load_readonly (dry-run) · nerv-eva                 3047    34.68 µs    35.22 µs      4.5%       28.8k
+pkg        load_readonly (dry-run) · kyoto-sakura             3495    34.29 µs    34.46 µs      1.4%       29.2k
+pkg        load_readonly (dry-run) · shinkai-rain             3453    33.83 µs    34.83 µs      6.8%       29.6k
+pkg        load_readonly (dry-run) · starlight-8bit           3486    34.37 µs    36.36 µs     12.7%       29.1k
+pkg        load (materialised) · nerv-eva                      186   618.76 µs   619.87 µs      1.6%        1.6k
+pkg        load (materialised) · kyoto-sakura                  178   612.22 µs   636.79 µs      6.2%        1.6k
+pkg        load (materialised) · shinkai-rain                  204   606.05 µs   606.69 µs      0.6%        1.7k
+pkg        load (materialised) · starlight-8bit                195   608.64 µs   614.59 µs      2.1%        1.6k
+pkg        validate pack dir · nerv-eva                         14    8.026 ms    7.991 ms      1.7%         125
+pkg        validate pack dir · kyoto-sakura                     14    8.134 ms    8.132 ms      1.1%         123
+pkg        validate pack dir · shinkai-rain                     15    7.464 ms    7.517 ms      1.4%         134
+pkg        validate pack dir · starlight-8bit                   17    7.111 ms    7.238 ms      5.9%         141
+state      State::load                                        4808    16.38 µs    16.38 µs      0.9%       61.0k
+state      State::save                                          14    8.219 ms    8.234 ms      1.0%         122
+state      State::read_gen (shell hot path)                   1935    14.83 µs    15.60 µs     10.2%       67.4k
+state      Config::load                                       4356    20.56 µs    22.34 µs     19.4%       48.6k
+state      env detect (capture_env+detect)                    7075    13.63 µs    14.78 µs     15.3%       73.4k
+tx         tx apply (generated only)                             4   26.793 ms   28.063 ms      9.4%          37
+tx         tx apply (full)                                       3   33.205 ms   33.427 ms      7.7%          30
+io         write 4 KiB (no fsync)                             2234    62.16 µs    63.28 µs      8.1%       16.1k
+io         write 4 KiB (fsync only)                             26    4.074 ms    4.248 ms      7.7%         245
+io         write 4 KiB (sync_all, F_FULLFSYNC)                  30    4.032 ms    4.032 ms      0.8%         248
+io         durable atomic write (platform)                      14    8.347 ms    8.403 ms      2.9%         120
+
+artifact bytes per theme:
+  nerv-eva           9 artifacts     33949 bytes
+  kyoto-sakura       9 artifacts     33274 bytes
+  shinkai-rain       9 artifacts     31838 bytes
+  starlight-8bit     9 artifacts     31753 bytes
