@@ -85,6 +85,26 @@ pub fn validate_config(platform: &dyn Platform, config_path: &Path) -> Result<Op
     }))
 }
 
+const GHOSTTY_VERSION_CACHE_VERSION: u32 = 1;
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct CachedGhosttyVersion {
+    version: u32,
+    path: String,
+    len: u64,
+    mtime_secs: u64,
+    mtime_nanos: u32,
+    major: u64,
+    minor: u64,
+}
+
+fn binary_stamp(path: &Path) -> Option<(u64, u64, u32)> {
+    let metadata = std::fs::metadata(path).ok()?;
+    let modified = metadata.modified().ok()?;
+    let duration = modified.duration_since(std::time::UNIX_EPOCH).ok()?;
+    Some((metadata.len(), duration.as_secs(), duration.subsec_nanos()))
+}
+
 /// Parses `ghostty --version` into `(major, minor)`.
 ///
 /// Accepts the shapes Ghostty actually prints: `Ghostty 1.3.1`, `ghostty
@@ -92,11 +112,49 @@ pub fn validate_config(platform: &dyn Platform, config_path: &Path) -> Result<Op
 /// unavailable or its version cannot be understood.
 pub fn version_of(platform: &dyn Platform) -> Option<(u64, u64)> {
     let binary = find_binary(platform)?;
-    let output = platform.run(&binary.to_string_lossy(), &["--version"]).ok()?;
+    let use_cache = !platform.is_mock();
+    let stamp = use_cache.then(|| binary_stamp(&binary)).flatten();
+    let cache_path = use_cache.then(|| platform.paths().cache_dir().join("ghostty-version.json"));
+    let binary_key = binary.to_string_lossy();
+    if let (Some((len, mtime_secs, mtime_nanos)), Some(path)) = (stamp, cache_path.as_deref()) {
+        if let Some(cached) = std::fs::read_to_string(path)
+            .ok()
+            .and_then(|raw| serde_json::from_str::<CachedGhosttyVersion>(&raw).ok())
+        {
+            if cached.version == GHOSTTY_VERSION_CACHE_VERSION
+                && cached.path == binary_key
+                && cached.len == len
+                && cached.mtime_secs == mtime_secs
+                && cached.mtime_nanos == mtime_nanos
+            {
+                return Some((cached.major, cached.minor));
+            }
+        }
+    }
+    let output = platform.run(&binary_key, &["--version"]).ok()?;
     if !output.success() {
         return None;
     }
-    parse_version(&output.stdout).or_else(|| parse_version(&output.stderr))
+    let parsed = parse_version(&output.stdout).or_else(|| parse_version(&output.stderr))?;
+    if let (Some((len, mtime_secs, mtime_nanos)), Some(path)) = (stamp, cache_path.as_deref()) {
+        let entry = CachedGhosttyVersion {
+            version: GHOSTTY_VERSION_CACHE_VERSION,
+            path: binary_key.into_owned(),
+            len,
+            mtime_secs,
+            mtime_nanos,
+            major: parsed.0,
+            minor: parsed.1,
+        };
+        if let Ok(encoded) = serde_json::to_vec(&entry) {
+            let _ = crate::fs::atomic_write_with_sync(
+                path,
+                &encoded,
+                crate::fs::SyncMode::AtomicNoSync,
+            );
+        }
+    }
+    Some(parsed)
 }
 
 /// Extracts the first `major.minor` pair from a version banner.

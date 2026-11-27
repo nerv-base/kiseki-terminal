@@ -13,7 +13,7 @@
 pub mod doctor;
 pub mod journal;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -26,11 +26,12 @@ use kiseki_adapters::{
     capture_baseline, patch_settings, restore_settings, WtBaseline,
 };
 use kiseki_compiler::ArtifactMap;
-use kiseki_platform::{PathKind, Platform, ReloadOutcome, WriteOutcome, LOCK_TIMEOUT};
+use kiseki_platform::{PathKind, Platform, ReloadOutcome, SyncMode, WriteOutcome, LOCK_TIMEOUT};
 use kiseki_schema::ResolvedTheme;
 use kiseki_state::{PreviewSession, State};
 use kiseki_types::{
-    Diagnostic, DiagnosticReport, EnvContext, KisekiError, PromptPolicy, RenderingProfile, Result,
+    Diagnostic, DiagnosticReport, Durability, EnvContext, KisekiError, PromptPolicy,
+    RenderingProfile, Result,
 };
 use sha2::{Digest, Sha256};
 
@@ -56,6 +57,8 @@ pub struct TransactionOptions {
     /// and before reloading adapters so a live shader is never masked as static.
     pub require_all_targets: bool,
     pub lock_timeout: Duration,
+    /// Persistence strategy (`full` | `batch` | `none`).
+    pub durability: Durability,
 }
 
 impl Default for TransactionOptions {
@@ -71,6 +74,7 @@ impl Default for TransactionOptions {
             allow_create_host_files: false,
             require_all_targets: false,
             lock_timeout: LOCK_TIMEOUT,
+            durability: Durability::Batch,
         }
     }
 }
@@ -297,6 +301,7 @@ impl<'a> TransactionManager<'a> {
         }
 
         // --- 3. Journal + backups -------------------------------------------
+        let durability = request.options.durability;
         let mut manifest = journal::build_manifest(
             self.platform,
             paths,
@@ -306,12 +311,13 @@ impl<'a> TransactionManager<'a> {
                 theme: request.theme.id.as_str(),
                 profile: request.theme.profile,
                 render_only: request.options.render_only,
+                durability,
                 state_before: &state_before,
                 state_after: &request.state_after,
             },
             &plans,
         )?;
-        journal::write_manifest(self.platform, paths, &manifest)?;
+        journal::write_manifest_with_durability(self.platform, paths, &manifest, durability)?;
 
         // Pinned runtime assets are shared across themes and transactions.
         // Refresh them under the generation lock before emitting shell hooks.
@@ -319,32 +325,46 @@ impl<'a> TransactionManager<'a> {
             .artifacts
             .contains(kiseki_compiler::artifact_names::ENV_ZSH)
         {
-            self.stage_zsh_assets(&mut diagnostics);
+            self.stage_zsh_assets(&mut diagnostics, durability);
         }
 
         // --- 4. Apply: generated first, then host targets --------------------
         let mut targets = Vec::new();
         let mut rollback_records = Vec::new();
+        let generated_sync = match durability {
+            Durability::Full => SyncMode::Full,
+            Durability::Batch | Durability::None => SyncMode::AtomicNoSync,
+        };
+        let mut generated_dirs_to_sync = BTreeSet::new();
 
         for plan in &plans {
             for operation in plan.operations.iter().filter(|operation| !operation.is_host_write()) {
                 let target = resolve_target(paths, operation);
-                let (mut status, notes) = self.apply_generated(operation);
+                let (mut status, notes) = self.apply_generated(operation, generated_sync);
+                if status == TargetStatus::Applied && durability == Durability::Batch {
+                    if let Some(parent) = target.parent() {
+                        generated_dirs_to_sync.insert(parent.to_path_buf());
+                    }
+                }
                 if status == TargetStatus::Failed {
                     // Generated files live under Kiseki's own directory, but a
                     // failed atomic write can still have removed a Windows
-                    // destination; restore from the same journal backup.
+                    // destination; restore from the same journal backup if one exists.
                     if let Some(entry) = manifest
                         .entries
                         .iter()
                         .find(|entry| entry.target == target)
                     {
-                        let _ = journal::restore_entry(
-                            self.platform,
-                            &paths.journal_dir().join(&tx_id),
-                            entry,
-                        );
-                        status = TargetStatus::RolledBack;
+                        if matches!(
+                            journal::restore_entry(
+                                self.platform,
+                                &paths.journal_dir().join(&tx_id),
+                                entry,
+                            ),
+                            Ok(true)
+                        ) {
+                            status = TargetStatus::RolledBack;
+                        }
                     }
                 }
                 targets.push(TargetResult {
@@ -353,6 +373,11 @@ impl<'a> TransactionManager<'a> {
                     status,
                     notes,
                 });
+            }
+        }
+        if durability == Durability::Batch {
+            for dir in &generated_dirs_to_sync {
+                self.platform.sync_dir(dir)?;
             }
         }
 
@@ -385,7 +410,7 @@ impl<'a> TransactionManager<'a> {
                     .iter()
                     .find(|entry| entry.target == target)
                     .cloned();
-                match self.apply_host(operation) {
+                match self.apply_host(operation, durability) {
                     Ok(HostApply::Applied(note)) => targets.push(TargetResult {
                         adapter: plan.adapter.to_string(),
                         target,
@@ -440,7 +465,13 @@ impl<'a> TransactionManager<'a> {
             });
             if has_blocking {
                 manifest.state_after = state_before.clone();
-                journal::finalize_manifest(self.platform, paths, &mut manifest, &targets)?;
+                journal::finalize_manifest_with_durability(
+                    self.platform,
+                    paths,
+                    &mut manifest,
+                    &targets,
+                    durability,
+                )?;
                 drop(lock);
                 return Ok(TransactionReport {
                     tx_id: tx_id.clone(),
@@ -459,7 +490,7 @@ impl<'a> TransactionManager<'a> {
         if state.generation < generation_floor {
             state.generation = generation_floor;
         }
-        state.commit(self.platform, paths)?;
+        state.commit_with_durability(self.platform, paths, durability)?;
 
         // --- 6. Reload healthy adapters --------------------------------------
         // `--render-only` never touched a host, so there is nothing to reload;
@@ -499,7 +530,13 @@ impl<'a> TransactionManager<'a> {
 
         // --- 7. Finalise the journal -----------------------------------------
         manifest.state_after = state.clone();
-        journal::finalize_manifest(self.platform, paths, &mut manifest, &targets)?;
+        journal::finalize_manifest_with_durability(
+            self.platform,
+            paths,
+            &mut manifest,
+            &targets,
+            durability,
+        )?;
         drop(lock);
 
         Ok(TransactionReport {
@@ -572,43 +609,68 @@ impl<'a> TransactionManager<'a> {
         (plans, diagnostics)
     }
 
-    fn stage_zsh_assets(&self, diagnostics: &mut DiagnosticReport) {
+    fn stage_zsh_assets(&self, diagnostics: &mut DiagnosticReport, durability: Durability) {
         let root = self.platform.paths().vendor_zsh();
+        let sync = match durability {
+            Durability::Full => SyncMode::Full,
+            Durability::Batch | Durability::None => SyncMode::AtomicNoSync,
+        };
+        let mut synced_dirs = BTreeSet::new();
         for &(relative, contents) in kiseki_compiler::zsh_assets::ASSETS {
             let path = root.join(relative);
-            let update = (|| -> Result<()> {
+            let update = (|| -> Result<bool> {
                 let desired = Sha256::digest(contents.as_bytes());
                 if self
                     .platform
                     .read_bytes(&path)?
                     .is_some_and(|current| Sha256::digest(&current) == desired)
                 {
-                    return Ok(());
+                    return Ok(false);
                 }
                 match self
                     .platform
-                    .write_preserving_symlinks(&path, contents.as_bytes())?
+                    .write_preserving_symlinks_with_sync(&path, contents.as_bytes(), sync)?
                 {
-                    WriteOutcome::Written { .. } => Ok(()),
+                    WriteOutcome::Written { .. } => Ok(true),
                     WriteOutcome::SkippedReadOnly { reason, .. } => Err(KisekiError::other(reason)),
                 }
             })();
-            if let Err(error) = update {
-                diagnostics.push(Diagnostic::warning(
-                    "deps.vendor-zsh",
-                    format!("无法写入 Zsh 插件资源 {}（{error}）", path.display()),
-                ));
-                break;
+            match update {
+                Ok(true) if durability == Durability::Batch => {
+                    if let Some(parent) = path.parent() {
+                        synced_dirs.insert(parent.to_path_buf());
+                    }
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    diagnostics.push(Diagnostic::warning(
+                        "deps.vendor-zsh",
+                        format!("无法写入 Zsh 插件资源 {}（{error}）", path.display()),
+                    ));
+                    break;
+                }
+            }
+        }
+        if durability == Durability::Batch {
+            for dir in &synced_dirs {
+                let _ = self.platform.sync_dir(dir);
             }
         }
     }
 
-    fn apply_generated(&self, operation: &FileOperation) -> (TargetStatus, Vec<String>) {
+    fn apply_generated(
+        &self,
+        operation: &FileOperation,
+        sync: SyncMode,
+    ) -> (TargetStatus, Vec<String>) {
         let FileOperation::WriteGenerated { relative, content } = operation else {
             return (TargetStatus::Skipped, vec!["not a generated write".to_string()]);
         };
         let path = self.platform.paths().generated(relative.as_str());
-        match self.platform.write_preserving_symlinks(&path, content.as_bytes()) {
+        match self
+            .platform
+            .write_preserving_symlinks_with_sync(&path, content.as_bytes(), sync)
+        {
             Ok(WriteOutcome::Written { .. }) => (TargetStatus::Applied, Vec::new()),
             // `generated/` is owned by Kiseki, not a user host config, so a
             // read-only destination is a real failure: silently degrading to
@@ -618,7 +680,7 @@ impl<'a> TransactionManager<'a> {
         }
     }
 
-    fn apply_host(&self, operation: &FileOperation) -> Result<HostApply> {
+    fn apply_host(&self, operation: &FileOperation, durability: Durability) -> Result<HostApply> {
         match operation {
             FileOperation::WriteGenerated { .. } => Ok(HostApply::Skipped(
                 "generated write handled separately".to_string(),
@@ -631,7 +693,10 @@ impl<'a> TransactionManager<'a> {
             } => {
                 let original = self.platform.read_to_string(target)?.unwrap_or_default();
                 let updated = marker::upsert_marker_block(&original, begin, end, body);
-                self.write_host(target, updated.as_bytes())
+                if updated == original && self.platform.exists(target) {
+                    return self.unchanged_host(target);
+                }
+                self.write_host(target, updated.as_bytes(), durability)
             }
             FileOperation::RemoveMarkerBlock { target, begin, end } => {
                 let Some(original) = self.platform.read_to_string(target)? else {
@@ -641,7 +706,10 @@ impl<'a> TransactionManager<'a> {
                     )));
                 };
                 let updated = marker::remove_marker_block(&original, begin, end);
-                self.write_host(target, updated.as_bytes())
+                if updated == original {
+                    return self.unchanged_host(target);
+                }
+                self.write_host(target, updated.as_bytes(), durability)
             }
             FileOperation::PatchWindowsTerminal {
                 target,
@@ -663,7 +731,10 @@ impl<'a> TransactionManager<'a> {
                     captured.save(baseline, self.platform)?;
                 }
                 let patched = patch_settings(&original, payload)?;
-                self.write_host(target, patched.as_bytes())
+                if patched == original && self.platform.exists(target) {
+                    return self.unchanged_host(target);
+                }
+                self.write_host(target, patched.as_bytes(), durability)
             }
             FileOperation::RestoreWindowsTerminal { target, baseline } => {
                 let Some(captured) = WtBaseline::load(baseline, self.platform)?
@@ -675,7 +746,7 @@ impl<'a> TransactionManager<'a> {
                 };
                 let original = self.platform.read_to_string(target)?.unwrap_or_default();
                 let restored = restore_settings(&original, &captured)?;
-                let outcome = self.write_host(target, restored.as_bytes())?;
+                let outcome = self.write_host(target, restored.as_bytes(), durability)?;
                 if matches!(outcome, HostApply::Applied(_)) {
                     // Retire the baseline so a later reinstall captures the
                     // user's fresh defaults instead of the pre-Kiseki ones.
@@ -686,8 +757,37 @@ impl<'a> TransactionManager<'a> {
         }
     }
 
-    fn write_host(&self, target: &Path, contents: &[u8]) -> Result<HostApply> {
-        match self.platform.write_preserving_symlinks(target, contents)? {
+    fn unchanged_host(&self, target: &Path) -> Result<HostApply> {
+        match self.platform.inspect(target) {
+            PathKind::ReadOnlyFile => Ok(HostApply::RenderOnly(format!(
+                "{} is read-only; adapter degraded to render-only",
+                target.display()
+            ))),
+            PathKind::ReadOnlySymlink(resolved) => Ok(HostApply::RenderOnly(format!(
+                "{} is a read-only symlink (target {}); adapter degraded to render-only",
+                target.display(),
+                resolved.display()
+            ))),
+            PathKind::Missing | PathKind::Regular => Ok(HostApply::Applied(format!(
+                "unchanged {}",
+                target.display()
+            ))),
+            PathKind::WritableSymlink(resolved) => Ok(HostApply::Applied(format!(
+                "unchanged {}",
+                resolved.display()
+            ))),
+        }
+    }
+
+    fn write_host(&self, target: &Path, contents: &[u8], durability: Durability) -> Result<HostApply> {
+        let sync = match durability {
+            Durability::Full | Durability::Batch => SyncMode::Full,
+            Durability::None => SyncMode::AtomicNoSync,
+        };
+        match self
+            .platform
+            .write_preserving_symlinks_with_sync(target, contents, sync)?
+        {
             WriteOutcome::Written { path, .. } => {
                 Ok(HostApply::Applied(format!("wrote {}", path.display())))
             }
@@ -744,12 +844,18 @@ impl<'a> TransactionManager<'a> {
                 theme: state.active_theme.as_str(),
                 profile: state.rendering.profile,
                 render_only: true,
+                durability: Durability::Batch,
                 state_before: state,
                 state_after: state,
             },
             &plans,
         )?;
-        journal::write_manifest(self.platform, paths, &manifest)?;
+        journal::write_manifest_with_durability(
+            self.platform,
+            paths,
+            &manifest,
+            Durability::Batch,
+        )?;
 
         let mut targets = Vec::new();
         for plan in &plans {
@@ -763,7 +869,7 @@ impl<'a> TransactionManager<'a> {
                     .iter()
                     .find(|entry| entry.target == target)
                     .cloned();
-                match self.apply_host(operation) {
+                match self.apply_host(operation, Durability::Batch) {
                     Ok(HostApply::Applied(note)) => targets.push(TargetResult {
                         adapter: plan.adapter.to_string(),
                         target,
@@ -800,7 +906,13 @@ impl<'a> TransactionManager<'a> {
                 }
             }
         }
-        journal::finalize_manifest(self.platform, paths, &mut manifest, &targets)?;
+        journal::finalize_manifest_with_durability(
+            self.platform,
+            paths,
+            &mut manifest,
+            &targets,
+            Durability::Batch,
+        )?;
         drop(lock);
         Ok(TransactionReport {
             tx_id,
@@ -814,18 +926,50 @@ impl<'a> TransactionManager<'a> {
         })
     }
 
+    /// Reads one recorded journal manifest.
+    pub fn read_journal(&self, tx_id: &str) -> Result<JournalManifest> {
+        journal::read_manifest(self.platform, self.platform.paths(), tx_id)
+    }
+
     /// Rolls a journal entry set back, newest first.
     pub fn rollback(&self, tx_id: &str) -> Result<RollbackReport> {
+        self.rollback_with_artifacts(tx_id, None)
+    }
+
+    /// Rolls a journal entry set back, using `artifacts` (recompiled from
+    /// `state_before`) to restore any `generated/` targets whose backups were
+    /// omitted under `Durability::Batch` or `Durability::None`.
+    pub fn rollback_with_artifacts(
+        &self,
+        tx_id: &str,
+        artifacts: Option<&ArtifactMap>,
+    ) -> Result<RollbackReport> {
         let paths = self.platform.paths();
         let _lock = self
             .platform
             .acquire_lock(&paths.lock_file(), LOCK_TIMEOUT)?;
         let manifest = journal::read_manifest(self.platform, paths, tx_id)?;
+        let journal_dir = paths.journal_dir().join(&manifest.tx_id);
         let mut restored = Vec::new();
+        let mut synced_generated_dirs = BTreeSet::new();
         for entry in manifest.entries.iter().rev() {
-            if journal::restore_entry(self.platform, &paths.journal_dir().join(&manifest.tx_id), entry)? {
+            if journal::restore_entry_with_artifacts(
+                self.platform,
+                paths,
+                &journal_dir,
+                entry,
+                artifacts,
+            )? {
+                if entry.regenerable && entry.existed && entry.backup.is_none() {
+                    if let Some(parent) = entry.target.parent() {
+                        synced_generated_dirs.insert(parent.to_path_buf());
+                    }
+                }
                 restored.push(entry.target.clone());
             }
+        }
+        for dir in &synced_generated_dirs {
+            self.platform.sync_dir(dir)?;
         }
 
         // The restored document is authoritative for colours/theme, but the
@@ -2065,5 +2209,309 @@ mod tests {
         let result = manager.rollback(&first.tx_id);
         std::fs::set_permissions(&host, std::fs::Permissions::from_mode(0o644)).unwrap();
         assert!(result.is_err(), "read-only host cannot silently count as restored");
+    }
+
+    fn kyoto_pack() -> ThemePack {
+        ThemePack {
+            manifest: serde_json::from_str(include_str!("../../../themes/kyoto-sakura/manifest.json"))
+                .unwrap(),
+            tokens: serde_json::from_str(include_str!("../../../themes/kyoto-sakura/tokens.json"))
+                .unwrap(),
+        }
+    }
+
+    fn kyoto_compiled(config_dir: &Path) -> (ResolvedTheme, kiseki_compiler::CompileOutput) {
+        let resolved = ResolvedTheme::from_pack(&kyoto_pack(), RenderingProfile::Balanced);
+        let glsl = include_str!("../../../themes/kyoto-sakura/shaders/live.glsl");
+        let hlsl = include_str!("../../../themes/kyoto-sakura/shaders/live.hlsl");
+        let output = compile(
+            &CompileInput::new(
+                &resolved,
+                CompileOptions::new(config_dir, "/data/themes/kyoto-sakura")
+                    .with_font_families(vec!["JetBrainsMono Nerd Font".to_string()]),
+            )
+            .with_glsl(Some(glsl))
+            .with_hlsl(Some(hlsl)),
+        )
+        .unwrap();
+        (resolved, output)
+    }
+
+    #[test]
+    fn batch_durability_reduces_syncs_and_skips_unchanged_host_writes() {
+        let fixture = fixture();
+        let paths = fixture.platform.paths().clone();
+        let nerv_output = compiled(paths.config_dir());
+        let nerv = theme();
+        let (kyoto, kyoto_output) = kyoto_compiled(paths.config_dir());
+        let env = EnvContext::local();
+        let state = initial_state(&fixture.platform);
+        let manager = TransactionManager::new(&fixture.platform, AdapterRegistry::milestone1());
+
+        // First apply mounts host files.
+        let first = manager
+            .apply(request(
+                &nerv,
+                &nerv_output.artifacts,
+                state.clone(),
+                state,
+                &env,
+                TransactionOptions {
+                    durability: Durability::Batch,
+                    ..TransactionOptions::default()
+                },
+            ))
+            .unwrap();
+
+        // Steady-state switch under Full durability.
+        let mut kyoto_state = first.state.clone();
+        kyoto_state.active_theme = kyoto.id.clone();
+        fixture.platform.reset_sync_stats();
+        let second = manager
+            .apply(request(
+                &kyoto,
+                &kyoto_output.artifacts,
+                first.state.clone(),
+                kyoto_state,
+                &env,
+                TransactionOptions {
+                    durability: Durability::Full,
+                    ..TransactionOptions::default()
+                },
+            ))
+            .unwrap();
+        let full_stats = fixture.platform.sync_stats();
+
+        // Steady-state switch under Batch durability.
+        let mut nerv_state = second.state.clone();
+        nerv_state.active_theme = nerv.id.clone();
+        fixture.platform.reset_sync_stats();
+        let third = manager
+            .apply(request(
+                &nerv,
+                &nerv_output.artifacts,
+                second.state.clone(),
+                nerv_state,
+                &env,
+                TransactionOptions {
+                    durability: Durability::Batch,
+                    ..TransactionOptions::default()
+                },
+            ))
+            .unwrap();
+        let batch_stats = fixture.platform.sync_stats();
+
+        assert!(
+            full_stats.full_writes >= 20,
+            "expected many full_writes in Full mode, got {full_stats:?}"
+        );
+        assert_eq!(batch_stats.full_writes, 0, "unchanged hosts must not fsync");
+        assert_eq!(batch_stats.file_only_writes, 1, "only state.json uses FileOnly");
+        assert!(
+            batch_stats.dir_syncs <= 5,
+            "expected batched dir syncs <= 5, got {batch_stats:?}"
+        );
+
+        // Steady-state switch under Durability::None issues zero fsyncs.
+        let mut kyoto_state2 = third.state.clone();
+        kyoto_state2.active_theme = kyoto.id.clone();
+        fixture.platform.reset_sync_stats();
+        manager
+            .apply(request(
+                &kyoto,
+                &kyoto_output.artifacts,
+                third.state,
+                kyoto_state2,
+                &env,
+                TransactionOptions {
+                    durability: Durability::None,
+                    ..TransactionOptions::default()
+                },
+            ))
+            .unwrap();
+        let none_stats = fixture.platform.sync_stats();
+        assert_eq!(none_stats.full_writes, 0);
+        assert_eq!(none_stats.file_only_writes, 0);
+        assert_eq!(none_stats.dir_syncs, 0);
+    }
+
+    #[test]
+    fn batch_rollback_restores_generated_artifacts_from_recompiled_state() {
+        let fixture = fixture();
+        let paths = fixture.platform.paths().clone();
+        let nerv_output = compiled(paths.config_dir());
+        let nerv = theme();
+        let (kyoto, kyoto_output) = kyoto_compiled(paths.config_dir());
+        let env = EnvContext::local();
+        let state = initial_state(&fixture.platform);
+        let manager = TransactionManager::new(&fixture.platform, AdapterRegistry::milestone1());
+
+        let first = manager
+            .apply(request(
+                &nerv,
+                &nerv_output.artifacts,
+                state.clone(),
+                state,
+                &env,
+                TransactionOptions::default(),
+            ))
+            .unwrap();
+        let expected_ghostty = fixture
+            .platform
+            .read_to_string(&paths.generated("ghostty.conf"))
+            .unwrap()
+            .unwrap();
+        let expected_glsl = fixture
+            .platform
+            .read_to_string(&paths.generated("shaders/active.glsl"))
+            .unwrap()
+            .unwrap();
+
+        let mut after = first.state.clone();
+        after.active_theme = kyoto.id.clone();
+        let second = manager
+            .apply(request(
+                &kyoto,
+                &kyoto_output.artifacts,
+                first.state.clone(),
+                after,
+                &env,
+                TransactionOptions::default(),
+            ))
+            .unwrap();
+        let manifest = manager.read_journal(&second.tx_id).unwrap();
+        let gen_entry = manifest
+            .entries
+            .iter()
+            .find(|entry| entry.target == paths.generated("ghostty.conf"))
+            .unwrap();
+        assert!(gen_entry.regenerable);
+        assert!(gen_entry.existed);
+        assert!(gen_entry.backup.is_none());
+        assert_ne!(
+            fixture
+                .platform
+                .read_to_string(&paths.generated("ghostty.conf"))
+                .unwrap()
+                .unwrap(),
+            expected_ghostty
+        );
+
+        let rollback = manager
+            .rollback_with_artifacts(&second.tx_id, Some(&nerv_output.artifacts))
+            .unwrap();
+        assert_eq!(rollback.state.active_theme, nerv.id);
+        assert!(rollback
+            .restored
+            .iter()
+            .any(|path| path == &paths.generated("ghostty.conf")));
+        assert_eq!(
+            fixture
+                .platform
+                .read_to_string(&paths.generated("ghostty.conf"))
+                .unwrap()
+                .unwrap(),
+            expected_ghostty
+        );
+        assert_eq!(
+            fixture
+                .platform
+                .read_to_string(&paths.generated("shaders/active.glsl"))
+                .unwrap()
+                .unwrap(),
+            expected_glsl
+        );
+    }
+
+    #[test]
+    fn simulated_crash_mid_transaction_recovers_via_rollback_and_recover_safe() {
+        let fixture = fixture();
+        let paths = fixture.platform.paths().clone();
+        let nerv_output = compiled(paths.config_dir());
+        let nerv = theme();
+        let (kyoto, kyoto_output) = kyoto_compiled(paths.config_dir());
+        let env = EnvContext::local();
+        let state = initial_state(&fixture.platform);
+        let manager = TransactionManager::new(&fixture.platform, AdapterRegistry::milestone1());
+
+        let committed = manager
+            .apply(request(
+                &nerv,
+                &nerv_output.artifacts,
+                state.clone(),
+                state,
+                &env,
+                TransactionOptions::default(),
+            ))
+            .unwrap();
+        let nerv_ghostty = fixture
+            .platform
+            .read_to_string(&paths.generated("ghostty.conf"))
+            .unwrap()
+            .unwrap();
+
+        // Simulate SIGKILL after Phase 3 manifest write and partial Phase 4 generated overwrite,
+        // before Phase 5 state commit.
+        let mut crashed_after = committed.state.clone();
+        crashed_after.active_theme = kyoto.id.clone();
+        let tx_id = journal::next_tx_id(&fixture.platform, &paths).unwrap();
+        let mut plan = AdapterPlan::new("generated");
+        for (path, content) in kyoto_output.artifacts.iter() {
+            plan.push(FileOperation::WriteGenerated {
+                relative: path.clone(),
+                content: content.clone(),
+            });
+        }
+        let manifest = journal::build_manifest(
+            &fixture.platform,
+            &paths,
+            &tx_id,
+            &journal::ManifestContext {
+                command: "use kyoto-sakura",
+                theme: kyoto.id.as_str(),
+                profile: kyoto.profile,
+                render_only: false,
+                durability: Durability::Batch,
+                state_before: &committed.state,
+                state_after: &crashed_after,
+            },
+            &[plan],
+        )
+        .unwrap();
+        journal::write_manifest_with_durability(&fixture.platform, &paths, &manifest, Durability::Batch)
+            .unwrap();
+        fixture
+            .platform
+            .write_preserving_symlinks_with_sync(
+                &paths.generated("ghostty.conf"),
+                b"# partial crashed write\n",
+                SyncMode::AtomicNoSync,
+            )
+            .unwrap();
+
+        let rollback = manager
+            .rollback_with_artifacts(&tx_id, Some(&nerv_output.artifacts))
+            .unwrap();
+        assert_eq!(rollback.state.active_theme, nerv.id);
+        assert_eq!(
+            fixture
+                .platform
+                .read_to_string(&paths.generated("ghostty.conf"))
+                .unwrap()
+                .unwrap(),
+            nerv_ghostty
+        );
+
+        let mut safe_state = rollback.state;
+        manager.recover_safe(&mut safe_state).unwrap();
+        assert_eq!(safe_state.rendering.profile, RenderingProfile::Static);
+        assert_eq!(
+            State::load(&fixture.platform, &paths)
+                .unwrap()
+                .unwrap()
+                .rendering
+                .profile,
+            RenderingProfile::Static
+        );
     }
 }

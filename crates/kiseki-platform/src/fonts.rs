@@ -144,6 +144,8 @@ struct CacheEntry {
     modified_secs: Option<u64>,
     modified_nanos: Option<u32>,
     faces: Vec<FontFaceInfo>,
+    #[serde(default)]
+    subdirs: Vec<PathBuf>,
 }
 
 impl CacheEntry {
@@ -166,7 +168,7 @@ struct DiskFontCache {
     entries: BTreeMap<PathBuf, CacheEntry>,
 }
 
-const FONT_CACHE_VERSION: u32 = 1;
+const FONT_CACHE_VERSION: u32 = 2;
 
 /// Caches parsed faces per directory.
 ///
@@ -178,6 +180,7 @@ pub struct FontScanner {
     cache: Mutex<BTreeMap<PathBuf, CacheEntry>>,
     parses: std::sync::atomic::AtomicUsize,
     hits: std::sync::atomic::AtomicUsize,
+    dirty: std::sync::atomic::AtomicBool,
 }
 
 impl FontScanner {
@@ -202,6 +205,7 @@ impl FontScanner {
             cache: Mutex::new(disk.entries),
             parses: std::sync::atomic::AtomicUsize::new(0),
             hits: std::sync::atomic::AtomicUsize::new(0),
+            dirty: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -216,13 +220,22 @@ impl FontScanner {
             if let Some(parent) = path.parent() {
                 let _ = std::fs::create_dir_all(parent);
             }
-            let _ = crate::fs::write_preserving_symlinks(path, &encoded);
+            let _ = crate::fs::write_preserving_symlinks_with_sync(
+                path,
+                &encoded,
+                crate::fs::SyncMode::AtomicNoSync,
+            );
         }
     }
 
     /// Number of font files actually parsed (test/diagnostic hook).
     pub fn parses(&self) -> usize {
         self.parses.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// True when any scanned directory missed the cache and updated its entry.
+    pub fn is_dirty(&self) -> bool {
+        self.dirty.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Number of directory cache hits.
@@ -253,19 +266,26 @@ impl FontScanner {
             return Vec::new();
         }
         let modified = metadata.modified().ok();
-        {
+        let cached = {
             let cache = self.cache.lock().unwrap();
-            if let Some(entry) = cache.get(dir) {
-                if entry.matches(modified) {
-                    self.hits.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    return entry.faces.clone();
-                }
+            cache
+                .get(dir)
+                .filter(|entry| entry.matches(modified))
+                .map(|entry| (entry.faces.clone(), entry.subdirs.clone()))
+        };
+        if let Some((mut faces, subdirs)) = cached {
+            self.hits.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            for subdir in subdirs {
+                faces.extend(self.scan_dir(&subdir, inventory));
             }
+            return faces;
         }
 
-        let mut faces = Vec::new();
+        self.dirty.store(true, std::sync::atomic::Ordering::Relaxed);
+        let mut direct_faces = Vec::new();
+        let mut subdirs = Vec::new();
         let Ok(entries) = std::fs::read_dir(dir) else {
-            return faces;
+            return direct_faces;
         };
         for entry in entries.flatten() {
             let path = entry.path();
@@ -273,7 +293,7 @@ impl FontScanner {
                 continue;
             };
             if file_type.is_dir() {
-                faces.extend(self.scan_dir(&path, inventory));
+                subdirs.push(path);
                 continue;
             }
             if !file_type.is_file() || !is_font_file(&path) {
@@ -282,11 +302,12 @@ impl FontScanner {
             match parse_face(&path) {
                 Some(face) => {
                     self.parses.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    faces.push(face);
+                    direct_faces.push(face);
                 }
                 None => inventory.unreadable_files += 1,
             }
         }
+        subdirs.sort();
 
         let (modified_secs, modified_nanos) = CacheEntry::stamp(modified);
         self.cache.lock().unwrap().insert(
@@ -294,10 +315,15 @@ impl FontScanner {
             CacheEntry {
                 modified_secs,
                 modified_nanos,
-                faces: faces.clone(),
+                faces: direct_faces.clone(),
+                subdirs: subdirs.clone(),
             },
         );
-        faces
+        let mut all_faces = direct_faces;
+        for subdir in subdirs {
+            all_faces.extend(self.scan_dir(&subdir, inventory));
+        }
+        all_faces
     }
 }
 
@@ -673,6 +699,52 @@ mod tests {
         let third = scanner.scan(&[dir.path().to_path_buf()]);
         assert_eq!(third.faces.len(), 2);
         assert!(scanner.parses() >= 2);
+    }
+
+    #[test]
+    fn disk_cache_persists_across_loads_and_invalidates_on_add_and_delete() {
+        let dir = tempfile::tempdir().unwrap();
+        let fonts_dir = dir.path().join("fonts");
+        let nested_dir = fonts_dir.join("kiseki");
+        let cache_file = dir.path().join("font-cache.json");
+
+        write_font(&fonts_dir, "A.ttf", "Alpha", None);
+        write_font(&nested_dir, "N.ttf", "Nested", None);
+
+        let first_scanner = FontScanner::load_cache(&cache_file);
+        let first = first_scanner.scan(std::slice::from_ref(&fonts_dir));
+        assert!(first.has_family("Alpha"));
+        assert!(first.has_family("Nested"));
+        assert!(first_scanner.is_dirty());
+        first_scanner.save_cache(&cache_file);
+
+        // Reloading from disk hits every directory with zero font parses.
+        let second_scanner = FontScanner::load_cache(&cache_file);
+        let second = second_scanner.scan(std::slice::from_ref(&fonts_dir));
+        assert!(second.has_family("Alpha"));
+        assert!(second.has_family("Nested"));
+        assert_eq!(second_scanner.parses(), 0);
+        assert!(!second_scanner.is_dirty());
+        assert_eq!(second_scanner.cache_hits(), 2);
+
+        // Adding a font in the nested directory invalidates only that subdir.
+        write_font(&nested_dir, "N2.ttf", "Nested Two", None);
+        let third_scanner = FontScanner::load_cache(&cache_file);
+        let third = third_scanner.scan(std::slice::from_ref(&fonts_dir));
+        assert!(third.has_family("Nested Two"));
+        assert!(third_scanner.is_dirty());
+        assert!(third_scanner.parses() >= 1);
+        third_scanner.save_cache(&cache_file);
+
+        // Removing the last font in the nested directory still marks dirty and updates cache.
+        std::fs::remove_file(nested_dir.join("N.ttf")).unwrap();
+        std::fs::remove_file(nested_dir.join("N2.ttf")).unwrap();
+        let fourth_scanner = FontScanner::load_cache(&cache_file);
+        let fourth = fourth_scanner.scan(std::slice::from_ref(&fonts_dir));
+        assert!(fourth.has_family("Alpha"));
+        assert!(!fourth.has_family("Nested"));
+        assert!(!fourth.has_family("Nested Two"));
+        assert!(fourth_scanner.is_dirty());
     }
 
     #[test]

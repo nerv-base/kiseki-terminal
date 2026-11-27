@@ -12,6 +12,7 @@ members = [
     "crates/kiseki-pkg",
     "crates/kiseki-tui",
     "crates/kiseki-cli",
+    "crates/kiseki-bench",
 ]
 
 [workspace.package]

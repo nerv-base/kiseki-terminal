@@ -20,7 +20,7 @@ pub use fonts::{
     resolve_font_id, FontCatalog, FontCatalogEntry, FontFaceInfo, FontFamilies, FontInventory,
     FontScanner, FontStatus,
 };
-pub use fs::{inspect_path, is_protected_prefix, PathKind, WriteOutcome};
+pub use fs::{inspect_path, is_protected_prefix, PathKind, SyncMode, WriteOutcome};
 pub use ghostty::{
     include_line, reload as reload_ghostty, validate_config as validate_ghostty_config,
     ReloadOutcome,
@@ -28,5 +28,5 @@ pub use ghostty::{
 pub use lock::{Lock, DEFAULT_TIMEOUT};
 pub use paths::KisekiPaths;
 pub use platform::{
-    CommandOutput, MockPlatform, Platform, RecordedCommand, SystemPlatform, LOCK_TIMEOUT,
+    CommandOutput, MockPlatform, Platform, RecordedCommand, SyncStats, SystemPlatform, LOCK_TIMEOUT,
 };

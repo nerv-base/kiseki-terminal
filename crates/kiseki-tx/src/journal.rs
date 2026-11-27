@@ -8,15 +8,20 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use kiseki_adapters::FileOperation;
-use kiseki_platform::Platform;
+use kiseki_compiler::ArtifactMap;
+use kiseki_platform::{KisekiPaths, Platform, SyncMode};
 use kiseki_state::State;
-use kiseki_types::{KisekiError, RenderingProfile, Result};
+use kiseki_types::{Durability, KisekiError, RenderingProfile, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::{sha256_hex, TargetResult, TargetStatus};
 
 /// Version of `manifest.json`.
 pub const JOURNAL_SCHEMA_VERSION: u32 = 1;
+
+fn is_false(value: &bool) -> bool {
+    !*value
+}
 
 /// One backed-up file.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -26,6 +31,10 @@ pub struct JournalEntry {
     pub adapter: String,
     /// False means the file did not exist before the transaction.
     pub existed: bool,
+    /// True when the target is a generated artefact that can be recompiled from
+    /// `state_before` instead of copying bytes into `backups/`.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub regenerable: bool,
     /// Path relative to the journal directory (`backups/0001-zshrc`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub backup: Option<PathBuf>,
@@ -122,11 +131,13 @@ pub struct ManifestContext<'a> {
     pub theme: &'a str,
     pub profile: RenderingProfile,
     pub render_only: bool,
+    pub durability: Durability,
     pub state_before: &'a State,
     pub state_after: &'a State,
 }
 
-/// Captures every target and writes its backup.
+/// Captures every target and writes backups for non-regenerable host targets
+/// (or every target under [`Durability::Full`]).
 pub fn build_manifest(
     platform: &dyn Platform,
     paths: &kiseki_platform::KisekiPaths,
@@ -135,21 +146,47 @@ pub fn build_manifest(
     plans: &[kiseki_adapters::AdapterPlan],
 ) -> Result<JournalManifest> {
     let journal_dir = paths.journal_dir().join(tx_id);
-    platform.create_dir_all(&journal_dir.join("backups"))?;
+    let backups_dir = journal_dir.join("backups");
 
-    // Deduplicate targets while remembering which adapter planned them.
-    let mut targets: Vec<(PathBuf, String)> = Vec::new();
+    // Deduplicate targets while remembering which adapter planned them and
+    // whether any operation writes outside `generated/`.
+    let mut targets: Vec<(PathBuf, String, bool)> = Vec::new();
     for plan in plans {
         for operation in &plan.operations {
             let target = crate::resolve_target(paths, operation);
-            if !targets.iter().any(|(existing, _)| existing == &target) {
-                targets.push((target, plan.adapter.to_string()));
+            let is_host = operation.is_host_write();
+            if let Some(existing) = targets.iter_mut().find(|(path, _, _)| path == &target) {
+                existing.2 |= is_host;
+            } else {
+                targets.push((target, plan.adapter.to_string(), is_host));
             }
         }
     }
 
+    let backup_sync = match context.durability {
+        Durability::Full => SyncMode::Full,
+        Durability::Batch | Durability::None => SyncMode::AtomicNoSync,
+    };
+    let mut backups_dir_created = false;
+    let mut wrote_backup = false;
     let mut entries = Vec::new();
-    for (index, (target, adapter)) in targets.into_iter().enumerate() {
+    for (index, (target, adapter, is_host)) in targets.into_iter().enumerate() {
+        let regenerable = !is_host;
+        if regenerable && context.durability != Durability::Full {
+            let existed = platform.exists(&target);
+            entries.push(JournalEntry {
+                target,
+                adapter,
+                existed,
+                regenerable: true,
+                backup: None,
+                sha256_before: None,
+                sha256_after: None,
+                notes: Vec::new(),
+            });
+            continue;
+        }
+
         let mut notes = Vec::new();
         let (existed, bytes) = match platform.read_bytes(&target) {
             Ok(Some(bytes)) => (true, Some(bytes)),
@@ -160,12 +197,21 @@ pub fn build_manifest(
             }
         };
         let backup = if let Some(bytes) = bytes.as_ref() {
+            if !backups_dir_created {
+                platform.create_dir_all(&backups_dir)?;
+                backups_dir_created = true;
+            }
             let name = target
                 .file_name()
                 .and_then(|name| name.to_str())
                 .unwrap_or("target");
             let relative = PathBuf::from("backups").join(format!("{index:04}-{name}"));
-            platform.write_preserving_symlinks(&journal_dir.join(&relative), bytes)?;
+            platform.write_preserving_symlinks_with_sync(
+                &journal_dir.join(&relative),
+                bytes,
+                backup_sync,
+            )?;
+            wrote_backup = true;
             Some(relative)
         } else {
             None
@@ -174,11 +220,15 @@ pub fn build_manifest(
             target,
             adapter,
             existed,
+            regenerable,
             backup,
             sha256_before: bytes.as_deref().map(sha256_hex),
             sha256_after: None,
             notes,
         });
+    }
+    if wrote_backup && context.durability == Durability::Batch {
+        platform.sync_dir(&backups_dir)?;
     }
 
     Ok(JournalManifest {
@@ -200,12 +250,29 @@ pub fn write_manifest(
     paths: &kiseki_platform::KisekiPaths,
     manifest: &JournalManifest,
 ) -> Result<()> {
+    write_manifest_with_durability(platform, paths, manifest, Durability::Full)
+}
+
+pub fn write_manifest_with_durability(
+    platform: &dyn Platform,
+    paths: &kiseki_platform::KisekiPaths,
+    manifest: &JournalManifest,
+    durability: Durability,
+) -> Result<()> {
     let dir = paths.journal_dir().join(&manifest.tx_id);
     platform.create_dir_all(&dir)?;
-    platform.write_preserving_symlinks(
+    let sync = match durability {
+        Durability::Full => SyncMode::Full,
+        Durability::Batch | Durability::None => SyncMode::AtomicNoSync,
+    };
+    platform.write_preserving_symlinks_with_sync(
         &dir.join("manifest.json"),
         manifest.to_json()?.as_bytes(),
+        sync,
     )?;
+    if durability == Durability::Batch {
+        platform.sync_dir(&dir)?;
+    }
     Ok(())
 }
 
@@ -215,6 +282,19 @@ pub fn finalize_manifest(
     paths: &kiseki_platform::KisekiPaths,
     manifest: &mut JournalManifest,
     targets: &[TargetResult],
+) -> Result<()> {
+    finalize_manifest_with_durability(platform, paths, manifest, targets, Durability::Full)
+}
+
+/// Fills in `sha256_after` and per-target notes, then rewrites the manifest
+/// according to `durability` (`Batch` skips extra fsync because Phase 3
+/// already persisted the rollback-critical manifest).
+pub fn finalize_manifest_with_durability(
+    platform: &dyn Platform,
+    paths: &kiseki_platform::KisekiPaths,
+    manifest: &mut JournalManifest,
+    targets: &[TargetResult],
+    durability: Durability,
 ) -> Result<()> {
     for entry in &mut manifest.entries {
         entry.sha256_after = platform
@@ -230,7 +310,11 @@ pub fn finalize_manifest(
             }
         }
     }
-    write_manifest(platform, paths, manifest)
+    let write_durability = match durability {
+        Durability::Full => Durability::Full,
+        Durability::Batch | Durability::None => Durability::None,
+    };
+    write_manifest_with_durability(platform, paths, manifest, write_durability)
 }
 
 pub fn read_manifest(
@@ -245,11 +329,23 @@ pub fn read_manifest(
     JournalManifest::from_json(&raw)
 }
 
-/// Restores one entry. Returns true when something was restored/removed.
+/// Restores one entry using only on-disk backups. Returns true when something was restored/removed.
 pub fn restore_entry(
     platform: &dyn Platform,
     journal_dir: &Path,
     entry: &JournalEntry,
+) -> Result<bool> {
+    restore_entry_with_artifacts(platform, platform.paths(), journal_dir, entry, None)
+}
+
+/// Restores one entry, regenerating `generated/` entries from `artifacts` when
+/// no backup file was stored (`Durability::Batch` / `Durability::None`).
+pub fn restore_entry_with_artifacts(
+    platform: &dyn Platform,
+    paths: &KisekiPaths,
+    journal_dir: &Path,
+    entry: &JournalEntry,
+    artifacts: Option<&ArtifactMap>,
 ) -> Result<bool> {
     if let Some(backup) = entry.backup_path(journal_dir) {
         let Some(bytes) = platform.read_bytes(&backup)? else {
@@ -271,6 +367,40 @@ pub fn restore_entry(
     if !entry.existed {
         platform.remove_file(&entry.target)?;
         return Ok(true);
+    }
+    if entry.regenerable {
+        let Some(artifacts) = artifacts else {
+            return Ok(false);
+        };
+        let relative = entry
+            .target
+            .strip_prefix(paths.generated_dir())
+            .map(|rel| rel.to_string_lossy().replace('\\', "/"))
+            .map_err(|_| {
+                KisekiError::State(format!(
+                    "regenerable journal target {} is outside {}",
+                    entry.target.display(),
+                    paths.generated_dir().display()
+                ))
+            })?;
+        if let Some(content) = artifacts.get(&relative) {
+            match platform.write_preserving_symlinks_with_sync(
+                &entry.target,
+                content.as_bytes(),
+                SyncMode::AtomicNoSync,
+            )? {
+                kiseki_platform::WriteOutcome::Written { .. } => return Ok(true),
+                kiseki_platform::WriteOutcome::SkippedReadOnly { path, reason } => {
+                    return Err(KisekiError::State(format!(
+                        "cannot restore read-only {}: {reason}",
+                        path.display()
+                    )));
+                }
+            }
+        } else {
+            platform.remove_file(&entry.target)?;
+            return Ok(true);
+        }
     }
     Ok(false)
 }
