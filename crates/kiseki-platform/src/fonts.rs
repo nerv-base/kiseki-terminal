@@ -694,7 +694,8 @@ mod tests {
         assert_eq!(scanner.parses(), 1, "second scan must hit the cache");
         assert!(scanner.cache_hits() >= 1);
 
-        // Change the directory mtime by adding a file.
+        // Change the directory mtime by adding a file (sleep past Windows ~15.6 ms NTFS tick).
+        std::thread::sleep(std::time::Duration::from_millis(50));
         write_font(dir.path(), "B.ttf", "Beta", None);
         let third = scanner.scan(&[dir.path().to_path_buf()]);
         assert_eq!(third.faces.len(), 2);
@@ -728,6 +729,7 @@ mod tests {
         assert_eq!(second_scanner.cache_hits(), 2);
 
         // Adding a font in the nested directory invalidates only that subdir.
+        std::thread::sleep(std::time::Duration::from_millis(50));
         write_font(&nested_dir, "N2.ttf", "Nested Two", None);
         let third_scanner = FontScanner::load_cache(&cache_file);
         let third = third_scanner.scan(std::slice::from_ref(&fonts_dir));
@@ -737,6 +739,7 @@ mod tests {
         third_scanner.save_cache(&cache_file);
 
         // Removing the last font in the nested directory still marks dirty and updates cache.
+        std::thread::sleep(std::time::Duration::from_millis(50));
         std::fs::remove_file(nested_dir.join("N.ttf")).unwrap();
         std::fs::remove_file(nested_dir.join("N2.ttf")).unwrap();
         let fourth_scanner = FontScanner::load_cache(&cache_file);
