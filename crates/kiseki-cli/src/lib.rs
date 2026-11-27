@@ -367,7 +367,7 @@ struct App {
 
 impl App {
     fn new(json: bool, render_only: bool, dry_run: bool, ui: Ui, rescue: bool) -> Result<Self> {
-        let platform = SystemPlatform::detect();
+        let platform = SystemPlatform::detect().with_dry_run(dry_run);
         let paths = platform.paths().clone();
         let config = match Config::load(&platform, &paths) {
             Ok(config) => config,

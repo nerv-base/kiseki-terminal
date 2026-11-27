@@ -88,17 +88,28 @@ pub trait Platform: Send + Sync {
     fn is_mock(&self) -> bool {
         false
     }
+
+    /// True when callers may persist non-authoritative caches under `cache_dir()`.
+    ///
+    /// Returns `false` in `--dry-run` mode so read-only previews never write to disk.
+    fn allow_cache_writes(&self) -> bool {
+        true
+    }
 }
 
 /// The real host.
 #[derive(Debug, Clone)]
 pub struct SystemPlatform {
     paths: KisekiPaths,
+    dry_run: bool,
 }
 
 impl SystemPlatform {
     pub fn new(paths: KisekiPaths) -> Self {
-        Self { paths }
+        Self {
+            paths,
+            dry_run: false,
+        }
     }
 
     /// Detects the host layout from the real environment.
@@ -106,6 +117,12 @@ impl SystemPlatform {
         let os = OsKind::current();
         let paths = KisekiPaths::from_env(os, &|key| std::env::var(key).ok());
         Self::new(paths)
+    }
+
+    /// Disables persistent cache writes when running under `--dry-run`.
+    pub fn with_dry_run(mut self, dry_run: bool) -> Self {
+        self.dry_run = dry_run;
+        self
     }
 }
 
@@ -263,6 +280,10 @@ impl Platform for SystemPlatform {
 
     fn now_rfc3339(&self) -> String {
         format_rfc3339(SystemTime::now())
+    }
+
+    fn allow_cache_writes(&self) -> bool {
+        !self.dry_run
     }
 }
 

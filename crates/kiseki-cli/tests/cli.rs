@@ -1652,3 +1652,65 @@ fn validation_cache_populates_invalidates_on_edit_and_respects_dry_run() {
         "corrupted pack must bypass stale cache and fail"
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn dry_run_with_ghostty_binary_writes_no_version_cache() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let sandbox = Sandbox::new();
+    let fake_ghostty = sandbox.dir.path().join("fake-ghostty");
+    fs::write(
+        &fake_ghostty,
+        "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  echo 'Ghostty 1.4.0'\n  exit 0\nfi\nif [ \"$1\" = \"+validate-config\" ]; then\n  exit 0\nfi\nexit 0\n",
+    )
+    .unwrap();
+    fs::set_permissions(&fake_ghostty, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let run_ghostty_ok = |args: &[&str]| {
+        let output = sandbox
+            .command()
+            .env("KISEKI_GHOSTTY_BIN", &fake_ghostty)
+            .args(args)
+            .output()
+            .expect("kiseki binary runs");
+        assert!(
+            output.status.success(),
+            "kiseki {args:?} failed ({}):\nstdout={}\nstderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+
+    run_ghostty_ok(&["use", "nerv-eva", "--dry-run", "--only", "ghostty", "--quiet"]);
+    run_ghostty_ok(&["doctor", "--dry-run", "--json"]);
+    assert!(
+        !sandbox.kiseki_home().exists(),
+        "--dry-run with a real ghostty binary on fresh KISEKI_HOME must write nothing"
+    );
+
+    run_ghostty_ok(&["use", "nerv-eva", "--only", "ghostty", "--quiet"]);
+    let ghostty_version_cache = sandbox.kiseki_home().join("cache/ghostty-version.json");
+    let deps_cache = sandbox.kiseki_home().join("cache/deps-cache.json");
+    let font_cache = sandbox.kiseki_home().join("cache/font-cache.json");
+    if cfg!(target_os = "macos") {
+        assert!(
+            ghostty_version_cache.is_file(),
+            "non-dry-run macOS use must populate ghostty-version.json"
+        );
+    }
+
+    let _ = fs::remove_file(&ghostty_version_cache);
+    let _ = fs::remove_file(&deps_cache);
+    let _ = fs::remove_file(&font_cache);
+
+    run_ghostty_ok(&["use", "kyoto-sakura", "--dry-run", "--only", "ghostty", "--quiet"]);
+    run_ghostty_ok(&["doctor", "--dry-run", "--json"]);
+    assert!(
+        !ghostty_version_cache.exists(),
+        "--dry-run must never write ghostty-version.json"
+    );
+    assert!(!deps_cache.exists(), "--dry-run must never write deps-cache.json");
+    assert!(!font_cache.exists(), "--dry-run must never write font-cache.json");
+}
