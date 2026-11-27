@@ -2,9 +2,8 @@
 # Installs Kiseki, its optional tools and fonts from a tagged release.
 #
 # Usage:
-#   irm https://kiseki-dl.nerv-base.com/install.ps1 | iex   # China CDN (EdgeOne)
-#   irm https://dl.kisekiterm.dev/install.ps1 | iex         # Global (Cloudflare R2)
-#   & ([scriptblock]::Create((irm https://dl.kisekiterm.dev/install.ps1))) -Version v2.0.0-alpha.1
+#   irm https://kisekiterm.dev/install.ps1 | iex
+#   & ([scriptblock]::Create((irm https://kisekiterm.dev/install.ps1))) -Version v2.0.0-alpha.1
 
 <#
 .SYNOPSIS

@@ -1,16 +1,14 @@
 import { useState, type FC } from 'react';
 import { KISEKI_BUNDLE } from '../data/bundle';
-import { I18N, INSTALL_SNIPPETS_BY_REGION, THEME_ORDER, WORLD_META, type DetectedOS } from '../data/worlds';
-import type { DocChapterId, InstallRegion, InstallTab, Lang, ThemeId } from '../types/theme';
+import { I18N, INSTALL_SNIPPETS, THEME_ORDER, WORLD_META, type DetectedOS } from '../data/worlds';
+import type { DocChapterId, InstallTab, Lang, ThemeId } from '../types/theme';
 
 interface InstallSectionProps {
   lang: Lang;
   atmosphereId: ThemeId;
   detectedOS: DetectedOS;
   installTab: InstallTab;
-  installRegion: InstallRegion;
   onSelectInstallTab: (tab: InstallTab) => void;
-  onSelectInstallRegion: (region: InstallRegion) => void;
   onOpenDoc: (docId: DocChapterId) => void;
 }
 
@@ -31,15 +29,13 @@ export const InstallSection: FC<InstallSectionProps> = ({
   atmosphereId,
   detectedOS,
   installTab,
-  installRegion,
   onSelectInstallTab,
-  onSelectInstallRegion,
   onOpenDoc,
 }) => {
   const [copied, setCopied] = useState(false);
   const t = I18N[lang];
   const meta = WORLD_META[atmosphereId];
-  const snippet = INSTALL_SNIPPETS_BY_REGION[installRegion][installTab];
+  const snippet = INSTALL_SNIPPETS[installTab];
 
   const handleCopy = () => {
     const done = () => {
@@ -95,36 +91,7 @@ export const InstallSection: FC<InstallSectionProps> = ({
               {t.act3_title}
             </h2>
           </div>
-          <div className="flex flex-wrap items-center gap-3 font-k-hud text-xs">
-            <div
-              id="k-region-toggle"
-              className="inline-flex border p-0.5 font-k-mono text-[0.6875rem]"
-              style={{
-                borderColor: 'color-mix(in srgb, var(--k-border) 48%, transparent)',
-                background: 'color-mix(in srgb, var(--k-crust) 70%, transparent)',
-                borderRadius: 'var(--k-radius)',
-              }}
-            >
-              {(['cn', 'global'] as const).map((region) => {
-                const active = installRegion === region;
-                return (
-                  <button
-                    key={region}
-                    type="button"
-                    data-region={region}
-                    onClick={() => onSelectInstallRegion(region)}
-                    className="bg-transparent border-0 px-2.5 py-1 cursor-pointer transition-colors"
-                    style={{
-                      background: active ? 'var(--k-surface1)' : 'transparent',
-                      color: active ? 'var(--k-accent-primary)' : 'var(--k-text-muted)',
-                      fontWeight: active ? 700 : 400,
-                    }}
-                  >
-                    {region === 'cn' ? t.region_cn : t.region_global}
-                  </button>
-                );
-              })}
-            </div>
+          <div className="flex items-center gap-3 font-k-hud text-xs">
             <span
               id="k-detected-os-badge"
               className="font-k-hud px-2.5 py-1 border"

@@ -1,11 +1,10 @@
 import { useMemo, useState, type FC } from 'react';
 import { CLI_COMMANDS, COMPOSE_LAYERS, DOC_CHAPTERS_META } from '../data/docs';
 import { I18N } from '../data/worlds';
-import type { DocChapterId, InstallRegion, Lang } from '../types/theme';
+import type { DocChapterId, Lang } from '../types/theme';
 
 interface DocsHubProps {
   lang: Lang;
-  installRegion: InstallRegion;
   docChapter: DocChapterId;
   docSearch: string;
   onSelectChapter: (id: DocChapterId) => void;
@@ -55,7 +54,6 @@ const CodeBlock: FC<{ code: string; lang: Lang }> = ({ code, lang }) => {
 
 export const DocsHub: FC<DocsHubProps> = ({
   lang,
-  installRegion,
   docChapter,
   docSearch,
   onSelectChapter,
@@ -193,11 +191,24 @@ export const DocsHub: FC<DocsHubProps> = ({
                     <CodeBlock
                       lang={lang}
                       code={
-                        installRegion === 'cn'
-                          ? `# macOS / Linux (Homebrew)\nbrew install nerv-base/tap/kiseki\n\n# macOS / Linux (国内 EdgeOne 加速 / 内置海外兜底)\ncurl -fsSL https://kiseki-dl.nerv-base.com/install.sh | sh\n\n# Windows PowerShell (国内 EdgeOne 加速 / 内置海外兜底)\nirm https://kiseki-dl.nerv-base.com/install.ps1 | iex\n\n# 如需强制指定镜像源: KISEKI_MIRROR=global 或 KISEKI_MIRROR=cn`
-                          : `# macOS / Linux (Homebrew)\nbrew install nerv-base/tap/kiseki\n\n# macOS / Linux (Global Cloudflare R2 / auto-fallback)\ncurl -fsSL https://dl.kisekiterm.dev/install.sh | sh\n\n# Windows PowerShell (Global Cloudflare R2 / auto-fallback)\nirm https://dl.kisekiterm.dev/install.ps1 | iex\n\n# Override mirror if needed: KISEKI_MIRROR=cn (China EdgeOne) or global`
+                        lang === 'zh'
+                          ? `# macOS / Linux (Homebrew)\nbrew install nerv-base/tap/kiseki\n\n# macOS / Linux (curl · 自动按地区分流国内加速 / 海外直连)\ncurl -fsSL https://kisekiterm.dev/install.sh | sh\n\n# Windows PowerShell (自动按地区分流国内加速 / 海外直连)\nirm https://kisekiterm.dev/install.ps1 | iex`
+                          : `# macOS / Linux (Homebrew)\nbrew install nerv-base/tap/kiseki\n\n# macOS / Linux (curl · auto-routes China EdgeOne / Global R2)\ncurl -fsSL https://kisekiterm.dev/install.sh | sh\n\n# Windows PowerShell (auto-routes China EdgeOne / Global R2)\nirm https://kisekiterm.dev/install.ps1 | iex`
                       }
                     />
+                    <p className="text-xs leading-relaxed m-0" style={{ color: 'var(--k-text-muted)' }}>
+                      {lang === 'zh' ? (
+                        <>
+                          <code className="font-k-mono">kisekiterm.dev</code> 会自动将中国大陆流量分流至 EdgeOne 加速节点、海外流量直连 R2；也可设置{' '}
+                          <code className="font-k-mono">KISEKI_MIRROR=cn</code> 或 <code className="font-k-mono">global</code> 手动覆盖。
+                        </>
+                      ) : (
+                        <>
+                          <code className="font-k-mono">kisekiterm.dev</code> automatically routes China traffic to EdgeOne and overseas traffic directly to R2. Override with{' '}
+                          <code className="font-k-mono">KISEKI_MIRROR=cn</code> or <code className="font-k-mono">global</code>.
+                        </>
+                      )}
+                    </p>
                   </div>
 
                   <div className="space-y-3">

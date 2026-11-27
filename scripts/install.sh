@@ -3,8 +3,7 @@
 # Installs Kiseki, its optional tools and fonts from a tagged release.
 #
 # Usage:
-#   curl -fsSL https://kiseki-dl.nerv-base.com/install.sh | sh   # China CDN (EdgeOne)
-#   curl -fsSL https://dl.kisekiterm.dev/install.sh | sh         # Global (Cloudflare R2)
+#   curl -fsSL https://kisekiterm.dev/install.sh | sh
 #   curl -fsSL https://kisekiterm.dev/install.sh | KISEKI_MIRROR=cn sh
 #   curl -fsSL https://kisekiterm.dev/install.sh | KISEKI_VERSION=v2.0.0-alpha.1 sh
 

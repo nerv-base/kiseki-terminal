@@ -6,8 +6,6 @@ export type Lang = 'zh' | 'en';
 
 export type InstallTab = 'brew' | 'curl' | 'ps1';
 
-export type InstallRegion = 'cn' | 'global';
-
 export type ViewMode = 'landing' | 'docs';
 
 export type DocChapterId = 'quickstart' | 'cli' | 'compose' | 'sdk' | 'faq';

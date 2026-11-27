@@ -1,0 +1,19 @@
+name = "kiseki-edge-router"
+main = "src/index.ts"
+compatibility_date = "2026-01-01"
+account_id = "a2755937171c4310b54c98acf0128861"
+
+routes = [
+  { pattern = "kisekiterm.dev/install.sh*", zone_name = "kisekiterm.dev" },
+  { pattern = "kisekiterm.dev/install.ps1*", zone_name = "kisekiterm.dev" },
+  { pattern = "kisekiterm.dev/releases/*", zone_name = "kisekiterm.dev" },
+  { pattern = "kisekiterm.dev/deps/*", zone_name = "kisekiterm.dev" },
+  { pattern = "kisekiterm.dev/themes/*", zone_name = "kisekiterm.dev" },
+]
+
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "kiseki-dl"
+
+[vars]
+CN_ORIGIN = "https://kiseki-dl.nerv-base.com"

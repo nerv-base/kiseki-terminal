@@ -1,4 +1,4 @@
-import type { InstallRegion, InstallTab, Lang, ThemeId, WorldMeta } from '../types/theme';
+import type { InstallTab, Lang, ThemeId, WorldMeta } from '../types/theme';
 
 export const THEME_ORDER: ThemeId[] = [
   'starlight-8bit',
@@ -64,37 +64,11 @@ export const WORLD_META: Record<ThemeId, WorldMeta> = {
   },
 };
 
-export const INSTALL_SNIPPETS_BY_REGION: Record<InstallRegion, Record<InstallTab, string>> = {
-  cn: {
-    brew: `brew install nerv-base/tap/kiseki\nkiseki init`,
-    curl: `curl -fsSL https://kiseki-dl.nerv-base.com/install.sh | sh\nkiseki init`,
-    ps1: `irm https://kiseki-dl.nerv-base.com/install.ps1 | iex\nkiseki init`,
-  },
-  global: {
-    brew: `brew install nerv-base/tap/kiseki\nkiseki init`,
-    curl: `curl -fsSL https://dl.kisekiterm.dev/install.sh | sh\nkiseki init`,
-    ps1: `irm https://dl.kisekiterm.dev/install.ps1 | iex\nkiseki init`,
-  },
+export const INSTALL_SNIPPETS: Record<InstallTab, string> = {
+  brew: `brew install nerv-base/tap/kiseki\nkiseki init`,
+  curl: `curl -fsSL https://kisekiterm.dev/install.sh | sh\nkiseki init`,
+  ps1: `irm https://kisekiterm.dev/install.ps1 | iex\nkiseki init`,
 };
-
-export const INSTALL_SNIPPETS: Record<InstallTab, string> = INSTALL_SNIPPETS_BY_REGION.global;
-
-export function detectInstallRegion(): InstallRegion {
-  if (typeof window === 'undefined') return 'cn';
-  try {
-    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
-    if (/^(Asia\/(Shanghai|Chongqing|Harbin|Urumqi|Hong_Kong|Macau)|PRC)$/i.test(tz)) {
-      return 'cn';
-    }
-    const lang = (navigator.language || '').toLowerCase();
-    if (lang === 'zh-cn' || lang === 'zh-hans' || lang === 'zh') {
-      return 'cn';
-    }
-  } catch {
-    // Ignore Intl errors in restricted environments
-  }
-  return 'global';
-}
 
 export type DetectedOS = 'macos' | 'windows' | 'linux';
 
@@ -144,8 +118,6 @@ export const I18N: Record<
     dl_init_tip_pre: string;
     dl_init_tip_post: string;
     dl_docs_link: string;
-    region_cn: string;
-    region_global: string;
     docs_title: string;
     docs_search_placeholder: string;
     back_home: string;
@@ -182,8 +154,6 @@ export const I18N: Record<
     dl_init_tip_pre: '安装后运行 ',
     dl_init_tip_post: ' 完成向导挂载',
     dl_docs_link: '查看完整安装文档 →',
-    region_cn: '国内加速 · EdgeOne',
-    region_global: 'Global · R2',
     docs_title: '奇蹟端末 使用文档',
     docs_search_placeholder: '搜索文档或命令...',
     back_home: '← 返回主页',
@@ -219,8 +189,6 @@ export const I18N: Record<
     dl_init_tip_pre: 'Run ',
     dl_init_tip_post: ' after installing',
     dl_docs_link: 'Full Installation Guide →',
-    region_cn: 'China CDN · EdgeOne',
-    region_global: 'Global · R2',
     docs_title: 'Kiseki Documentation',
     docs_search_placeholder: 'Search docs or commands...',
     back_home: '← Back to Home',

@@ -76,7 +76,7 @@ function renderHomebrewFormula({ version, repo, sums, allowPartial }) {
 
   const renderArchBlock = (archMacro, file, sha) =>
     `    ${archMacro} do\n` +
-    `      url "https://dl.kisekiterm.dev/releases/${tag}/${file}"\n` +
+    `      url "https://kisekiterm.dev/releases/${tag}/${file}"\n` +
     `      mirror "https://kiseki-dl.nerv-base.com/releases/${tag}/${file}"\n` +
     `      mirror "${baseUrl}/${file}"\n` +
     `      sha256 "${sha}"\n` +
