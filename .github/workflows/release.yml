@@ -425,7 +425,7 @@ jobs:
           name: release-manifests
           path: dist/manifests
 
-      - name: Upload release assets to R2 (kiseki-dl)
+      - name: Upload release assets, dependencies, and installers to R2 (kiseki-dl)
         if: steps.check.outputs.enabled == 'true'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -436,10 +436,43 @@ jobs:
           VERSION="${{ needs.prepare.outputs.version }}"
           printf '{"tag":"%s","version":"%s"}\n' "$TAG" "$VERSION" > dist/latest.json
 
-          for f in dist/archives/kiseki-* dist/manifests/checksums.txt dist/manifests/deps.tsv scripts/install.sh scripts/install.ps1; do
+          for f in dist/archives/kiseki-* dist/manifests/checksums.txt dist/manifests/deps.tsv; do
             name="$(basename "$f")"
-            npx --yes wrangler@4 r2 object put "kiseki-dl/releases/${TAG}/${name}" --file "$f" --remote
+            npx --yes wrangler@4 r2 object put "kiseki-dl/releases/${TAG}/${name}" \
+              --file "$f" --cache-control "public, max-age=31536000, immutable" --remote
           done
+
+          for s in scripts/install.sh scripts/install.ps1; do
+            name="$(basename "$s")"
+            npx --yes wrangler@4 r2 object put "kiseki-dl/releases/${TAG}/${name}" \
+              --file "$s" --content-type "text/plain; charset=utf-8" \
+              --cache-control "public, max-age=31536000, immutable" --remote
+            npx --yes wrangler@4 r2 object put "kiseki-dl/${name}" \
+              --file "$s" --content-type "text/plain; charset=utf-8" \
+              --cache-control "public, max-age=60" --remote
+          done
+
           npx --yes wrangler@4 r2 object put "kiseki-dl/releases/latest.json" \
-            --file dist/latest.json --content-type application/json \
+            --file dist/latest.json --content-type "application/json" \
             --cache-control "public, max-age=60" --remote
+
+          tmp_deps="$(mktemp -d)"
+          trap 'rm -rf "$tmp_deps"' EXIT
+          awk -F '\t' '$1 !~ /^#/ && NF == 6 { if (!seen[$4]++) print $3 "\t" $4 }' dist/manifests/deps.tsv |
+          while IFS=$'\t' read -r url sha; do
+            if curl -fsI --connect-timeout 5 --max-time 10 "https://dl.kisekiterm.dev/deps/${sha}" >/dev/null 2>&1; then
+              echo "Skip existing deps/${sha}"
+              continue
+            fi
+            dep_file="${tmp_deps}/${sha}"
+            echo "Mirroring ${url} -> deps/${sha}"
+            curl -fsSL --retry 3 --connect-timeout 15 --max-time 300 "$url" -o "$dep_file"
+            actual="$(sha256sum "$dep_file" | awk '{print $1}')"
+            if [ "$actual" != "$sha" ]; then
+              echo "SHA-256 mismatch for ${url}: expected ${sha}, got ${actual}" >&2
+              exit 1
+            fi
+            npx --yes wrangler@4 r2 object put "kiseki-dl/deps/${sha}" \
+              --file "$dep_file" --cache-control "public, max-age=31536000, immutable" --remote
+            rm -f "$dep_file"
+          done

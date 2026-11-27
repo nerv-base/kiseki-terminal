@@ -1,10 +1,11 @@
 import { useMemo, useState, type FC } from 'react';
 import { CLI_COMMANDS, COMPOSE_LAYERS, DOC_CHAPTERS_META } from '../data/docs';
 import { I18N } from '../data/worlds';
-import type { DocChapterId, Lang } from '../types/theme';
+import type { DocChapterId, InstallRegion, Lang } from '../types/theme';
 
 interface DocsHubProps {
   lang: Lang;
+  installRegion: InstallRegion;
   docChapter: DocChapterId;
   docSearch: string;
   onSelectChapter: (id: DocChapterId) => void;
@@ -54,6 +55,7 @@ const CodeBlock: FC<{ code: string; lang: Lang }> = ({ code, lang }) => {
 
 export const DocsHub: FC<DocsHubProps> = ({
   lang,
+  installRegion,
   docChapter,
   docSearch,
   onSelectChapter,
@@ -190,7 +192,11 @@ export const DocsHub: FC<DocsHubProps> = ({
                     <h3 className="text-base font-bold m-0">{lang === 'zh' ? '1. 命令行安装' : '1. Install Kiseki'}</h3>
                     <CodeBlock
                       lang={lang}
-                      code={`# macOS / Linux (Homebrew)\nbrew install nerv-base/tap/kiseki\n\n# macOS / Linux (curl)\ncurl -fsSL https://kisekiterm.dev/install.sh | sh\n\n# Windows (PowerShell)\nirm https://kisekiterm.dev/install.ps1 | iex`}
+                      code={
+                        installRegion === 'cn'
+                          ? `# macOS / Linux (Homebrew)\nbrew install nerv-base/tap/kiseki\n\n# macOS / Linux (国内 EdgeOne 加速 / 内置海外兜底)\ncurl -fsSL https://kiseki-dl.nerv-base.com/install.sh | sh\n\n# Windows PowerShell (国内 EdgeOne 加速 / 内置海外兜底)\nirm https://kiseki-dl.nerv-base.com/install.ps1 | iex\n\n# 如需强制指定镜像源: KISEKI_MIRROR=global 或 KISEKI_MIRROR=cn`
+                          : `# macOS / Linux (Homebrew)\nbrew install nerv-base/tap/kiseki\n\n# macOS / Linux (Global Cloudflare R2 / auto-fallback)\ncurl -fsSL https://dl.kisekiterm.dev/install.sh | sh\n\n# Windows PowerShell (Global Cloudflare R2 / auto-fallback)\nirm https://dl.kisekiterm.dev/install.ps1 | iex\n\n# Override mirror if needed: KISEKI_MIRROR=cn (China EdgeOne) or global`
+                      }
                     />
                   </div>
 

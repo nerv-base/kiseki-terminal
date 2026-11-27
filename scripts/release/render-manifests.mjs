@@ -74,47 +74,27 @@ function renderHomebrewFormula({ version, repo, sums, allowPartial }) {
   const linuxArmSha = requireSum("linuxArm");
   const linuxIntelSha = requireSum("linuxIntel");
 
+  const renderArchBlock = (archMacro, file, sha) =>
+    `    ${archMacro} do\n` +
+    `      url "https://dl.kisekiterm.dev/releases/${tag}/${file}"\n` +
+    `      mirror "https://kiseki-dl.nerv-base.com/releases/${tag}/${file}"\n` +
+    `      mirror "${baseUrl}/${file}"\n` +
+    `      sha256 "${sha}"\n` +
+    `    end`;
+
   const blocks = [];
 
   if (macArmSha || macIntelSha) {
     const inner = [];
-    if (macArmSha) {
-      inner.push(
-        `    on_arm do\n` +
-          `      url "${baseUrl}/${files.macArm}"\n` +
-          `      sha256 "${macArmSha}"\n` +
-          `    end`
-      );
-    }
-    if (macIntelSha) {
-      inner.push(
-        `    on_intel do\n` +
-          `      url "${baseUrl}/${files.macIntel}"\n` +
-          `      sha256 "${macIntelSha}"\n` +
-          `    end`
-      );
-    }
+    if (macArmSha) inner.push(renderArchBlock("on_arm", files.macArm, macArmSha));
+    if (macIntelSha) inner.push(renderArchBlock("on_intel", files.macIntel, macIntelSha));
     blocks.push(`  on_macos do\n${inner.join("\n\n")}\n  end`);
   }
 
   if (linuxArmSha || linuxIntelSha) {
     const inner = [];
-    if (linuxArmSha) {
-      inner.push(
-        `    on_arm do\n` +
-          `      url "${baseUrl}/${files.linuxArm}"\n` +
-          `      sha256 "${linuxArmSha}"\n` +
-          `    end`
-      );
-    }
-    if (linuxIntelSha) {
-      inner.push(
-        `    on_intel do\n` +
-          `      url "${baseUrl}/${files.linuxIntel}"\n` +
-          `      sha256 "${linuxIntelSha}"\n` +
-          `    end`
-      );
-    }
+    if (linuxArmSha) inner.push(renderArchBlock("on_arm", files.linuxArm, linuxArmSha));
+    if (linuxIntelSha) inner.push(renderArchBlock("on_intel", files.linuxIntel, linuxIntelSha));
     blocks.push(`  on_linux do\n${inner.join("\n\n")}\n  end`);
   }
 

@@ -3,16 +3,66 @@
 # Installs Kiseki, its optional tools and fonts from a tagged release.
 #
 # Usage:
-#   curl -fsSL https://kisekiterm.dev/install.sh | sh
+#   curl -fsSL https://kiseki-dl.nerv-base.com/install.sh | sh   # China CDN (EdgeOne)
+#   curl -fsSL https://dl.kisekiterm.dev/install.sh | sh         # Global (Cloudflare R2)
+#   curl -fsSL https://kisekiterm.dev/install.sh | KISEKI_MIRROR=cn sh
 #   curl -fsSL https://kisekiterm.dev/install.sh | KISEKI_VERSION=v2.0.0-alpha.1 sh
 
 set -eu
 
 REPO="${KISEKI_REPO:-nerv-base/kiseki-terminal}"
-DL_BASE="${KISEKI_DL_BASE:-https://dl.kisekiterm.dev/releases}"
+CN_ORIGIN="https://kiseki-dl.nerv-base.com"
+GLOBAL_ORIGIN="https://dl.kisekiterm.dev"
+EXPLICIT_DL_BASE="${KISEKI_DL_BASE:-}"
+MIRROR_PREF="${KISEKI_MIRROR:-}"
 INSTALL_DIR="${KISEKI_INSTALL_DIR:-$HOME/.local/bin}"
 VERSION="${KISEKI_VERSION:-}"
 SKIP_FONTS=0
+
+normalize_origin() {
+  val="${1%/}"
+  case "$val" in
+    */releases) val="${val%/releases}" ;;
+  esac
+  printf '%s' "$val"
+}
+
+build_mirror_origins() {
+  ordered=""
+  add_origin() {
+    cand="$(normalize_origin "$1")"
+    [ -n "$cand" ] || return 0
+    case " $ordered " in
+      *" $cand "*) return 0 ;;
+    esac
+    ordered="${ordered:+$ordered }$cand"
+  }
+
+  if [ -n "$EXPLICIT_DL_BASE" ]; then
+    add_origin "$EXPLICIT_DL_BASE"
+  fi
+
+  if [ "$MIRROR_PREF" = "cn" ]; then
+    add_origin "$CN_ORIGIN"
+    add_origin "$GLOBAL_ORIGIN"
+  elif [ "$MIRROR_PREF" = "global" ]; then
+    add_origin "$GLOBAL_ORIGIN"
+    add_origin "$CN_ORIGIN"
+  else
+    tz_offset="$(date +%z 2>/dev/null || true)"
+    case "$tz_offset" in
+      +0800)
+        add_origin "$CN_ORIGIN"
+        add_origin "$GLOBAL_ORIGIN"
+        ;;
+      *)
+        add_origin "$GLOBAL_ORIGIN"
+        add_origin "$CN_ORIGIN"
+        ;;
+    esac
+  fi
+  printf '%s' "$ordered"
+}
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -92,12 +142,14 @@ resolve_version() {
     return
   fi
 
-  # Try the release mirror first, then fall back to the GitHub API.
-  tag="$(curl -fsSL --connect-timeout 5 --max-time 5 "${DL_BASE%/}/latest.json" 2>/dev/null | sed -nE 's/.*"tag":[[:space:]]*"([^"]+)".*/\1/p' | head -n 1)"
-  case "$tag" in
-    *[!0-9A-Za-z.+-]*) ;;
-    v2.*) printf '%s' "$tag"; return ;;
-  esac
+  # Try mirrors in priority order, then fall back to the GitHub API.
+  for origin in $MIRROR_ORIGINS; do
+    tag="$(curl -fsSL --connect-timeout 5 --max-time 8 "${origin}/releases/latest.json" 2>/dev/null | sed -nE 's/.*"tag":[[:space:]]*"([^"]+)".*/\1/p' | head -n 1 || true)"
+    case "$tag" in
+      *[!0-9A-Za-z.+-]*|'') ;;
+      v2.*) printf '%s' "$tag"; return ;;
+    esac
+  done
 
   # Fetch latest published v2 release tag (never falls back to branch archives)
   api_url="https://api.github.com/repos/${REPO}/releases"
@@ -112,9 +164,23 @@ resolve_version() {
 
 download() (
   url="$1" dest="$2"
-  if curl -fsSL --connect-timeout 5 --max-time 60 "${DL_BASE%/}/${TAG}/${url##*/}" -o "$dest" 2>/dev/null; then
-    return 0
-  fi
+  asset_name="${url##*/}"
+  for origin in $MIRROR_ORIGINS; do
+    if curl -fsSL --connect-timeout 5 --max-time 60 "${origin}/releases/${TAG}/${asset_name}" -o "$dest" 2>/dev/null; then
+      return 0
+    fi
+  done
+  curl -fsSL --connect-timeout 10 --max-time 300 "$url" -o "$dest"
+)
+
+download_dep() (
+  digest="$1" url="$2" dest="$3" label="$4"
+  printf '  ↓ 下载依赖 %s...\n' "$label"
+  for origin in $MIRROR_ORIGINS; do
+    if curl -fsSL --connect-timeout 5 --max-time 90 "${origin}/deps/${digest}" -o "$dest" 2>/dev/null; then
+      return 0
+    fi
+  done
   curl -fsSL --connect-timeout 10 --max-time 300 "$url" -o "$dest"
 )
 
@@ -160,6 +226,7 @@ install_core() {
   # A network failure has a distinct status so an offline rerun can reuse a
   # previously verified installation of this exact tag.
   download "${BASE_URL}/checksums.txt" "$TMP_DIR/checksums.txt" || return 2
+  printf '  ↓ 下载主程序 %s...\n' "$archive"
   download "${BASE_URL}/${archive}" "$TMP_DIR/$archive" || return 2
   verify_sha256 "$TMP_DIR/$archive" "$(release_checksum "$archive")" || return 1
   tar -xzf "$TMP_DIR/$archive" -C "$TMP_DIR" || return 1
@@ -214,7 +281,7 @@ install_dependency() (
       if [ "$relative" = vendor/bin/fastfetch ]; then
         require_unzip || return 1
       fi
-      download "$url" "$asset" && verify_sha256 "$asset" "$digest" || return 1
+      download_dep "$digest" "$url" "$asset" "$relative" && verify_sha256 "$asset" "$digest" || return 1
       if [ "$relative" = vendor/bin/fastfetch ]; then
         unzip -p "$asset" '*/usr/bin/fastfetch' > "$extracted" || return 1
       else
@@ -229,7 +296,7 @@ install_dependency() (
       [ -n "$FONT_DIR" ] || return 1
       dest="$FONT_DIR/$name"
       if [ -f "$dest" ] && [ "$(sha256 "$dest")" = "$digest" ]; then return 0; fi
-      download "$url" "$asset" && verify_sha256 "$asset" "$digest" || return 1
+      download_dep "$digest" "$url" "$asset" "$relative" && verify_sha256 "$asset" "$digest" || return 1
       install_file "$asset" "$dest" "$mode"
       ;;
     font:fonts/*:0644)
@@ -237,7 +304,7 @@ install_dependency() (
       pattern="$(awk -F '\t' -v id="$family" '$1 == "# font" && $2 == id { print $3; exit }' "$manifest")"
       [ -n "$FONT_DIR" ] && [ -n "$pattern" ] || return 1
       require_unzip || return 1
-      download "$url" "$asset" && verify_sha256 "$asset" "$digest" || return 1
+      download_dep "$digest" "$url" "$asset" "$relative" && verify_sha256 "$asset" "$digest" || return 1
       unzip -Z1 "$asset" > "$asset_dir/font.entries" || return 1
       found=0
       while IFS= read -r entry; do
@@ -303,6 +370,9 @@ TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' 0
 trap 'exit 1' HUP INT TERM
 KISEKI_CONFIG_ROOT="${KISEKI_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/kiseki}"
+MIRROR_ORIGINS="$(build_mirror_origins)"
+PRIMARY_MIRROR="${MIRROR_ORIGINS%% *}"
+printf '· Mirror: %s (fallback: GitHub)\n' "${PRIMARY_MIRROR#https://}"
 
 if TAG="$(resolve_version)"; then
   echo "Installing Kiseki Terminal ${TAG} (${TARGET})..."

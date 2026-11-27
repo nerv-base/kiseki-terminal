@@ -2,8 +2,9 @@
 # Installs Kiseki, its optional tools and fonts from a tagged release.
 #
 # Usage:
-#   irm https://kisekiterm.dev/install.ps1 | iex
-#   & ([scriptblock]::Create((irm https://kisekiterm.dev/install.ps1))) -Version v2.0.0-alpha.1
+#   irm https://kiseki-dl.nerv-base.com/install.ps1 | iex   # China CDN (EdgeOne)
+#   irm https://dl.kisekiterm.dev/install.ps1 | iex         # Global (Cloudflare R2)
+#   & ([scriptblock]::Create((irm https://dl.kisekiterm.dev/install.ps1))) -Version v2.0.0-alpha.1
 
 <#
 .SYNOPSIS
@@ -16,7 +17,8 @@ param(
     [string]$Version = $env:KISEKI_VERSION,
     [string]$InstallDir = $(if ($env:KISEKI_INSTALL_DIR) { $env:KISEKI_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA "Programs\kiseki" }),
     [string]$Repo = $(if ($env:KISEKI_REPO) { $env:KISEKI_REPO } else { "nerv-base/kiseki-terminal" }),
-    [string]$DownloadBase = $(if ($env:KISEKI_DL_BASE) { $env:KISEKI_DL_BASE } else { "https://dl.kisekiterm.dev/releases" }),
+    [string]$DownloadBase = $env:KISEKI_DL_BASE,
+    [string]$Mirror = $env:KISEKI_MIRROR,
     [switch]$SkipFonts
 )
 
@@ -27,6 +29,23 @@ try {
 
 $okMark = [char]0x2713
 $remedy = "Rerun the installer (see https://kisekiterm.dev)."
+$cnOrigin = "https://kiseki-dl.nerv-base.com"
+$globalOrigin = "https://dl.kisekiterm.dev"
+$mirrorOrigins = New-Object System.Collections.Generic.List[string]
+function Add-MirrorOrigin([string]$Raw) {
+    if (-not $Raw) { return }
+    $clean = $Raw.TrimEnd('/') -replace '/releases$', ''
+    if ($clean -and -not $mirrorOrigins.Contains($clean)) { $mirrorOrigins.Add($clean) }
+}
+Add-MirrorOrigin $DownloadBase
+$preferCn = ($Mirror -eq 'cn') -or ((-not $Mirror) -and $(try { [TimeZoneInfo]::Local.BaseUtcOffset.Hours -eq 8 } catch { $false }))
+if ($preferCn) {
+    Add-MirrorOrigin $cnOrigin
+    Add-MirrorOrigin $globalOrigin
+} else {
+    Add-MirrorOrigin $globalOrigin
+    Add-MirrorOrigin $cnOrigin
+}
 
 function Get-RustTarget {
     $arch = $null
@@ -52,12 +71,14 @@ function Get-RustTarget {
 }
 
 function Resolve-ReleaseTag {
-    param([string]$RequestedVersion, [string]$Repository, [string]$DlBase)
+    param([string]$RequestedVersion, [string]$Repository, [string[]]$Origins)
     if ($RequestedVersion) { return $RequestedVersion }
-    try {
-        $meta = Invoke-RestMethod -Uri "$DlBase/latest.json" -TimeoutSec 5 -Headers @{ "User-Agent" = "kiseki-installer" }
-        if ($meta -and $meta.tag -cmatch '^v2\.[0-9A-Za-z.+-]+$') { return $meta.tag }
-    } catch { }
+    foreach ($origin in $Origins) {
+        try {
+            $meta = Invoke-RestMethod -Uri "$origin/releases/latest.json" -TimeoutSec 8 -Headers @{ "User-Agent" = "kiseki-installer" }
+            if ($meta -and $meta.tag -cmatch '^v2\.[0-9A-Za-z.+-]+$') { return $meta.tag }
+        } catch { }
+    }
 
     $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repository/releases" -Headers @{ "User-Agent" = "kiseki-installer" } -TimeoutSec 30
     $v2 = $releases | Where-Object { $_.tag_name -like "v2.*" -and -not $_.draft } | Select-Object -First 1
@@ -65,13 +86,26 @@ function Resolve-ReleaseTag {
     return $v2.tag_name
 }
 
-function Download-ReleaseAsset {
-    param([string]$PrimaryUrl, [string]$FallbackUrl, [string]$OutFile)
+function Invoke-MirroredDownload {
+    param([string[]]$CandidateUrls, [int[]]$Timeouts, [string]$OutFile, [string]$Label = "")
+    if ($Label) { Write-Host "  Downloading $Label..." -ForegroundColor DarkGray }
+    $prevPref = $ProgressPreference
+    $ProgressPreference = 'SilentlyContinue'
     try {
-        Invoke-WebRequest -Uri $PrimaryUrl -OutFile $OutFile -TimeoutSec 15 -UseBasicParsing
-        return
-    } catch { }
-    Invoke-WebRequest -Uri $FallbackUrl -OutFile $OutFile -TimeoutSec 300 -UseBasicParsing
+        for ($i = 0; $i -lt $CandidateUrls.Count; $i++) {
+            $u = $CandidateUrls[$i]
+            $t = $Timeouts[$i]
+            $isLast = ($i -eq ($CandidateUrls.Count - 1))
+            try {
+                Invoke-WebRequest -Uri $u -OutFile $OutFile -TimeoutSec $t -UseBasicParsing
+                return
+            } catch {
+                if ($isLast) { throw }
+            }
+        }
+    } finally {
+        $ProgressPreference = $prevPref
+    }
 }
 
 function Get-Sha256([string]$Path) {
@@ -89,9 +123,29 @@ function Assert-Sha256([string]$Path, [string]$ExpectedHash) {
     if ($actualHash -ne $ExpectedHash) { throw "SHA-256 mismatch for ${Path}. Expected $ExpectedHash, got $actualHash." }
 }
 
-function Save-Download([string]$Uri, [string]$Path) {
+function Save-Download([string]$Uri, [string]$Path, [string]$Label = "") {
     $asset = ([uri]$Uri).AbsolutePath.Split('/')[-1]
-    Download-ReleaseAsset -PrimaryUrl "$r2Url/$asset" -FallbackUrl $Uri -OutFile $Path
+    $urls = @()
+    $timeouts = @()
+    foreach ($origin in $mirrorOrigins) {
+        $urls += "$origin/releases/$tag/$asset"
+        $timeouts += 60
+    }
+    $urls += $Uri
+    $timeouts += 300
+    Invoke-MirroredDownload -CandidateUrls $urls -Timeouts $timeouts -OutFile $Path -Label $Label
+}
+
+function Save-DependencyDownload([string]$Digest, [string]$Uri, [string]$Path, [string]$Label) {
+    $urls = @()
+    $timeouts = @()
+    foreach ($origin in $mirrorOrigins) {
+        $urls += "$origin/deps/$Digest"
+        $timeouts += 90
+    }
+    $urls += $Uri
+    $timeouts += 300
+    Invoke-MirroredDownload -CandidateUrls $urls -Timeouts $timeouts -OutFile $Path -Label $Label
 }
 
 # Stage beside the destination and replace atomically so a failed copy leaves the old file usable.
@@ -116,7 +170,7 @@ function Install-Core {
     $archivePath = Join-Path $tmpDir $archive
     try {
         Save-Download "$baseUrl/checksums.txt" $checksumsPath
-        Save-Download "$baseUrl/$archive" $archivePath
+        Save-Download "$baseUrl/$archive" $archivePath $archive
     } catch {
         Write-Warning $_.Exception.Message
         return $false
@@ -195,7 +249,7 @@ function Install-Dependency([string[]]$Row, [hashtable]$FontPatterns, [string]$F
         $destination = Join-Path (Join-Path $InstallDir 'vendor\bin') $name
         if ((Test-Path -LiteralPath $destination -PathType Leaf) -and (Get-Sha256 $destination) -eq $digest) { return }
         if ($name -eq 'fastfetch.exe') { Assert-ZipSupport }
-        Save-Download $uri $assetPath
+        Save-DependencyDownload $digest $uri $assetPath $relative
         Assert-Sha256 $assetPath $digest
         $source = Join-Path $tmpDir $name
         if ($name -eq 'fastfetch.exe') {
@@ -218,7 +272,7 @@ function Install-Dependency([string[]]$Row, [hashtable]$FontPatterns, [string]$F
         $source = $destination
         if (-not (Test-Path -LiteralPath $destination -PathType Leaf) -or (Get-Sha256 $destination) -ne $digest) {
             $source = Join-Path $tmpDir 'dependency.ttf'
-            Save-Download $uri $source
+            Save-DependencyDownload $digest $uri $source $relative
             Assert-Sha256 $source $digest
         }
         Install-Font $source $name $FontDir
@@ -228,7 +282,7 @@ function Install-Dependency([string[]]$Row, [hashtable]$FontPatterns, [string]$F
         $pattern = $FontPatterns[$family]
         if (-not $FontDir -or -not $pattern) { throw "Missing font metadata for $family" }
         Assert-ZipSupport
-        Save-Download $uri $assetPath
+        Save-DependencyDownload $digest $uri $assetPath $relative
         Assert-Sha256 $assetPath $digest
         $zip = [IO.Compression.ZipFile]::OpenRead($assetPath)
         try {
@@ -280,7 +334,6 @@ if ($Version) {
     if ($Version -notmatch '^v[0-9A-Za-z.+-]+$') { throw "Invalid release tag: $Version" }
 }
 $target = Get-RustTarget
-$DownloadBase = $DownloadBase.TrimEnd('/')
 $InstallDir = [IO.Path]::GetFullPath($InstallDir)
 $destPath = Join-Path $InstallDir 'kiseki.exe'
 $receiptPath = Join-Path $InstallDir '.kiseki-release'
@@ -289,8 +342,9 @@ New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
 $checksumsPath = Join-Path $tmpDir 'checksums.txt'
 
 try {
+    Write-Host "Using mirror: $($mirrorOrigins[0] -replace '^https://','') (fallback: GitHub)" -ForegroundColor DarkGray
     $releaseAvailable = $true
-    try { $tag = Resolve-ReleaseTag -RequestedVersion $Version -Repository $Repo -DlBase $DownloadBase }
+    try { $tag = Resolve-ReleaseTag -RequestedVersion $Version -Repository $Repo -Origins $mirrorOrigins }
     catch {
         $tag = Get-InstalledRelease $Version
         if (-not $tag) { throw }
@@ -298,7 +352,6 @@ try {
     }
     if ($tag -notmatch '^v[0-9A-Za-z.+-]+$') { throw "Invalid release tag: $tag" }
     $baseUrl = "https://github.com/$Repo/releases/download/$tag"
-    $r2Url = "$DownloadBase/$tag"
     if ($releaseAvailable) {
         Write-Host "Installing Kiseki Terminal $tag ($target)..." -ForegroundColor Cyan
         if (-not (Install-Core) -and -not (Get-InstalledRelease $tag)) { throw "Could not download Kiseki $tag." }

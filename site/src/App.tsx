@@ -10,9 +10,10 @@ import { KISEKI_BUNDLE } from './data/bundle';
 import { DOC_CHAPTERS_META } from './data/docs';
 import {
   DEFAULT_OPENING_THEME,
-  INSTALL_SNIPPETS,
+  INSTALL_SNIPPETS_BY_REGION,
   THEME_ORDER,
   defaultInstallTabForOS,
+  detectInstallRegion,
   detectOS,
 } from './data/worlds';
 import { Kiseki3DStage } from './engine/perspectiveFx';
@@ -20,6 +21,7 @@ import { KisekiShaderStage, getWallpaperImage } from './engine/webglShader';
 import type {
   DocChapterId,
   HistorySnapshot,
+  InstallRegion,
   InstallTab,
   Lang,
   LayerState,
@@ -73,6 +75,7 @@ export const App: FC = () => {
   const historyStackRef = useRef<HistorySnapshot[]>([]);
 
   const [installTab, setInstallTab] = useState<InstallTab>(() => defaultInstallTabForOS(detectedOS));
+  const [installRegion, setInstallRegion] = useState<InstallRegion>(() => detectInstallRegion());
   const [docChapter, setDocChapter] = useState<DocChapterId>(initialRoute.docChapter ?? 'quickstart');
   const [docSearch, setDocSearch] = useState('');
 
@@ -431,7 +434,10 @@ export const App: FC = () => {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [pickerActive, pickerIndex, view, activateTheme, appendLog]);
 
-  const heroCmd = useMemo(() => INSTALL_SNIPPETS[installTab].split('\n')[0] ?? '', [installTab]);
+  const heroCmd = useMemo(
+    () => INSTALL_SNIPPETS_BY_REGION[installRegion][installTab].split('\n')[0] ?? '',
+    [installRegion, installTab],
+  );
 
   return (
     <div id="kiseki-app" data-ui-theme={layers.ui} data-typo-theme={layers.typography} style={appCssVars}>
@@ -499,7 +505,9 @@ export const App: FC = () => {
           atmosphereId={layers.atmosphere}
           detectedOS={detectedOS}
           installTab={installTab}
+          installRegion={installRegion}
           onSelectInstallTab={setInstallTab}
+          onSelectInstallRegion={setInstallRegion}
           onOpenDoc={(docId) => navigateTo('docs', docId)}
         />
       </div>
@@ -507,6 +515,7 @@ export const App: FC = () => {
       {view === 'docs' && (
         <DocsHub
           lang={lang}
+          installRegion={installRegion}
           docChapter={docChapter}
           docSearch={docSearch}
           onSelectChapter={(id) => {
