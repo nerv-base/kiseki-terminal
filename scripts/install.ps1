@@ -3,7 +3,7 @@
 #
 # Usage:
 #   irm https://kisekiterm.dev/install.ps1 | iex
-#   & ([scriptblock]::Create((irm https://kisekiterm.dev/install.ps1))) -Version v2.0.0-alpha.1
+#   & ([scriptblock]::Create((irm https://kisekiterm.dev/install.ps1))) -Version v2.0.0-beta.1
 
 <#
 .SYNOPSIS
@@ -246,8 +246,13 @@ function Install-Dependency([string[]]$Row, [hashtable]$FontPatterns, [string]$F
     if ($kind -eq 'tool' -and $mode -eq '0755' -and $relative -in 'vendor/bin/oh-my-posh.exe', 'vendor/bin/fastfetch.exe') {
         $name = [IO.Path]::GetFileName($relative)
         $destination = Join-Path (Join-Path $InstallDir 'vendor\bin') $name
-        if ((Test-Path -LiteralPath $destination -PathType Leaf) -and (Get-Sha256 $destination) -eq $digest) { return }
-        if ($name -eq 'fastfetch.exe') { Assert-ZipSupport }
+        $receipt = "$destination.asset-sha256"
+        if ($name -eq 'fastfetch.exe') {
+            if ((Test-Path -LiteralPath $destination -PathType Leaf) -and (Test-Path -LiteralPath $receipt -PathType Leaf) -and ((Get-Content -LiteralPath $receipt -TotalCount 1).Trim() -eq $digest)) { return }
+            Assert-ZipSupport
+        } elseif ((Test-Path -LiteralPath $destination -PathType Leaf) -and (Get-Sha256 $destination) -eq $digest) {
+            return
+        }
         Save-DependencyDownload $digest $uri $assetPath $relative
         Assert-Sha256 $assetPath $digest
         $source = Join-Path $tmpDir $name
@@ -264,6 +269,11 @@ function Install-Dependency([string[]]$Row, [hashtable]$FontPatterns, [string]$F
         & $source --version | Out-Null
         if ($LASTEXITCODE -ne 0) { throw "$name failed health check (--version exited with $LASTEXITCODE)." }
         Install-File $source $destination | Out-Null
+        if ($name -eq 'fastfetch.exe') {
+            $receiptTmp = Join-Path $tmpDir 'fastfetch.asset-sha256'
+            Set-Content -LiteralPath $receiptTmp -Value $digest -Encoding Ascii
+            Install-File $receiptTmp $receipt | Out-Null
+        }
     } elseif ($kind -eq 'font-raw' -and $mode -eq '0644' -and $relative -cmatch '^fonts/([A-Za-z0-9_-]+\.ttf)$') {
         $name = $Matches[1]
         if (-not $FontDir) { throw "Missing font directory for $name" }
@@ -320,6 +330,19 @@ function Install-Dependencies {
         if ($SkipFonts -and $fields[0] -in 'font', 'font-raw') { continue }
         try { Install-Dependency $fields $fontPatterns $fontDir }
         catch { Write-Warning "Could not install $($fields[4]). $remedy $($_.Exception.Message)" }
+    }
+    if (-not $SkipFonts) {
+        $oflDest = Join-Path (Join-Path $InstallDir 'vendor\licenses') 'OFL-JetBrainsMono.txt'
+        if (-not (Test-Path -LiteralPath $oflDest -PathType Leaf)) {
+            $oflTmp = Join-Path $tmpDir 'OFL-JetBrainsMono.txt'
+            foreach ($origin in $mirrorOrigins) {
+                try {
+                    Invoke-WebRequest -Uri "$origin/deps/licenses/OFL-JetBrainsMono.txt" -OutFile $oflTmp -TimeoutSec 10 -UseBasicParsing
+                    Install-File $oflTmp $oflDest | Out-Null
+                    break
+                } catch { }
+            }
+        }
     }
     if (-not $SkipFonts -and ('Kiseki.NativeFonts' -as [type])) {
         # Tell already-running terminal hosts that the font set changed (WM_FONTCHANGE).

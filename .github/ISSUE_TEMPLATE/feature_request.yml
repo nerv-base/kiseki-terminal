@@ -1,0 +1,32 @@
+name: Feature / Adapter Request
+description: Propose a new terminal/tool adapter, CLI capability, or shader/theme improvement
+title: "[Feat]: "
+labels: ["enhancement"]
+body:
+  - type: dropdown
+    id: area
+    attributes:
+      label: Category
+      options:
+        - New Terminal / Shell Adapter
+        - New Tier 2 Ecosystem Tool Adapter
+        - CLI / TUI Experience
+        - Shader / Theme Engine
+        - Packaging / Installer
+        - Documentation / Website
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Motivation & Use Case
+      description: What problem does this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed Solution
+      description: How should it work while preserving Kiseki's non-invasive visual-only boundary?
+    validations:
+      required: false

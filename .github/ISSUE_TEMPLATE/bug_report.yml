@@ -1,0 +1,56 @@
+name: Bug Report
+description: Report a bug in Kiseki Terminal v2 (CLI, adapters, shaders, installers, or docs)
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Clear description of the bug and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Run `kiseki ...`
+        2. Observe ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Kiseki version
+      description: Output of `kiseki --version`
+      placeholder: "kiseki 2.0.0-beta.1"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating System
+      options:
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Windows 11 (x64)
+        - Windows 11 (ARM64)
+        - Linux (x86_64)
+        - Linux (ARM64)
+        - WSL2
+    validations:
+      required: true
+  - type: input
+    id: host
+    attributes:
+      label: Terminal & Shell
+      placeholder: "e.g. Ghostty 1.4 / Windows Terminal / Kitty + Zsh / PowerShell 7 / Bash / Fish"
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Diagnostics (`kiseki doctor` or `kiseki status --json`)
+      description: Please paste the relevant output (redact any private paths if needed).
+      render: shell

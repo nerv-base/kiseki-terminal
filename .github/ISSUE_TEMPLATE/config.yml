@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Documentation & Live Preview (kisekiterm.dev)
+    url: https://kisekiterm.dev
+    about: Browse documentation, commands, and live interactive theme previews.
+  - name: Community Theme Authoring Guide
+    url: https://github.com/nerv-base/kiseki-terminal/blob/v2/docs/COMMUNITY_THEMES.md
+    about: Learn how to scaffold, validate, and install your own Kiseki v2 theme pack.

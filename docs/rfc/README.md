@@ -17,6 +17,7 @@
 | **RFC-0003** | [0003-adapter-contract-and-capabilities.md](./0003-adapter-contract-and-capabilities.md) | Adapter 契约与 Capability Model（Rust Trait 定义）、25+ 应用三层集成矩阵、Dotfiles/Symlink 与 `render-only` 兼容、Windows Terminal JSONC 保留注释局部 Patch、iTerm2 父 Profile 继承、分目标事务日志与回滚 |
 | **RFC-0004** | [0004-shader-pipeline-and-security.md](./0004-shader-pipeline-and-security.md) | 参数化单模板 Shader 管线（1 GLSL + 1 HLSL + 编译期宏）、Rendering Profile、窄分屏长宽比自适应、Ghostty vs WT 渲染边界、内嵌 `naga` 静态校验与复杂度预算、零代码执行白名单沙箱、版权与字体授权规范 |
 | **RFC-0005** | [0005-dependency-and-asset-policy.md](./0005-dependency-and-asset-policy.md) | 外部依赖供给边界（`kiseki` 本体零网络、零包管理器调用）、按渠道分流（Homebrew `depends_on` / 安装器下载到私有 vendor 目录 / 纯文本资产编译进二进制）、依赖清单单一来源与 `deps.tsv` 分发格式、OMP 真实二进制渲染验证、字体因 OFL 再分发义务而一律安装时下载、npm 与 Scoop 渠道移除 |
+| **RFC-0006** | [0006-community-theme-gallery.md](./0006-community-theme-gallery.md) | **Kiseki Gallery 社区主题市场（随 `v2.0.0` 同步上线，参考 `awesome-dsh-plugin`）**：一主题一 YAML 独立文件一次上架 PR（无仓库时长门槛、不盲扫 Topic、双阶段安全门禁）+ 后续作者自维护版本定时 `probe` 免 PR 自动同步（`push`/`probe` 双并发组解耦、单条目定向刷新、周度 `decay-scan`）、平铺短 ID、去 `verified` 多维客观热门排行（下载量/Star/7 日飙升/活跃度）与自动能力披露、R2 WebP 终端截图缩略图与 302 匿名下载计数、独立同步网络 crate `kiseki-gallery`（修订 ADR-015）及多索引源/官网/TUI 体验 |
 
 ### 配套机器可读 Schema
 
@@ -25,7 +26,7 @@
 
 ---
 
-## 核心架构决策（ADR 001–014 已冻结 · ADR-015 提案中）
+## 核心架构决策（ADR 001–014 已冻结 · ADR-015/016 提案中）
 
 | ADR | 维度 | 已定案结论 |
 | :--- | :--- | :--- |
@@ -43,7 +44,8 @@
 | **ADR-012** | 安全红线 | 严格零代码执行白名单沙箱：强类型与正则防配置注入；禁止第三方包携带原始 Lua/Shell/Vimscript；Prompt 严禁 OMP `command` 与 Starship `[custom.*]`；Shader 过 `naga` 复杂度预算；提供 `kiseki recover --safe` |
 | **ADR-013** | 打包分发与更新 | 单仓 `cargo-dist` 双通道分发（Homebrew/Scoop/Winget + 一键脚本）；4 个官方主题随发行版内置离线可用 + `kiseki theme install/update`；独立安装走 SHA256 事务自更新（严禁回退 `main`） |
 | **ADR-014** | 迁移与版权 | `kiseki init` 内置一键自动迁移（快照备份、干净卸载旧钩子与 8 个 shim、迁入偏好，补齐 Windows 完整卸载）；引擎 MIT + 主题包强制 `LICENSE`/`CREDITS.md` 来源元数据 + 严禁再分发第三方受限字体 |
-| **ADR-015**（提案） | 依赖供给与资产边界 | `kiseki` 本体永不执行包管理器、永不发起网络请求；依赖按渠道原生机制供给（Homebrew `depends_on` / 安装器下载至私有 vendor 目录 / 体积允许的纯文本资产编译进二进制）；字体因 OFL 再分发义务一律安装时从上游下载；版本确定性由 CI 滚动的 `deps.tsv` 与 OMP 真实二进制渲染验证共同保证（见 [RFC-0005](./0005-dependency-and-asset-policy.md)） |
+| **ADR-015**（提案） | 依赖供给与资产边界 | `kiseki` 本体永不执行包管理器、日常核心路径零网络；依赖按渠道原生机制供给（Homebrew `depends_on` / 安装器下载至私有 vendor 目录 / 体积允许的纯文本资产编译进二进制）；字体因 OFL 再分发义务一律安装时下载（镜像时随附 OFL 许可证文本）；版本确定性由 CI 滚动的 `deps.tsv` 与 OMP 真实二进制渲染验证共同保证（见 [RFC-0005](./0005-dependency-and-asset-policy.md)） |
+| **ADR-016**（提案，修订 ADR-015） | 社区主题市场与受限网络边界 | 参考 `awesome-dsh-plugin`：一主题一 `data/themes/<id>.yml` 一次上架 PR（不设仓库年龄门槛、不盲扫 Topic、双阶段 `pr-check`/`pr-gate` 安全隔离）+ 后续作者自主发版由定时 `probe` 全自动同步零 PR（`push`/`probe` 双并发组解耦、分片缓存、`target_repo` 定向刷新、周度 `decay-scan`）+ 平铺短 ID + 去人工 `verified` 的多维客观排行（下载量/Star/7 日飙升/活跃度）与自动能力披露 + 终端截图 WebP 缩略图走 R2 加速与 302 匿名下载计数（不二次托管高分辨率壁纸，主索引 minified 与 `updates.json` 拆分，支持多索引源与标准下架通道）；核心切换路径保持 100% 离线，仅独立 `kiseki-gallery`（`ureq + rustls`）在显式市场命令/远程安装（含 `github:owner/repo`）/TUI Gallery Tab 时发起只读 HTTPS 请求并强制本机二次沙箱校验（见 [RFC-0006](./0006-community-theme-gallery.md)） |
 
 ---
 

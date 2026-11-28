@@ -5,7 +5,7 @@
 # Usage:
 #   curl -fsSL https://kisekiterm.dev/install.sh | sh
 #   curl -fsSL https://kisekiterm.dev/install.sh | KISEKI_MIRROR=cn sh
-#   curl -fsSL https://kisekiterm.dev/install.sh | KISEKI_VERSION=v2.0.0-alpha.1 sh
+#   curl -fsSL https://kisekiterm.dev/install.sh | KISEKI_VERSION=v2.0.0-beta.1 sh
 
 set -eu
 
@@ -82,7 +82,7 @@ while [ "$#" -gt 0 ]; do
 Kiseki Terminal v2 Installer
 
 Options:
-  -v, --version <tag>       Install a specific release tag (e.g. v2.0.0-alpha.1)
+  -v, --version <tag>       Install a specific release tag (e.g. v2.0.0-beta.1)
   -d, --install-dir <dir>   Installation directory (default: ~/.local/bin)
       --skip-fonts          Skip all four font families
   -h, --help                Show this help message
@@ -155,7 +155,7 @@ resolve_version() {
   tag="$(curl -fsSL --connect-timeout 10 --max-time 30 "$api_url" | grep -E '"tag_name":[[:space:]]*"v2\.' | head -n 1 | sed -E 's/.*"tag_name":[[:space:]]*"([^"]+)".*/\1/')"
   if [ -z "$tag" ]; then
     echo "Error: no published v2 release found for ${REPO}." >&2
-    echo "Pass KISEKI_VERSION=v2.0.0-alpha.1 once published, or build from source." >&2
+    echo "Pass KISEKI_VERSION=v2.0.0-beta.1 once published, or build from source." >&2
     exit 1
   fi
   printf '%s' "$tag"
@@ -276,9 +276,14 @@ install_dependency() (
   case "$kind:$relative:$mode" in
     tool:vendor/bin/oh-my-posh:0755|tool:vendor/bin/fastfetch:0755)
       dest="$KISEKI_CONFIG_ROOT/$relative"
-      if [ -x "$dest" ] && [ "$(sha256 "$dest")" = "$digest" ]; then return 0; fi
+      receipt="${dest}.asset-sha256"
       if [ "$relative" = vendor/bin/fastfetch ]; then
+        if [ -x "$dest" ] && [ -r "$receipt" ] && [ "$(cat "$receipt" 2>/dev/null || true)" = "$digest" ]; then
+          return 0
+        fi
         require_unzip || return 1
+      elif [ -x "$dest" ] && [ "$(sha256 "$dest")" = "$digest" ]; then
+        return 0
       fi
       download_dep "$digest" "$url" "$asset" "$relative" && verify_sha256 "$asset" "$digest" || return 1
       if [ "$relative" = vendor/bin/fastfetch ]; then
@@ -287,7 +292,10 @@ install_dependency() (
         cp "$asset" "$extracted" || return 1
       fi
       chmod +x "$extracted" && "$extracted" --version >/dev/null || return 1
-      install_file "$extracted" "$dest" "$mode"
+      install_file "$extracted" "$dest" "$mode" || return 1
+      if [ "$relative" = vendor/bin/fastfetch ]; then
+        printf '%s\n' "$digest" > "$asset_dir/receipt" && install_file "$asset_dir/receipt" "$receipt" 0644 || true
+      fi
       ;;
     font-raw:fonts/*.ttf:0644)
       name="${relative#fonts/}"
@@ -354,6 +362,17 @@ install_dependencies() {
   done < "$TMP_DIR/deps-target.tsv"
   if [ "$dep_platform" = linux-musl-arm64 ]; then
     echo "· Fastfetch 的上游发布暂无 Linux musl ARM64 二进制。"
+  fi
+  if [ "$fonts_ready" = 1 ]; then
+    ofl_dest="$KISEKI_CONFIG_ROOT/vendor/licenses/OFL-JetBrainsMono.txt"
+    if [ ! -f "$ofl_dest" ]; then
+      for origin in $MIRROR_ORIGINS; do
+        if curl -fsSL --connect-timeout 5 --max-time 15 "${origin}/deps/licenses/OFL-JetBrainsMono.txt" -o "$TMP_DIR/OFL-JetBrainsMono.txt" 2>/dev/null; then
+          install_file "$TMP_DIR/OFL-JetBrainsMono.txt" "$ofl_dest" 0644 || true
+          break
+        fi
+      done
+    fi
   fi
   if [ "$font_os" = linux ] && [ "$fonts_ready" = 1 ]; then
     if ! command -v fc-cache >/dev/null 2>&1 || ! fc-cache -f "$FONT_DIR"; then
