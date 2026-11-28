@@ -135,8 +135,8 @@ fn dependencies_have_one_doctor_check_and_a_status_summary() {
     assert_eq!(checks.len(), 1);
     assert_eq!(checks[0]["name"], "deps.summary");
     assert!(checks[0]["hint"].as_str().unwrap().contains("kiseki deps"));
-    let fonts = sandbox.json(&["fonts", "install", "--json"]);
-    assert!(fonts["remedy"].as_str().unwrap().contains("重跑安装脚本"));
+    let help = sandbox.run_ok(&["fonts", "install", "--help"]);
+    assert!(String::from_utf8_lossy(&help.stdout).contains("--concurrency"));
 }
 
 #[test]

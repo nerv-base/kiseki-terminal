@@ -4,6 +4,7 @@
 //! `--json` form for scripts. Interactive selection and the init wizard are
 //! delegated to `kiseki-tui`.
 
+pub mod deps_install;
 pub mod ui;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -344,16 +345,90 @@ pub struct FontsArgs {
 }
 
 #[derive(Debug, clap::Args)]
-pub struct DepsArgs {}
+pub struct DepsArgs {
+    #[command(subcommand)]
+    pub command: Option<DepsCommand>,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum DepsCommand {
+    /// 并行下载并安装外部工具（Oh My Posh、Fastfetch）与推荐字体
+    Install(DepsInstallArgs),
+}
+
+#[derive(Debug, clap::Args)]
+pub struct DepsInstallArgs {
+    /// 指定发布标签（例如 v2.0.0-beta.1）；默认使用当前版本或最新 v2 版本（也可通过 KISEKI_VERSION 设置）
+    #[arg(long)]
+    pub version: Option<String>,
+    /// 跳过所有字体下载，仅安装命令行工具
+    #[arg(long)]
+    pub skip_fonts: bool,
+    /// 仅安装字体，跳过命令行工具
+    #[arg(long, conflicts_with = "skip_fonts")]
+    pub only_fonts: bool,
+    /// 仅安装命令行工具，跳过字体
+    #[arg(long, conflicts_with = "only_fonts")]
+    pub only_tools: bool,
+    /// 仅安装指定字体 ID（可重复，例如 --font maple-mono-nf-cn）
+    #[arg(long = "font")]
+    pub fonts: Vec<String>,
+    /// 强制重新下载并覆盖已安装的依赖
+    #[arg(long)]
+    pub force: bool,
+    /// 最大并行下载数（1-8，默认 4）
+    #[arg(long, default_value_t = deps_install::DEFAULT_CONCURRENCY)]
+    pub concurrency: usize,
+    /// 优先镜像区域（cn 或 global；也可通过 KISEKI_MIRROR 设置）
+    #[arg(long)]
+    pub mirror: Option<String>,
+    /// 自定义镜像源 URL（支持逗号分隔多个镜像；也可通过 KISEKI_DL_BASE 设置）
+    #[arg(long)]
+    pub dl_base: Option<String>,
+    /// GitHub 仓库（回退源；也可通过 KISEKI_REPO 设置）
+    #[arg(long)]
+    pub repo: Option<String>,
+    /// 使用本地 deps.tsv 清单文件
+    #[arg(long)]
+    pub manifest: Option<PathBuf>,
+    /// 使用本地 checksums.txt 校验文件
+    #[arg(long)]
+    pub checksums: Option<PathBuf>,
+}
 
 #[derive(Debug, Subcommand)]
 pub enum FontsCommand {
     /// 查看字体可用性和字体目录匹配结果
     Status,
-    /// 查看重新运行字体安装脚本的方法
+    /// 并行下载并安装推荐字体（theme | all | <font-id>）
     Install {
+        /// 安装目标：theme（当前主题所需字体）、all（全部 4 套字体）或字体 ID
         #[arg(default_value = "theme")]
         target: String,
+        /// 指定发布标签（默认当前版本或最新 v2 版本）
+        #[arg(long)]
+        version: Option<String>,
+        /// 强制重新下载并覆盖已安装字体
+        #[arg(long)]
+        force: bool,
+        /// 最大并行下载数（1-8，默认 4）
+        #[arg(long, default_value_t = deps_install::DEFAULT_CONCURRENCY)]
+        concurrency: usize,
+        /// 优先镜像区域（cn 或 global）
+        #[arg(long)]
+        mirror: Option<String>,
+        /// 自定义镜像源 URL
+        #[arg(long)]
+        dl_base: Option<String>,
+        /// GitHub 仓库（回退源）
+        #[arg(long)]
+        repo: Option<String>,
+        /// 使用本地 deps.tsv 清单文件
+        #[arg(long)]
+        manifest: Option<PathBuf>,
+        /// 使用本地 checksums.txt 校验文件
+        #[arg(long)]
+        checksums: Option<PathBuf>,
     },
 }
 
@@ -434,7 +509,7 @@ fn run_tracked(cli: Cli, ui: Ui) -> (Result<()>, bool) {
         Command::Theme(args) => app.theme(args),
         Command::Gallery(args) => app.gallery(args),
         Command::Fonts(args) => app.fonts(args),
-        Command::Deps(_) => app.deps(),
+        Command::Deps(args) => app.deps(args),
         Command::Migrate(args) => app.migrate(args),
         Command::Uninstall(args) => app.uninstall(args),
         Command::ShellInit { shell } => app.shell_init(&shell),
@@ -922,12 +997,81 @@ impl App {
         Ok(())
     }
 
-    fn deps(&mut self) -> Result<()> {
-        let probes = self.probe_deps();
+    fn deps(&mut self, args: DepsArgs) -> Result<()> {
+        match args.command {
+            None => {
+                let probes = self.probe_deps();
+                if self.json {
+                    self.emit_json(json!({ "tools": probes }));
+                } else {
+                    self.ui.deps(&probes);
+                }
+                Ok(())
+            }
+            Some(DepsCommand::Install(install_args)) => {
+                let opts = deps_install::DepsInstallOptions {
+                    version: install_args
+                        .version
+                        .or_else(|| self.platform.env_var("KISEKI_VERSION").filter(|s| !s.is_empty())),
+                    repo: install_args
+                        .repo
+                        .or_else(|| self.platform.env_var("KISEKI_REPO").filter(|s| !s.is_empty()))
+                        .unwrap_or_else(|| deps_install::DEFAULT_REPO.to_string()),
+                    dl_base: install_args
+                        .dl_base
+                        .or_else(|| self.platform.env_var("KISEKI_DL_BASE").filter(|s| !s.is_empty())),
+                    mirror: install_args
+                        .mirror
+                        .or_else(|| self.platform.env_var("KISEKI_MIRROR").filter(|s| !s.is_empty())),
+                    skip_fonts: install_args.skip_fonts,
+                    only_fonts: install_args.only_fonts,
+                    only_tools: install_args.only_tools,
+                    fonts: install_args.fonts,
+                    force: install_args.force,
+                    concurrency: install_args.concurrency,
+                    manifest_file: install_args.manifest,
+                    checksums_file: install_args.checksums,
+                    dry_run: self.dry_run,
+                    json: self.json,
+                    quiet: self.ui.quiet(),
+                };
+                self.run_deps_install(opts)
+            }
+        }
+    }
+
+    fn run_deps_install(&mut self, opts: deps_install::DepsInstallOptions) -> Result<()> {
+        let report = deps_install::install_dependencies(&self.platform, &self.paths, &opts)?;
+        if !report.dry_run && report.summary.installed > 0 {
+            let deps_cache = self.paths.cache_dir().join("deps-cache.json");
+            let _ = self.platform.remove_file(&deps_cache);
+        }
         if self.json {
-            self.emit_json(json!({ "tools": probes }));
-        } else {
-            self.ui.deps(&probes);
+            self.emit_json(serde_json::to_value(&report).unwrap_or_else(|_| json!({})));
+        } else if report.dry_run {
+            self.ui.header(&format!(
+                "依赖安装预览 ({} · {})",
+                report.tag, report.platform
+            ));
+            for item in &report.items {
+                let marker = if item.status == "up-to-date" {
+                    "✓ 已就绪"
+                } else {
+                    "↓ 将下载"
+                };
+                self.ui
+                    .bullet(&format!("{:<26} {} ({})", item.dest, marker, item.kind));
+            }
+            self.ui.info(&format!(
+                "预计下载 {} 项，已就绪 {} 项（--dry-run 未执行写入）",
+                report.summary.planned, report.summary.up_to_date
+            ));
+        }
+        if !report.ok {
+            return Err(KisekiError::other(format!(
+                "{} 项依赖安装失败，可运行 `kiseki deps install` 重试",
+                report.summary.failed
+            )));
         }
         Ok(())
     }
@@ -2681,12 +2825,84 @@ impl App {
                     self.ui.fonts(&statuses, &theme.typography.families);
                 }
             }
-            FontsCommand::Install { target } => {
-                if self.json {
-                    self.emit_json(json!({ "target": target, "remedy": deps::INSTALLER_REMEDY }));
+            FontsCommand::Install {
+                target,
+                version,
+                force,
+                concurrency,
+                mirror,
+                dl_base,
+                repo,
+                manifest,
+                checksums,
+            } => {
+                let fonts = if target.eq_ignore_ascii_case("all") {
+                    Vec::new()
+                } else if target.eq_ignore_ascii_case("theme") {
+                    let state = self.state_or_initial();
+                    let loaded = self.load_theme_for_profile(
+                        &state.active_theme,
+                        state.rendering.profile,
+                    )?;
+                    let theme = self.resolve(&loaded, &state, state.rendering.profile)?;
+                    let known: BTreeSet<&str> = deps::FONTS.iter().map(|f| f.id).collect();
+                    let mut ids = Vec::new();
+                    for fam in &theme.typography.families {
+                        if let Some(entry) = kiseki_platform::resolve_font_id(fam) {
+                            if known.contains(entry.id.as_str()) && !ids.contains(&entry.id) {
+                                ids.push(entry.id.clone());
+                            }
+                        }
+                    }
+                    if ids.is_empty() {
+                        if self.json {
+                            self.emit_json(json!({
+                                "ok": true,
+                                "target": target,
+                                "summary": {
+                                    "total": 0,
+                                    "installed": 0,
+                                    "upToDate": 0,
+                                    "planned": 0,
+                                    "failed": 0,
+                                    "downloadedBytes": 0,
+                                    "elapsedMs": 0
+                                },
+                                "items": []
+                            }));
+                        } else {
+                            self.ui.info("当前主题未声明需要下载的目录字体");
+                        }
+                        return Ok(());
+                    }
+                    ids
                 } else {
-                    self.ui.info(deps::INSTALLER_REMEDY);
-                }
+                    vec![target]
+                };
+
+                let opts = deps_install::DepsInstallOptions {
+                    version: version
+                        .or_else(|| self.platform.env_var("KISEKI_VERSION").filter(|s| !s.is_empty())),
+                    repo: repo
+                        .or_else(|| self.platform.env_var("KISEKI_REPO").filter(|s| !s.is_empty()))
+                        .unwrap_or_else(|| deps_install::DEFAULT_REPO.to_string()),
+                    dl_base: dl_base
+                        .or_else(|| self.platform.env_var("KISEKI_DL_BASE").filter(|s| !s.is_empty())),
+                    mirror: mirror
+                        .or_else(|| self.platform.env_var("KISEKI_MIRROR").filter(|s| !s.is_empty())),
+                    skip_fonts: false,
+                    only_fonts: true,
+                    only_tools: false,
+                    fonts,
+                    force,
+                    concurrency,
+                    manifest_file: manifest,
+                    checksums_file: checksums,
+                    dry_run: self.dry_run,
+                    json: self.json,
+                    quiet: self.ui.quiet(),
+                };
+                self.run_deps_install(opts)?;
             }
         }
         Ok(())

@@ -98,6 +98,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "arbitrary"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3bc62ac97cc33321f50863d514c3bc38a453947a8f9e781137e47c7401020aed"
+dependencies = [
+ "derive_arbitrary",
+]
+
+[[package]]
 name = "arrayvec"
 version = "0.7.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -361,6 +370,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "790eea4361631c5e7d22598ecd5723ff611904e3344ce8720784c93e3d83d40b"
 
 [[package]]
+name = "crossbeam-utils"
+version = "0.8.23"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a31eee39dddec8330830986fcd7625edb5a24ec90ea038215273bbc3adb08ac6"
+
+[[package]]
 name = "crossterm"
 version = "0.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -467,6 +482,17 @@ name = "deranged"
 version = "0.5.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9e9de72ce2ad1f90dc62fa25f0f430ef85eb4b0d8fa0be4f30373bc40a21d28e"
+
+[[package]]
+name = "derive_arbitrary"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1b034bd7d5f032402a2479444dcc6f74e36a03f31854d41680fb240ef682a1ac"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.10",
+]
 
 [[package]]
 name = "derive_more"
@@ -850,7 +876,7 @@ dependencies = [
 
 [[package]]
 name = "kiseki-adapters"
-version = "2.0.0-beta.1"
+version = "2.0.0-beta.2"
 dependencies = [
  "jsonc-parser",
  "kiseki-compiler",
@@ -865,7 +891,7 @@ dependencies = [
 
 [[package]]
 name = "kiseki-bench"
-version = "2.0.0-beta.1"
+version = "2.0.0-beta.2"
 dependencies = [
  "kiseki-adapters",
  "kiseki-compiler",
@@ -882,10 +908,12 @@ dependencies = [
 
 [[package]]
 name = "kiseki-cli"
-version = "2.0.0-beta.1"
+version = "2.0.0-beta.2"
 dependencies = [
  "clap",
  "clap_complete",
+ "crossterm",
+ "flate2",
  "kiseki-adapters",
  "kiseki-compiler",
  "kiseki-gallery",
@@ -897,14 +925,19 @@ dependencies = [
  "kiseki-tui",
  "kiseki-tx",
  "kiseki-types",
+ "regex",
  "serde",
  "serde_json",
+ "sha2 0.11.2",
+ "tar",
  "tempfile",
+ "ureq",
+ "zip",
 ]
 
 [[package]]
 name = "kiseki-compiler"
-version = "2.0.0-beta.1"
+version = "2.0.0-beta.2"
 dependencies = [
  "kiseki-schema",
  "kiseki-shader",
@@ -917,7 +950,7 @@ dependencies = [
 
 [[package]]
 name = "kiseki-gallery"
-version = "2.0.0-beta.1"
+version = "2.0.0-beta.2"
 dependencies = [
  "flate2",
  "kiseki-pkg",
@@ -935,7 +968,7 @@ dependencies = [
 
 [[package]]
 name = "kiseki-pkg"
-version = "2.0.0-beta.1"
+version = "2.0.0-beta.2"
 dependencies = [
  "kiseki-compiler",
  "kiseki-platform",
@@ -951,7 +984,7 @@ dependencies = [
 
 [[package]]
 name = "kiseki-platform"
-version = "2.0.0-beta.1"
+version = "2.0.0-beta.2"
 dependencies = [
  "kiseki-types",
  "serde",
@@ -963,7 +996,7 @@ dependencies = [
 
 [[package]]
 name = "kiseki-schema"
-version = "2.0.0-beta.1"
+version = "2.0.0-beta.2"
 dependencies = [
  "kiseki-types",
  "serde",
@@ -973,7 +1006,7 @@ dependencies = [
 
 [[package]]
 name = "kiseki-shader"
-version = "2.0.0-beta.1"
+version = "2.0.0-beta.2"
 dependencies = [
  "kiseki-schema",
  "kiseki-types",
@@ -986,7 +1019,7 @@ dependencies = [
 
 [[package]]
 name = "kiseki-state"
-version = "2.0.0-beta.1"
+version = "2.0.0-beta.2"
 dependencies = [
  "kiseki-platform",
  "kiseki-types",
@@ -998,7 +1031,7 @@ dependencies = [
 
 [[package]]
 name = "kiseki-tui"
-version = "2.0.0-beta.1"
+version = "2.0.0-beta.2"
 dependencies = [
  "crossterm",
  "kiseki-schema",
@@ -1009,7 +1042,7 @@ dependencies = [
 
 [[package]]
 name = "kiseki-tx"
-version = "2.0.0-beta.1"
+version = "2.0.0-beta.2"
 dependencies = [
  "kiseki-adapters",
  "kiseki-compiler",
@@ -1025,7 +1058,7 @@ dependencies = [
 
 [[package]]
 name = "kiseki-types"
-version = "2.0.0-beta.1"
+version = "2.0.0-beta.2"
 dependencies = [
  "bitflags 2.13.2",
  "serde",
@@ -2644,6 +2677,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "85ccff8a4805aba1eaa4cd4afcd49f7557dd2cf5fd79ffc37f8959466effc5aa"
 
 [[package]]
+name = "zip"
+version = "2.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1dcb24d0152526ae49b9b96c1dcf71850ca1e0b882e4e28ed898a93c41334744"
+dependencies = [
+ "arbitrary",
+ "crc32fast",
+ "crossbeam-utils",
+ "flate2",
+ "indexmap",
+ "memchr",
+ "zopfli",
+]
+
+[[package]]
 name = "zlib-rs"
 version = "0.6.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2654,3 +2702,15 @@ name = "zmij"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
+
+[[package]]
+name = "zopfli"
+version = "0.8.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aaf7fc5d30c28483d93805c4a5e12b05bbb52407fa67c5f8bd552374cd01fb11"
+dependencies = [
+ "bumpalo",
+ "crc32fast",
+ "log",
+ "simd-adler32",
+]

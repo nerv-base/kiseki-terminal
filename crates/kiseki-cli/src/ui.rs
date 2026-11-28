@@ -664,7 +664,7 @@ impl Ui {
         }
         if statuses.iter().any(|status| !status.installed) {
             println!();
-            self.warn("部分推荐字体尚未安装，可运行 `kiseki fonts install` 查看修复方式");
+            self.warn("部分推荐字体尚未安装，可运行 `kiseki fonts install` 并行下载安装");
             println!(
                 "  {}",
                 self.dim("当前将自动回退到本机已安装的等宽与 CJK 字体，不影响正常使用")

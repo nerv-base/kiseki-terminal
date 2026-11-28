@@ -1,5 +1,6 @@
 # Kiseki Terminal v2 standalone installer for Windows (PowerShell 5.1+ / 7+)
-# Installs Kiseki, its optional tools and fonts from a tagged release.
+# Stage 1: Downloads, SHA-256-verifies and installs `kiseki.exe` with a live progress bar.
+# Stage 2: Hands off parallel tool & font installation to `kiseki.exe deps install`.
 #
 # Usage:
 #   irm https://kisekiterm.dev/install.ps1 | iex
@@ -10,6 +11,8 @@
 Installs Kiseki Terminal and its dependencies.
 .PARAMETER SkipFonts
 Skips all four font families for this run.
+.PARAMETER Concurrency
+Maximum parallel dependency downloads (1-8, default 4).
 #>
 [CmdletBinding()]
 param(
@@ -18,7 +21,8 @@ param(
     [string]$Repo = $(if ($env:KISEKI_REPO) { $env:KISEKI_REPO } else { "nerv-base/kiseki-terminal" }),
     [string]$DownloadBase = $env:KISEKI_DL_BASE,
     [string]$Mirror = $env:KISEKI_MIRROR,
-    [switch]$SkipFonts
+    [switch]$SkipFonts,
+    [int]$Concurrency = 0
 )
 
 $ErrorActionPreference = "Stop"
@@ -27,23 +31,35 @@ try {
 } catch {}
 
 $okMark = [char]0x2713
-$remedy = "Rerun the installer (see https://kisekiterm.dev)."
+$remedy = "Run 'kiseki deps install' or rerun the installer (see https://kisekiterm.dev)."
 $cnOrigin = "https://kiseki-dl.nerv-base.com"
 $globalOrigin = "https://dl.kisekiterm.dev"
 $mirrorOrigins = New-Object System.Collections.Generic.List[string]
+
+function Test-LoopbackOrigin([string]$Origin) {
+    $rest = $Origin -replace '^https?://', ''
+    return ($rest -match '^(127\.0\.0\.1|localhost|\[::1\])')
+}
+
 function Add-MirrorOrigin([string]$Raw) {
     if (-not $Raw) { return }
-    $clean = $Raw.TrimEnd('/') -replace '/releases$', ''
-    if ($clean -and -not $mirrorOrigins.Contains($clean)) { $mirrorOrigins.Add($clean) }
+    foreach ($part in ($Raw -split ',')) {
+        $clean = $part.Trim().TrimEnd('/') -replace '/releases$', ''
+        if ($clean -and -not $mirrorOrigins.Contains($clean)) { $mirrorOrigins.Add($clean) }
+    }
 }
+
 Add-MirrorOrigin $DownloadBase
-$preferCn = ($Mirror -eq 'cn') -or ((-not $Mirror) -and $(try { [TimeZoneInfo]::Local.BaseUtcOffset.Hours -eq 8 } catch { $false }))
-if ($preferCn) {
-    Add-MirrorOrigin $cnOrigin
-    Add-MirrorOrigin $globalOrigin
-} else {
-    Add-MirrorOrigin $globalOrigin
-    Add-MirrorOrigin $cnOrigin
+$loopbackOnly = ($mirrorOrigins.Count -gt 0) -and (@($mirrorOrigins | Where-Object { -not (Test-LoopbackOrigin $_) }).Count -eq 0)
+if (-not $loopbackOnly) {
+    $preferCn = ($Mirror -eq 'cn') -or ((-not $Mirror) -and $(try { [TimeZoneInfo]::Local.BaseUtcOffset.Hours -eq 8 } catch { $false }))
+    if ($preferCn) {
+        Add-MirrorOrigin $cnOrigin
+        Add-MirrorOrigin $globalOrigin
+    } else {
+        Add-MirrorOrigin $globalOrigin
+        Add-MirrorOrigin $cnOrigin
+    }
 }
 
 function Get-RustTarget {
@@ -70,7 +86,7 @@ function Get-RustTarget {
 }
 
 function Resolve-ReleaseTag {
-    param([string]$RequestedVersion, [string]$Repository, [string[]]$Origins)
+    param([string]$RequestedVersion, [string]$Repository, [string[]]$Origins, [bool]$LocalOnly)
     if ($RequestedVersion) { return $RequestedVersion }
     foreach ($origin in $Origins) {
         try {
@@ -78,6 +94,7 @@ function Resolve-ReleaseTag {
             if ($meta -and $meta.tag -cmatch '^v2\.[0-9A-Za-z.+-]+$') { return $meta.tag }
         } catch { }
     }
+    if ($LocalOnly) { throw "Could not resolve release tag from configured local mirror." }
 
     $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repository/releases" -Headers @{ "User-Agent" = "kiseki-installer" } -TimeoutSec 30
     $v2 = $releases | Where-Object { $_.tag_name -like "v2.*" -and -not $_.draft } | Select-Object -First 1
@@ -85,25 +102,86 @@ function Resolve-ReleaseTag {
     return $v2.tag_name
 }
 
-function Invoke-MirroredDownload {
-    param([string[]]$CandidateUrls, [int[]]$Timeouts, [string]$OutFile, [string]$Label = "")
-    if ($Label) { Write-Host "  Downloading $Label..." -ForegroundColor DarkGray }
-    $prevPref = $ProgressPreference
-    $ProgressPreference = 'SilentlyContinue'
+function Format-Size([long]$Bytes) {
+    if ($Bytes -ge 1048576) { return "{0:N1} MB" -f ($Bytes / 1048576.0) }
+    if ($Bytes -ge 1024) { return "{0:N1} KB" -f ($Bytes / 1024.0) }
+    return "$Bytes B"
+}
+
+function Invoke-StreamDownload {
+    param(
+        [string]$Uri,
+        [string]$OutFile,
+        [int]$ConnectTimeoutMs = 10000,
+        [int]$ReadTimeoutMs = 30000,
+        [switch]$ShowProgress
+    )
+    $req = [System.Net.HttpWebRequest]::Create($Uri)
+    $req.Method = "GET"
+    $req.UserAgent = "kiseki-installer"
+    $req.AllowAutoRedirect = $true
+    $req.Timeout = $ConnectTimeoutMs
+    $req.ReadWriteTimeout = $ReadTimeoutMs
+
+    $resp = $null
+    $inStream = $null
+    $outStream = $null
+    $interactive = $ShowProgress -and $(try { -not [Console]::IsOutputRedirected } catch { $false })
     try {
-        for ($i = 0; $i -lt $CandidateUrls.Count; $i++) {
-            $u = $CandidateUrls[$i]
-            $t = $Timeouts[$i]
-            $isLast = ($i -eq ($CandidateUrls.Count - 1))
-            try {
-                Invoke-WebRequest -Uri $u -OutFile $OutFile -TimeoutSec $t -UseBasicParsing
-                return
-            } catch {
-                if ($isLast) { throw }
+        $resp = $req.GetResponse()
+        $total = $resp.ContentLength
+        $inStream = $resp.GetResponseStream()
+        $outStream = [System.IO.File]::Create($OutFile)
+        $buffer = New-Object byte[] 65536
+        [long]$received = 0
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        $lastRenderMs = -200
+        while (($read = $inStream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+            $outStream.Write($buffer, 0, $read)
+            $received += $read
+            if ($interactive -and (($sw.ElapsedMilliseconds - $lastRenderMs) -ge 100)) {
+                $lastRenderMs = $sw.ElapsedMilliseconds
+                $secs = [Math]::Max(0.001, $sw.Elapsed.TotalSeconds)
+                $mbps = ($received / 1048576.0) / $secs
+                if ($total -gt 0) {
+                    $ratio = [Math]::Min(1.0, [double]$received / [double]$total)
+                    $filled = [int][Math]::Round($ratio * 20)
+                    $bar = (([string][char]0x2588) * $filled) + (([string][char]0x2591) * (20 - $filled))
+                    $pct = [int][Math]::Round($ratio * 100)
+                    $line = ("`r  [{0}] {1,3}%  {2,8} / {3,-8}  {4:N1} MB/s   " -f $bar, $pct, (Format-Size $received), (Format-Size $total), $mbps)
+                } else {
+                    $line = ("`r  Downloading {0} ({1:N1} MB/s)   " -f (Format-Size $received), $mbps)
+                }
+                [Console]::Write($line)
             }
         }
+        $outStream.Flush()
+        if ($interactive) {
+            $secs = [Math]::Max(0.001, $sw.Elapsed.TotalSeconds)
+            $mbps = ($received / 1048576.0) / $secs
+            $bar = ([string][char]0x2588) * 20
+            [Console]::WriteLine(("`r  [{0}] 100%  {1}  {2:N1} MB/s         " -f $bar, (Format-Size $received), $mbps))
+        }
     } finally {
-        $ProgressPreference = $prevPref
+        if ($outStream) { $outStream.Dispose() }
+        if ($inStream) { $inStream.Dispose() }
+        if ($resp) { $resp.Close() }
+    }
+}
+
+function Invoke-MirroredDownload {
+    param([string[]]$CandidateUrls, [string]$OutFile, [string]$Label = "", [switch]$ShowProgress)
+    if ($Label) { Write-Host "  Downloading $Label..." -ForegroundColor DarkGray }
+    for ($i = 0; $i -lt $CandidateUrls.Count; $i++) {
+        $u = $CandidateUrls[$i]
+        $isLast = ($i -eq ($CandidateUrls.Count - 1))
+        try {
+            Invoke-StreamDownload -Uri $u -OutFile $OutFile -ShowProgress:$ShowProgress
+            return
+        } catch {
+            Remove-Item -LiteralPath $OutFile -Force -ErrorAction SilentlyContinue
+            if ($isLast) { throw }
+        }
     }
 }
 
@@ -122,29 +200,16 @@ function Assert-Sha256([string]$Path, [string]$ExpectedHash) {
     if ($actualHash -ne $ExpectedHash) { throw "SHA-256 mismatch for ${Path}. Expected $ExpectedHash, got $actualHash." }
 }
 
-function Save-Download([string]$Uri, [string]$Path, [string]$Label = "") {
+function Save-Download([string]$Uri, [string]$Path, [string]$Label = "", [switch]$ShowProgress) {
     $asset = ([uri]$Uri).AbsolutePath.Split('/')[-1]
     $urls = @()
-    $timeouts = @()
     foreach ($origin in $mirrorOrigins) {
         $urls += "$origin/releases/$tag/$asset"
-        $timeouts += 60
     }
-    $urls += $Uri
-    $timeouts += 300
-    Invoke-MirroredDownload -CandidateUrls $urls -Timeouts $timeouts -OutFile $Path -Label $Label
-}
-
-function Save-DependencyDownload([string]$Digest, [string]$Uri, [string]$Path, [string]$Label) {
-    $urls = @()
-    $timeouts = @()
-    foreach ($origin in $mirrorOrigins) {
-        $urls += "$origin/deps/$Digest"
-        $timeouts += 90
+    if (-not $loopbackOnly) {
+        $urls += $Uri
     }
-    $urls += $Uri
-    $timeouts += 300
-    Invoke-MirroredDownload -CandidateUrls $urls -Timeouts $timeouts -OutFile $Path -Label $Label
+    Invoke-MirroredDownload -CandidateUrls $urls -OutFile $Path -Label $Label -ShowProgress:$ShowProgress
 }
 
 # Stage beside the destination and replace atomically so a failed copy leaves the old file usable.
@@ -164,12 +229,22 @@ function Install-File([string]$Source, [string]$Destination) {
     return $true
 }
 
+function Assert-ZipSupport {
+    if (('System.IO.Compression.ZipFile' -as [type]) -and ('System.IO.Compression.ZipFileExtensions' -as [type])) { return }
+    try {
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        if (-not ('System.IO.Compression.ZipFile' -as [type]) -or -not ('System.IO.Compression.ZipFileExtensions' -as [type])) {
+            throw 'ZIP extraction types are unavailable.'
+        }
+    } catch { throw 'ZIP extraction requires the Windows .NET ZIP components. Repair .NET Framework 4.5 or later, or use PowerShell 7, then rerun the installer.' }
+}
+
 function Install-Core {
     $archive = "kiseki-$tag-$target.zip"
     $archivePath = Join-Path $tmpDir $archive
     try {
         Save-Download "$baseUrl/checksums.txt" $checksumsPath
-        Save-Download "$baseUrl/$archive" $archivePath $archive
+        Save-Download "$baseUrl/$archive" $archivePath $archive -ShowProgress
     } catch {
         Write-Warning $_.Exception.Message
         return $false
@@ -202,152 +277,26 @@ function Get-InstalledRelease([string]$RequestedTag) {
     return $installedTag
 }
 
-function Install-Font([string]$Source, [string]$Name, [string]$FontDir) {
-    if (-not ('Kiseki.NativeFonts' -as [type])) {
-        Add-Type -TypeDefinition @'
-using System.Runtime.InteropServices;
-namespace Kiseki {
-    public static class NativeFonts {
-        [DllImport("gdi32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
-        public static extern int AddFontResourceW(string path);
-        [DllImport("user32.dll", CharSet = CharSet.Auto)]
-        public static extern System.IntPtr SendMessageTimeout(System.IntPtr hWnd, uint Msg, System.IntPtr wParam, System.IntPtr lParam, uint fuFlags, uint uTimeout, out System.IntPtr lpdwResult);
+function Invoke-Stage2Deps {
+    $depArgs = @('deps', 'install', '--version', $tag, '--repo', $Repo)
+    if (Test-Path -LiteralPath $checksumsPath -PathType Leaf) {
+        $depArgs += @('--checksums', $checksumsPath)
     }
-}
-'@
+    if ($Mirror) {
+        $depArgs += @('--mirror', $Mirror)
     }
-    $destination = Join-Path $FontDir $Name
-    $changed = Install-File $Source $destination
-    $key = 'HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Fonts'
-    $format = if ($Name.EndsWith('.otf')) { 'OpenType' } else { 'TrueType' }
-    $displayName = "{0} ({1})" -f [IO.Path]::GetFileNameWithoutExtension($Name), $format
-    $existing = Get-ItemProperty -LiteralPath $key -Name $displayName -ErrorAction SilentlyContinue
-    if ($changed -or -not $existing -or $existing.$displayName -ne $destination) {
-        if ([Kiseki.NativeFonts]::AddFontResourceW($destination) -eq 0) { throw "Could not load font $destination" }
-        # Never recreate an existing key: `New-Item -Force` clears every registered per-user font.
-        if (-not (Test-Path -LiteralPath $key)) { New-Item -Path $key -Force | Out-Null }
-        New-ItemProperty -LiteralPath $key -Name $displayName -Value $destination -PropertyType String -Force | Out-Null
+    if ($DownloadBase) {
+        $depArgs += @('--dl-base', $DownloadBase)
     }
-}
-
-function Assert-ZipSupport {
-    if (('System.IO.Compression.ZipFile' -as [type]) -and ('System.IO.Compression.ZipFileExtensions' -as [type])) { return }
-    try {
-        Add-Type -AssemblyName System.IO.Compression.FileSystem
-        if (-not ('System.IO.Compression.ZipFile' -as [type]) -or -not ('System.IO.Compression.ZipFileExtensions' -as [type])) {
-            throw 'ZIP extraction types are unavailable.'
-        }
-    } catch { throw 'ZIP extraction requires the Windows .NET ZIP components. Repair .NET Framework 4.5 or later, or use PowerShell 7, then rerun the installer.' }
-}
-
-function Install-Dependency([string[]]$Row, [hashtable]$FontPatterns, [string]$FontDir) {
-    $kind, $null, $uri, $digest, $relative, $mode = $Row
-    $assetPath = Join-Path $tmpDir 'dependency.zip'
-    if ($kind -eq 'tool' -and $mode -eq '0755' -and $relative -in 'vendor/bin/oh-my-posh.exe', 'vendor/bin/fastfetch.exe') {
-        $name = [IO.Path]::GetFileName($relative)
-        $destination = Join-Path (Join-Path $InstallDir 'vendor\bin') $name
-        $receipt = "$destination.asset-sha256"
-        if ($name -eq 'fastfetch.exe') {
-            if ((Test-Path -LiteralPath $destination -PathType Leaf) -and (Test-Path -LiteralPath $receipt -PathType Leaf) -and ((Get-Content -LiteralPath $receipt -TotalCount 1).Trim() -eq $digest)) { return }
-            Assert-ZipSupport
-        } elseif ((Test-Path -LiteralPath $destination -PathType Leaf) -and (Get-Sha256 $destination) -eq $digest) {
-            return
-        }
-        Save-DependencyDownload $digest $uri $assetPath $relative
-        Assert-Sha256 $assetPath $digest
-        $source = Join-Path $tmpDir $name
-        if ($name -eq 'fastfetch.exe') {
-            $zip = [IO.Compression.ZipFile]::OpenRead($assetPath)
-            try {
-                $entry = $zip.GetEntry($name)
-                if (-not $entry) { throw "Fastfetch executable missing from $uri" }
-                [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $source, $true)
-            } finally { $zip.Dispose() }
-        } else {
-            Move-Item -LiteralPath $assetPath -Destination $source -Force
-        }
-        & $source --version | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw "$name failed health check (--version exited with $LASTEXITCODE)." }
-        Install-File $source $destination | Out-Null
-        if ($name -eq 'fastfetch.exe') {
-            $receiptTmp = Join-Path $tmpDir 'fastfetch.asset-sha256'
-            Set-Content -LiteralPath $receiptTmp -Value $digest -Encoding Ascii
-            Install-File $receiptTmp $receipt | Out-Null
-        }
-    } elseif ($kind -eq 'font-raw' -and $mode -eq '0644' -and $relative -cmatch '^fonts/([A-Za-z0-9_-]+\.ttf)$') {
-        $name = $Matches[1]
-        if (-not $FontDir) { throw "Missing font directory for $name" }
-        $destination = Join-Path $FontDir $name
-        $source = $destination
-        if (-not (Test-Path -LiteralPath $destination -PathType Leaf) -or (Get-Sha256 $destination) -ne $digest) {
-            $source = Join-Path $tmpDir 'dependency.ttf'
-            Save-DependencyDownload $digest $uri $source $relative
-            Assert-Sha256 $source $digest
-        }
-        Install-Font $source $name $FontDir
-        Write-Host "$okMark Font ready: $name" -ForegroundColor Green
-    } elseif ($kind -eq 'font' -and $mode -eq '0644' -and $relative -match '^fonts/([a-z0-9-]+)$') {
-        $family = $Matches[1]
-        $pattern = $FontPatterns[$family]
-        if (-not $FontDir -or -not $pattern) { throw "Missing font metadata for $family" }
-        Assert-ZipSupport
-        Save-DependencyDownload $digest $uri $assetPath $relative
-        Assert-Sha256 $assetPath $digest
-        $zip = [IO.Compression.ZipFile]::OpenRead($assetPath)
-        try {
-            $entries = @($zip.Entries | Where-Object { $_.Name -cmatch $pattern })
-            if ($entries.Count -eq 0) { throw "No matching faces for $family" }
-            foreach ($entry in $entries) {
-                if ($entry.Name -match '[\\/:*?"<>|]') { throw "Invalid font file name: $($entry.Name)" }
-                $face = Join-Path $tmpDir $entry.Name
-                [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $face, $true)
-                Install-Font $face $entry.Name $FontDir
-            }
-        } finally { $zip.Dispose() }
-        Write-Host "$okMark Font family ready: $family" -ForegroundColor Green
-    } else { throw "Unexpected dependency destination or mode: $relative $mode" }
-}
-
-function Install-Dependencies {
-    $manifest = Join-Path $tmpDir 'deps.tsv'
-    Save-Download "$baseUrl/deps.tsv" $manifest
-    Assert-Sha256 $manifest (Get-ReleaseChecksum 'deps.tsv')
-    $depPlatform = if ($target -like 'aarch64-*') { 'windows-arm64' } else { 'windows-amd64' }
-    $fontPatterns = @{}
-    $fontDir = ''
-    $rows = Get-Content -LiteralPath $manifest
-    foreach ($line in $rows) {
-        $metadata = $line -split "`t"
-        if ($metadata[0] -eq '# font') { $fontPatterns[$metadata[1]] = $metadata[2] }
-        if ($metadata[0] -eq '# font-dir' -and $metadata[1] -eq 'windows') {
-            $fontDir = [Environment]::ExpandEnvironmentVariables($metadata[2])
-        }
+    if ($SkipFonts) {
+        $depArgs += '--skip-fonts'
     }
-    foreach ($line in $rows) {
-        if ($line.StartsWith('#')) { continue }
-        $fields = $line -split "`t"
-        if ($fields.Count -ne 6 -or $fields[1] -cne $depPlatform) { continue }
-        if ($SkipFonts -and $fields[0] -in 'font', 'font-raw') { continue }
-        try { Install-Dependency $fields $fontPatterns $fontDir }
-        catch { Write-Warning "Could not install $($fields[4]). $remedy $($_.Exception.Message)" }
+    if ($Concurrency -gt 0) {
+        $depArgs += @('--concurrency', "$Concurrency")
     }
-    if (-not $SkipFonts) {
-        $oflDest = Join-Path (Join-Path $InstallDir 'vendor\licenses') 'OFL-JetBrainsMono.txt'
-        if (-not (Test-Path -LiteralPath $oflDest -PathType Leaf)) {
-            $oflTmp = Join-Path $tmpDir 'OFL-JetBrainsMono.txt'
-            foreach ($origin in $mirrorOrigins) {
-                try {
-                    Invoke-WebRequest -Uri "$origin/deps/licenses/OFL-JetBrainsMono.txt" -OutFile $oflTmp -TimeoutSec 10 -UseBasicParsing
-                    Install-File $oflTmp $oflDest | Out-Null
-                    break
-                } catch { }
-            }
-        }
-    }
-    if (-not $SkipFonts -and ('Kiseki.NativeFonts' -as [type])) {
-        # Tell already-running terminal hosts that the font set changed (WM_FONTCHANGE).
-        $ignored = [IntPtr]::Zero
-        try { [Kiseki.NativeFonts]::SendMessageTimeout([IntPtr]0xffff, 0x001D, [IntPtr]::Zero, [IntPtr]::Zero, 2, 1000, [ref]$ignored) | Out-Null } catch { }
+    & $destPath @depArgs
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning "Some dependencies could not be installed. $remedy"
     }
 }
 
@@ -364,9 +313,9 @@ New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
 $checksumsPath = Join-Path $tmpDir 'checksums.txt'
 
 try {
-    Write-Host "Using mirror: $($mirrorOrigins[0] -replace '^https://','') (fallback: GitHub)" -ForegroundColor DarkGray
+    Write-Host "Using mirror: $($mirrorOrigins[0] -replace '^https?://','') (fallback: GitHub)" -ForegroundColor DarkGray
     $releaseAvailable = $true
-    try { $tag = Resolve-ReleaseTag -RequestedVersion $Version -Repository $Repo -Origins $mirrorOrigins }
+    try { $tag = Resolve-ReleaseTag -RequestedVersion $Version -Repository $Repo -Origins $mirrorOrigins -LocalOnly $loopbackOnly }
     catch {
         $tag = Get-InstalledRelease $Version
         if (-not $tag) { throw }
@@ -391,10 +340,13 @@ try {
         $env:Path = "$env:Path;$InstallDir"
         Write-Host "$okMark Added $InstallDir to User PATH" -ForegroundColor Green
     }
-    if (Test-Path -LiteralPath $checksumsPath -PathType Leaf) {
-        try { Install-Dependencies }
-        catch { Write-Warning "Dependency manifest unavailable. $remedy $($_.Exception.Message)" }
-    } else { Write-Warning "Could not reach the release server to check dependencies. $remedy" }
+
+    if ($releaseAvailable) {
+        try { Invoke-Stage2Deps }
+        catch { Write-Warning "Dependency installation encountered an error. $remedy $($_.Exception.Message)" }
+    } else {
+        Write-Warning "Could not reach the release server to check dependencies. $remedy"
+    }
 
     Write-Host "`nNext step: run 'kiseki init' to launch the interactive setup wizard."
     try {

@@ -1,6 +1,8 @@
 #!/usr/bin/env sh
 # Kiseki Terminal v2 standalone installer (macOS / Linux)
-# Installs Kiseki, its optional tools and fonts from a tagged release.
+# Stage 1: Downloads, SHA-256-verifies and installs the `kiseki` binary.
+# Stage 2: Hands off parallel tool & font installation with live progress bars
+#          to `kiseki deps install`.
 #
 # Usage:
 #   curl -fsSL https://kisekiterm.dev/install.sh | sh
@@ -16,6 +18,7 @@ EXPLICIT_DL_BASE="${KISEKI_DL_BASE:-}"
 MIRROR_PREF="${KISEKI_MIRROR:-}"
 INSTALL_DIR="${KISEKI_INSTALL_DIR:-$HOME/.local/bin}"
 VERSION="${KISEKI_VERSION:-}"
+CONCURRENCY="${KISEKI_CONCURRENCY:-}"
 SKIP_FONTS=0
 
 normalize_origin() {
@@ -26,8 +29,20 @@ normalize_origin() {
   printf '%s' "$val"
 }
 
+is_loopback_origin() {
+  rest="${1#http://}"
+  rest="${rest#https://}"
+  case "$rest" in
+    127.0.0.1*|localhost*|\[::1\]*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 build_mirror_origins() {
   ordered=""
+  explicit_all_loopback=1
+  has_explicit=0
+
   add_origin() {
     cand="$(normalize_origin "$1")"
     [ -n "$cand" ] || return 0
@@ -38,7 +53,22 @@ build_mirror_origins() {
   }
 
   if [ -n "$EXPLICIT_DL_BASE" ]; then
-    add_origin "$EXPLICIT_DL_BASE"
+    old_ifs="$IFS"
+    IFS=','
+    for part in $EXPLICIT_DL_BASE; do
+      cand="$(normalize_origin "$part")"
+      [ -n "$cand" ] || continue
+      has_explicit=1
+      add_origin "$cand"
+      if ! is_loopback_origin "$cand"; then
+        explicit_all_loopback=0
+      fi
+    done
+    IFS="$old_ifs"
+    if [ "$has_explicit" = 1 ] && [ "$explicit_all_loopback" = 1 ]; then
+      printf '%s' "$ordered"
+      return 0
+    fi
   fi
 
   if [ "$MIRROR_PREF" = "cn" ]; then
@@ -73,6 +103,14 @@ while [ "$#" -gt 0 ]; do
       INSTALL_DIR="${2:-}"
       shift 2
       ;;
+    --mirror)
+      MIRROR_PREF="${2:-}"
+      shift 2
+      ;;
+    --concurrency|-j)
+      CONCURRENCY="${2:-}"
+      shift 2
+      ;;
     --skip-fonts)
       SKIP_FONTS=1
       shift
@@ -84,6 +122,8 @@ Kiseki Terminal v2 Installer
 Options:
   -v, --version <tag>       Install a specific release tag (e.g. v2.0.0-beta.1)
   -d, --install-dir <dir>   Installation directory (default: ~/.local/bin)
+      --mirror <cn|global>  Preferred download mirror region
+  -j, --concurrency <N>     Parallel dependency download workers (1-8, default: 4)
       --skip-fonts          Skip all four font families
   -h, --help                Show this help message
 USAGE
@@ -131,6 +171,15 @@ detect_target() {
   printf '%s-%s' "$arch_part" "$os_part"
 }
 
+all_origins_loopback() {
+  for origin in $MIRROR_ORIGINS; do
+    if ! is_loopback_origin "$origin"; then
+      return 1
+    fi
+  done
+  [ -n "$MIRROR_ORIGINS" ]
+}
+
 resolve_version() {
   if [ -n "$VERSION" ]; then
     case "$VERSION" in
@@ -150,6 +199,11 @@ resolve_version() {
     esac
   done
 
+  if all_origins_loopback; then
+    echo "Error: could not resolve release tag from configured local mirror." >&2
+    return 1
+  fi
+
   # Fetch latest published v2 release tag (never falls back to branch archives)
   api_url="https://api.github.com/repos/${REPO}/releases"
   tag="$(curl -fsSL --connect-timeout 10 --max-time 30 "$api_url" | grep -E '"tag_name":[[:space:]]*"v2\.' | head -n 1 | sed -E 's/.*"tag_name":[[:space:]]*"([^"]+)".*/\1/')"
@@ -161,26 +215,55 @@ resolve_version() {
   printf '%s' "$tag"
 }
 
-download() (
+download_meta() (
   url="$1" dest="$2"
   asset_name="${url##*/}"
   for origin in $MIRROR_ORIGINS; do
-    if curl -fsSL --connect-timeout 5 --max-time 60 "${origin}/releases/${TAG}/${asset_name}" -o "$dest" 2>/dev/null; then
+    if curl -fsSL --connect-timeout 5 --max-time 15 "${origin}/releases/${TAG}/${asset_name}" -o "$dest" 2>/dev/null; then
       return 0
     fi
+    rm -f "$dest"
   done
-  curl -fsSL --connect-timeout 10 --max-time 300 "$url" -o "$dest"
+  if all_origins_loopback; then
+    return 1
+  fi
+  curl -fsSL --connect-timeout 10 --max-time 30 "$url" -o "$dest"
 )
 
-download_dep() (
-  digest="$1" url="$2" dest="$3" label="$4"
-  printf '  ↓ 下载依赖 %s...\n' "$label"
+# Uses stall detection (--speed-limit/--speed-time) rather than a fixed total
+# timeout, and renders a live progress bar when stderr is an interactive TTY
+# (which stays true even when piped via `curl ... | sh`).
+download_with_progress() (
+  url="$1" dest="$2"
+  asset_name="${url##*/}"
+  use_bar=0
+  if [ -t 2 ] && [ "${TERM:-}" != "dumb" ]; then
+    use_bar=1
+  fi
+
   for origin in $MIRROR_ORIGINS; do
-    if curl -fsSL --connect-timeout 5 --max-time 90 "${origin}/deps/${digest}" -o "$dest" 2>/dev/null; then
-      return 0
+    src="${origin}/releases/${TAG}/${asset_name}"
+    if [ "$use_bar" = 1 ]; then
+      if curl -fSL --progress-bar --connect-timeout 8 --speed-limit 1024 --speed-time 30 "$src" -o "$dest"; then
+        return 0
+      fi
+    else
+      if curl -fsSL --connect-timeout 8 --speed-limit 1024 --speed-time 30 "$src" -o "$dest" 2>/dev/null; then
+        return 0
+      fi
     fi
+    rm -f "$dest"
   done
-  curl -fsSL --connect-timeout 10 --max-time 300 "$url" -o "$dest"
+
+  if all_origins_loopback; then
+    return 1
+  fi
+
+  if [ "$use_bar" = 1 ]; then
+    curl -fSL --progress-bar --connect-timeout 10 --speed-limit 1024 --speed-time 45 "$url" -o "$dest"
+  else
+    curl -fsSL --connect-timeout 10 --speed-limit 1024 --speed-time 45 "$url" -o "$dest"
+  fi
 )
 
 sha256() {
@@ -222,11 +305,11 @@ install_file() (
 
 install_core() {
   archive="kiseki-${TAG}-${TARGET}.tar.gz"
-  # A network failure has a distinct status so an offline rerun can reuse a
+  # A network failure has a distinct status (2) so an offline rerun can reuse a
   # previously verified installation of this exact tag.
-  download "${BASE_URL}/checksums.txt" "$TMP_DIR/checksums.txt" || return 2
-  printf '  ↓ 下载主程序 %s...\n' "$archive"
-  download "${BASE_URL}/${archive}" "$TMP_DIR/$archive" || return 2
+  download_meta "${BASE_URL}/checksums.txt" "$TMP_DIR/checksums.txt" || return 2
+  printf '  ↓ 下载主程序 %s...\n' "$archive" >&2
+  download_with_progress "${BASE_URL}/${archive}" "$TMP_DIR/$archive" || return 2
   verify_sha256 "$TMP_DIR/$archive" "$(release_checksum "$archive")" || return 1
   tar -xzf "$TMP_DIR/$archive" -C "$TMP_DIR" || return 1
   extracted_bin="$TMP_DIR/kiseki-${TAG}-${TARGET}/kiseki"
@@ -249,137 +332,26 @@ use_installed_core() {
   echo "✓ 已保留安装验证过的 Kiseki ${TAG}（无法连接发布服务器）"
 }
 
-dependency_platform() (
-  case "$TARGET" in
-    aarch64-apple-darwin) printf '%s' darwin-arm64 ;;
-    x86_64-apple-darwin) printf '%s' darwin-amd64 ;;
-    aarch64-unknown-linux-musl)
-      if ! getconf GNU_LIBC_VERSION >/dev/null 2>&1 && [ -f /lib/ld-musl-aarch64.so.1 ]; then printf '%s' linux-musl-arm64; else printf '%s' linux-arm64; fi ;;
-    x86_64-unknown-linux-musl)
-      if ! getconf GNU_LIBC_VERSION >/dev/null 2>&1 && [ -f /lib/ld-musl-x86_64.so.1 ]; then printf '%s' linux-musl-amd64; else printf '%s' linux-amd64; fi ;;
-  esac
-)
-
-require_unzip() {
-  if ! command -v unzip >/dev/null 2>&1; then
-    printf '%s\n' '✗ 解压 ZIP 资产需要 unzip。请安装 unzip（例如 sudo apt install unzip），再重跑安装脚本。' >&2
-    return 1
+run_stage2_deps() {
+  set -- deps install --version "$TAG" --repo "$REPO"
+  if [ -r "$TMP_DIR/checksums.txt" ]; then
+    set -- "$@" --checksums "$TMP_DIR/checksums.txt"
   fi
-}
-
-install_dependency() (
-  kind="$1" url="$2" digest="$3" relative="$4" mode="$5"
-  asset_dir="$(mktemp -d "$TMP_DIR/dependency.XXXXXX")" || return 1
-  trap 'rm -rf "$asset_dir"' 0
-  asset="$asset_dir/asset"
-  extracted="$asset_dir/extracted"
-  case "$kind:$relative:$mode" in
-    tool:vendor/bin/oh-my-posh:0755|tool:vendor/bin/fastfetch:0755)
-      dest="$KISEKI_CONFIG_ROOT/$relative"
-      receipt="${dest}.asset-sha256"
-      if [ "$relative" = vendor/bin/fastfetch ]; then
-        if [ -x "$dest" ] && [ -r "$receipt" ] && [ "$(cat "$receipt" 2>/dev/null || true)" = "$digest" ]; then
-          return 0
-        fi
-        require_unzip || return 1
-      elif [ -x "$dest" ] && [ "$(sha256 "$dest")" = "$digest" ]; then
-        return 0
-      fi
-      download_dep "$digest" "$url" "$asset" "$relative" && verify_sha256 "$asset" "$digest" || return 1
-      if [ "$relative" = vendor/bin/fastfetch ]; then
-        unzip -p "$asset" '*/usr/bin/fastfetch' > "$extracted" || return 1
-      else
-        cp "$asset" "$extracted" || return 1
-      fi
-      chmod +x "$extracted" && "$extracted" --version >/dev/null || return 1
-      install_file "$extracted" "$dest" "$mode" || return 1
-      if [ "$relative" = vendor/bin/fastfetch ]; then
-        printf '%s\n' "$digest" > "$asset_dir/receipt" && install_file "$asset_dir/receipt" "$receipt" 0644 || true
-      fi
-      ;;
-    font-raw:fonts/*.ttf:0644)
-      name="${relative#fonts/}"
-      case "$name" in *[!A-Za-z0-9_.-]*|.*) return 1 ;; esac
-      [ -n "$FONT_DIR" ] || return 1
-      dest="$FONT_DIR/$name"
-      if [ -f "$dest" ] && [ "$(sha256 "$dest")" = "$digest" ]; then return 0; fi
-      download_dep "$digest" "$url" "$asset" "$relative" && verify_sha256 "$asset" "$digest" || return 1
-      install_file "$asset" "$dest" "$mode"
-      ;;
-    font:fonts/*:0644)
-      family="${relative#fonts/}"
-      pattern="$(awk -F '\t' -v id="$family" '$1 == "# font" && $2 == id { print $3; exit }' "$manifest")"
-      [ -n "$FONT_DIR" ] && [ -n "$pattern" ] || return 1
-      require_unzip || return 1
-      download_dep "$digest" "$url" "$asset" "$relative" && verify_sha256 "$asset" "$digest" || return 1
-      unzip -Z1 "$asset" > "$asset_dir/font.entries" || return 1
-      found=0
-      while IFS= read -r entry; do
-        name="${entry##*/}"
-        case "$entry" in *'*'*|*'?'*|*'['*) continue ;; esac
-        printf '%s\n' "$name" | grep -Eq -e "$pattern" || continue
-        unzip -p "$asset" "$entry" > "$extracted" || return 1
-        [ -s "$extracted" ] && install_file "$extracted" "$FONT_DIR/$name" "$mode" || return 1
-        found=1
-      done < "$asset_dir/font.entries"
-      [ "$found" = 1 ]
-      ;;
-    *) return 1 ;;
-  esac
-)
-
-install_dependencies() {
-  manifest="$TMP_DIR/deps.tsv"
-  if [ ! -r "$TMP_DIR/checksums.txt" ] ||
-    ! download "${BASE_URL}/deps.tsv" "$manifest" ||
-    ! verify_sha256 "$manifest" "$(release_checksum deps.tsv)"; then
-    echo "✗ 依赖清单不可用，请重跑安装脚本（见 https://kisekiterm.dev）。" >&2
-    return 0
+  if [ -n "$MIRROR_PREF" ]; then
+    set -- "$@" --mirror "$MIRROR_PREF"
   fi
-  dep_platform="$(dependency_platform)"
-  case "$dep_platform" in darwin-*) font_os=macos ;; *) font_os=linux ;; esac
-  font_path="$(awk -F '\t' -v os="$font_os" '$1 == "# font-dir" && $2 == os { print $3; exit }' "$manifest")"
-  case "$font_path" in
-    \~/*) FONT_DIR="$HOME/${font_path#\~/}" ;;
-    *) FONT_DIR= ;;
-  esac
-  awk -F '\t' -v target="$dep_platform" '$1 !~ /^#/ && $2 == target' "$manifest" > "$TMP_DIR/deps-target.tsv" || return 0
-  fonts_ready=0
-  while IFS="$TAB" read -r kind _platform url digest relative mode; do
-    case "$kind" in
-      font|font-raw) [ "$SKIP_FONTS" = 0 ] || continue ;;
-    esac
-    if install_dependency "$kind" "$url" "$digest" "$relative" "$mode"; then
-      case "$kind" in
-        font|font-raw)
-          printf '✓ %s 字体已就绪\n' "${relative#fonts/}"
-          fonts_ready=1
-          ;;
-      esac
-    else
-      printf '✗ %s 安装失败，请重跑安装脚本（见 https://kisekiterm.dev）。\n' "$relative" >&2
-    fi
-  done < "$TMP_DIR/deps-target.tsv"
-  if [ "$dep_platform" = linux-musl-arm64 ]; then
-    echo "· Fastfetch 的上游发布暂无 Linux musl ARM64 二进制。"
+  if [ -n "$EXPLICIT_DL_BASE" ]; then
+    set -- "$@" --dl-base "$EXPLICIT_DL_BASE"
   fi
-  if [ "$fonts_ready" = 1 ]; then
-    ofl_dest="$KISEKI_CONFIG_ROOT/vendor/licenses/OFL-JetBrainsMono.txt"
-    if [ ! -f "$ofl_dest" ]; then
-      for origin in $MIRROR_ORIGINS; do
-        if curl -fsSL --connect-timeout 5 --max-time 15 "${origin}/deps/licenses/OFL-JetBrainsMono.txt" -o "$TMP_DIR/OFL-JetBrainsMono.txt" 2>/dev/null; then
-          install_file "$TMP_DIR/OFL-JetBrainsMono.txt" "$ofl_dest" 0644 || true
-          break
-        fi
-      done
-    fi
+  if [ "$SKIP_FONTS" = 1 ]; then
+    set -- "$@" --skip-fonts
   fi
-  if [ "$font_os" = linux ] && [ "$fonts_ready" = 1 ]; then
-    if ! command -v fc-cache >/dev/null 2>&1 || ! fc-cache -f "$FONT_DIR"; then
-      echo "✗ 无法刷新字体缓存，可运行 fc-cache -f。" >&2
-    fi
+  if [ -n "$CONCURRENCY" ]; then
+    set -- "$@" --concurrency "$CONCURRENCY"
   fi
-  return 0
+  if ! "${INSTALL_DIR}/kiseki" "$@"; then
+    echo "✗ 部分依赖安装失败，可运行 'kiseki deps install' 重试（见 https://kisekiterm.dev）。" >&2
+  fi
 }
 
 TARGET="$(detect_target)"
@@ -387,7 +359,6 @@ TAB="$(printf '\t')"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' 0
 trap 'exit 1' HUP INT TERM
-KISEKI_CONFIG_ROOT="${KISEKI_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/kiseki}"
 MIRROR_ORIGINS="$(build_mirror_origins)"
 PRIMARY_MIRROR="${MIRROR_ORIGINS%% *}"
 printf '· Mirror: %s (fallback: GitHub)\n' "${PRIMARY_MIRROR#https://}"
@@ -401,7 +372,7 @@ if TAG="$(resolve_version)"; then
     result="$?"
     if [ "$result" != 2 ] || ! use_installed_core "$TAG"; then exit 1; fi
   fi
-  install_dependencies
+  run_stage2_deps
 elif use_installed_core "$VERSION"; then
   echo "✗ 无法连接发布服务器以检查依赖，请重跑安装脚本（见 https://kisekiterm.dev）。" >&2
 else
