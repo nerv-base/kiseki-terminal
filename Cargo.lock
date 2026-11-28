@@ -876,7 +876,7 @@ dependencies = [
 
 [[package]]
 name = "kiseki-adapters"
-version = "2.0.0-beta.2"
+version = "2.0.0-beta.3"
 dependencies = [
  "jsonc-parser",
  "kiseki-compiler",
@@ -891,7 +891,7 @@ dependencies = [
 
 [[package]]
 name = "kiseki-bench"
-version = "2.0.0-beta.2"
+version = "2.0.0-beta.3"
 dependencies = [
  "kiseki-adapters",
  "kiseki-compiler",
@@ -908,7 +908,7 @@ dependencies = [
 
 [[package]]
 name = "kiseki-cli"
-version = "2.0.0-beta.2"
+version = "2.0.0-beta.3"
 dependencies = [
  "clap",
  "clap_complete",
@@ -937,7 +937,7 @@ dependencies = [
 
 [[package]]
 name = "kiseki-compiler"
-version = "2.0.0-beta.2"
+version = "2.0.0-beta.3"
 dependencies = [
  "kiseki-schema",
  "kiseki-shader",
@@ -950,7 +950,7 @@ dependencies = [
 
 [[package]]
 name = "kiseki-gallery"
-version = "2.0.0-beta.2"
+version = "2.0.0-beta.3"
 dependencies = [
  "flate2",
  "kiseki-pkg",
@@ -968,7 +968,7 @@ dependencies = [
 
 [[package]]
 name = "kiseki-pkg"
-version = "2.0.0-beta.2"
+version = "2.0.0-beta.3"
 dependencies = [
  "kiseki-compiler",
  "kiseki-platform",
@@ -984,7 +984,7 @@ dependencies = [
 
 [[package]]
 name = "kiseki-platform"
-version = "2.0.0-beta.2"
+version = "2.0.0-beta.3"
 dependencies = [
  "kiseki-types",
  "serde",
@@ -996,7 +996,7 @@ dependencies = [
 
 [[package]]
 name = "kiseki-schema"
-version = "2.0.0-beta.2"
+version = "2.0.0-beta.3"
 dependencies = [
  "kiseki-types",
  "serde",
@@ -1006,7 +1006,7 @@ dependencies = [
 
 [[package]]
 name = "kiseki-shader"
-version = "2.0.0-beta.2"
+version = "2.0.0-beta.3"
 dependencies = [
  "kiseki-schema",
  "kiseki-types",
@@ -1019,7 +1019,7 @@ dependencies = [
 
 [[package]]
 name = "kiseki-state"
-version = "2.0.0-beta.2"
+version = "2.0.0-beta.3"
 dependencies = [
  "kiseki-platform",
  "kiseki-types",
@@ -1031,7 +1031,7 @@ dependencies = [
 
 [[package]]
 name = "kiseki-tui"
-version = "2.0.0-beta.2"
+version = "2.0.0-beta.3"
 dependencies = [
  "crossterm",
  "kiseki-schema",
@@ -1042,7 +1042,7 @@ dependencies = [
 
 [[package]]
 name = "kiseki-tx"
-version = "2.0.0-beta.2"
+version = "2.0.0-beta.3"
 dependencies = [
  "kiseki-adapters",
  "kiseki-compiler",
@@ -1058,7 +1058,7 @@ dependencies = [
 
 [[package]]
 name = "kiseki-types"
-version = "2.0.0-beta.2"
+version = "2.0.0-beta.3"
 dependencies = [
  "bitflags 2.13.2",
  "serde",
