@@ -6,13 +6,19 @@
 //! directory used for absolute references). That makes the whole pipeline
 //! unit-testable and byte-for-byte reproducible.
 
+pub mod alacritty;
+pub mod apple_terminal;
 pub mod artifact;
 pub mod escape;
 pub mod fastfetch;
 pub mod ghostty;
+pub mod iterm2;
+pub mod kitty;
 pub mod marker;
 pub mod prompt;
 pub mod shell;
+pub mod tier2;
+pub mod wezterm;
 pub mod windows_terminal;
 pub mod zsh_assets;
 
@@ -280,6 +286,42 @@ pub fn compile(input: &CompileInput<'_>) -> Result<CompileOutput> {
     diagnostics.extend(ghostty::lint(&ghostty));
     artifacts.insert(artifact::names::GHOSTTY_CONF, ghostty)?;
 
+    let kitty = kitty::render_with_scale(
+        theme,
+        &families,
+        wallpaper.as_deref(),
+        options.macos_font_scale,
+    )?;
+    diagnostics.extend(kitty::lint(&kitty));
+    artifacts.insert(artifact::names::KITTY_CONF, kitty)?;
+
+    let wezterm = wezterm::render(
+        theme,
+        &families,
+        wallpaper.as_deref(),
+        options.macos_font_scale,
+    );
+    diagnostics.extend(wezterm::lint(&wezterm));
+    artifacts.insert(artifact::names::WEZTERM_LUA, wezterm)?;
+
+    let iterm2 = iterm2::render(
+        theme,
+        &families,
+        wallpaper.as_deref(),
+        options.macos_font_scale,
+        None,
+    )?;
+    diagnostics.extend(iterm2::lint(&iterm2));
+    artifacts.insert(artifact::names::ITERM2_DYNAMIC_PROFILE, iterm2)?;
+
+    let alacritty = alacritty::render(theme, &families, options.macos_font_scale);
+    diagnostics.extend(alacritty::lint(&alacritty));
+    artifacts.insert(artifact::names::ALACRITTY_TOML, alacritty)?;
+
+    let apple_terminal = apple_terminal::render(theme, &families, options.macos_font_scale);
+    diagnostics.extend(apple_terminal::lint(&apple_terminal));
+    artifacts.insert(artifact::names::APPLE_TERMINAL_SCRIPT, apple_terminal)?;
+
     let payload = windows_terminal::build(
         theme,
         &families,
@@ -296,6 +338,14 @@ pub fn compile(input: &CompileInput<'_>) -> Result<CompileOutput> {
     let zsh = shell::env_zsh(theme, &options.config_dir, options.prompt_policy, options.aliases);
     diagnostics.extend(shell::lint_shell_artifacts(&zsh));
     artifacts.insert(artifact::names::ENV_ZSH, zsh)?;
+
+    let bash = shell::env_bash(theme, &options.config_dir, options.prompt_policy, options.aliases);
+    diagnostics.extend(shell::lint_shell_artifacts(&bash));
+    artifacts.insert(artifact::names::ENV_BASH, bash)?;
+
+    let fish = shell::env_fish(theme, &options.config_dir, options.prompt_policy, options.aliases);
+    diagnostics.extend(shell::lint_shell_artifacts(&fish));
+    artifacts.insert(artifact::names::ENV_FISH, fish)?;
 
     let ps1 = match options.windows_vendor_bin.as_deref() {
         Some(vendor_bin) => shell::env_ps1_with_vendor(
@@ -328,6 +378,18 @@ pub fn compile(input: &CompileInput<'_>) -> Result<CompileOutput> {
     // --- fastfetch -------------------------------------------------------
     let fastfetch = fastfetch::render(theme, logo_path.as_deref());
     artifacts.insert(artifact::names::FASTFETCH, fastfetch)?;
+
+    // --- Tier 2 ecosystem artefacts --------------------------------------
+    artifacts.insert(artifact::names::NVIM_LUA, tier2::render_neovim(theme))?;
+    artifacts.insert(artifact::names::VIM_VIM, tier2::render_vim(theme))?;
+    artifacts.insert(artifact::names::HELIX_TOML, tier2::render_helix(theme))?;
+    artifacts.insert(artifact::names::TMUX_CONF, tier2::render_tmux(theme))?;
+    artifacts.insert(artifact::names::ZELLIJ_KDL, tier2::render_zellij(theme))?;
+    artifacts.insert(artifact::names::OPENCODE_JSON, tier2::render_opencode(theme))?;
+    artifacts.insert(artifact::names::BAT_TMTHEME, tier2::render_bat_tmtheme(theme))?;
+    artifacts.insert(artifact::names::DELTA_GITCONFIG, tier2::render_delta(theme))?;
+    artifacts.insert(artifact::names::LAZYGIT_YML, tier2::render_lazygit(theme))?;
+    artifacts.insert(artifact::names::BTOP_THEME, tier2::render_btop(theme))?;
 
     Ok(CompileOutput {
         artifacts,

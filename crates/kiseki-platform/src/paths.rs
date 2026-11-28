@@ -169,6 +169,14 @@ impl KisekiPaths {
         self.data.join("themes").join("community")
     }
 
+    pub fn gallery_cache_dir(&self) -> PathBuf {
+        self.cache.join("gallery")
+    }
+
+    pub fn gallery_origins_file(&self) -> PathBuf {
+        self.data.join("themes").join("gallery-origins.json")
+    }
+
     pub fn font_cache_file(&self) -> PathBuf {
         self.cache.join("fonts.json")
     }

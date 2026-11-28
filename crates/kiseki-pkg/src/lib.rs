@@ -9,6 +9,7 @@
 pub mod bundled;
 pub mod library;
 pub mod migration;
+pub mod scaffold;
 pub mod validate;
 
 pub use bundled::{bundled_theme, bundled_themes, BundledFile, BundledTheme};
@@ -20,6 +21,7 @@ pub use migration::{
     V1ConfigHook, V1Detection, V1Preferences, V1_BEGIN, V1_END, V1_LUA_BEGIN, V1_LUA_END,
     V1_SHIM_MARKER, V1_SHIM_NAMES,
 };
+pub use scaffold::{scaffold_theme_pack, title_case_id, ScaffoldOptions, ScaffoldResult};
 pub use validate::{
     allowed_file, collect_files, install_from_dir, remove_installed, validate_theme_dir,
     validate_theme_dir_cached, InstalledTheme, ThemeFile, ThemeValidation, ValidationScope,

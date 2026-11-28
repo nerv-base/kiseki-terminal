@@ -33,6 +33,7 @@ kiseki-adapters.workspace = true
 kiseki-tx.workspace = true
 kiseki-state.workspace = true
 kiseki-pkg.workspace = true
+kiseki-gallery.workspace = true
 kiseki-tui.workspace = true
 clap.workspace = true
 clap_complete.workspace = true

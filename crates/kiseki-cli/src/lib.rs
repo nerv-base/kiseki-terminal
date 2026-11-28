@@ -6,7 +6,7 @@
 
 pub mod ui;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
@@ -15,14 +15,19 @@ use clap::builder::styling::{AnsiColor, Effects, Styles};
 use clap::{CommandFactory, Parser, Subcommand};
 use kiseki_adapters::{AdapterRegistry, DetectionReport, PlanOptions};
 use kiseki_compiler::{compile, CompileInput, CompileOptions};
+use kiseki_gallery::{
+    filter_and_sort, GalleryClient, GalleryFilter, GallerySort, OriginRegistry,
+};
 use kiseki_pkg::{ThemeEntry, ThemeLibrary, ThemeSource};
 use kiseki_platform::{
     capture_env, default_font_dirs, deps, detect, font_status, fonts::FontScanner, FontInventory,
     KisekiPaths, Platform, SyncMode, SystemPlatform,
 };
 use kiseki_schema::{Composition, ResolvedTheme, UserOverrides};
-use kiseki_state::{AppearanceMode, Config, PreviewSession, State};
-use kiseki_tui::{InitWizardChoices, InitWizardInput, PickerAction, PickerItem};
+use kiseki_state::{AppearanceMode, Config, GalleryConfig, PreviewSession, State};
+use kiseki_tui::{
+    GalleryPickerItem, InitWizardChoices, InitWizardInput, PickerAction, PickerItem,
+};
 use kiseki_tx::{
     doctor, JournalSummary, TargetStatus, TransactionManager, TransactionOptions, TransactionReport,
 };
@@ -103,8 +108,10 @@ pub enum Command {
     Rollback(RollbackArgs),
     /// 安全逃生恢复：强制静态模式、关闭 Shader 并清理预览残留
     Recover(RecoverArgs),
-    /// 查看、校验、安装或移除主题包
+    /// 查看、校验、安装、更新或移除主题包
     Theme(ThemeArgs),
+    /// 浏览、搜索与刷新 Kiseki Gallery 社区主题市场
+    Gallery(GalleryArgs),
     /// 检查主题字体安装状态
     Fonts(FontsArgs),
     /// 检查主题依赖、版本及修复方式
@@ -115,7 +122,7 @@ pub enum Command {
     Uninstall(UninstallArgs),
     /// 输出零 fork Shell 初始化脚本
     ShellInit {
-        /// zsh | pwsh
+        /// zsh | bash | fish | pwsh
         shell: String,
     },
     /// 输出 Shell 自动补全脚本
@@ -232,16 +239,102 @@ pub enum ThemeCommand {
     List,
     /// Show theme metadata and the contrast report.
     Info { theme: String },
-    /// Validate a theme pack directory (Schema + security + naga + WCAG).
-    Validate { path: PathBuf },
-    /// Install a local theme pack directory.
-    Install {
-        path: PathBuf,
+    /// Create a starter community theme pack directory that passes `theme validate`.
+    Init {
+        /// Theme ID (kebab-case, for example `tokyo-midnight`).
+        id: String,
+        /// Output directory (defaults to `./<id>`).
+        #[arg(long)]
+        dir: Option<PathBuf>,
+        /// Human-readable display name.
+        #[arg(long)]
+        name: Option<String>,
+        /// Author name written to manifest.json, LICENSE and CREDITS.md.
+        #[arg(long, default_value = "Community Contributor")]
+        author: String,
+        /// Theme appearance (`dark` or `light`).
+        #[arg(long, default_value = "dark")]
+        appearance: String,
+        /// Include starter GLSL + HLSL live shader templates.
+        #[arg(long)]
+        with_shader: bool,
+        /// Overwrite an existing non-empty directory.
         #[arg(long)]
         force: bool,
     },
+    /// Validate a theme pack directory (Schema + security + naga + WCAG).
+    Validate { path: PathBuf },
+    /// Install a theme from a local directory, `.tar.gz` archive, Gallery short ID, or `github:owner/repo[@ref][#subpath]`.
+    Install {
+        /// Local path, `.tar.gz` archive, Gallery short ID, or `github:owner/repo[@ref][#subpath]`.
+        target: String,
+        #[arg(long)]
+        force: bool,
+        /// Treat target strictly as a local directory or archive.
+        #[arg(long)]
+        local: bool,
+        /// Treat target strictly as a Gallery short ID.
+        #[arg(long)]
+        gallery: bool,
+    },
+    /// Update one or all community themes installed from Kiseki Gallery.
+    Update {
+        /// Optional theme ID to update (omit or pass `--all` to check every installed gallery theme).
+        theme: Option<String>,
+        /// Check and update every installed gallery theme.
+        #[arg(long)]
+        all: bool,
+    },
     /// Remove a community theme.
     Remove { theme: String },
+}
+
+#[derive(Debug, clap::Args)]
+pub struct GalleryArgs {
+    #[command(subcommand)]
+    pub command: GalleryCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum GalleryCommand {
+    /// Search and rank community themes from configured Gallery index sources.
+    Search {
+        /// Optional search keyword (matches ID, name, subtitle, tags, author, repo).
+        query: Option<String>,
+        /// Sort order: trending | downloads | stars | updated | newest.
+        #[arg(long, default_value = "trending")]
+        sort: String,
+        /// Show dark themes only.
+        #[arg(long)]
+        dark: bool,
+        /// Show light themes only.
+        #[arg(long)]
+        light: bool,
+        /// Show only themes with live GLSL/HLSL shaders.
+        #[arg(long)]
+        shader: bool,
+        /// Show only themes with wallpapers.
+        #[arg(long)]
+        wallpaper: bool,
+        /// Filter by exact tag name.
+        #[arg(long)]
+        tag: Option<String>,
+        /// Bypass local cache and refresh index before searching.
+        #[arg(long)]
+        refresh: bool,
+    },
+    /// Show detailed metadata, capabilities, metrics, and release notes for a Gallery theme.
+    Info {
+        /// Flat short theme ID (for example `tokyo-midnight`).
+        id: String,
+        /// Bypass local cache before fetching details.
+        #[arg(long)]
+        refresh: bool,
+    },
+    /// Refresh the cached Gallery index immediately.
+    Refresh,
+    /// List active Gallery index sources.
+    Sources,
 }
 
 #[derive(Debug, clap::Args)]
@@ -339,6 +432,7 @@ fn run_tracked(cli: Cli, ui: Ui) -> (Result<()>, bool) {
         Command::Rollback(args) => app.rollback(args),
         Command::Recover(args) => app.recover(args),
         Command::Theme(args) => app.theme(args),
+        Command::Gallery(args) => app.gallery(args),
         Command::Fonts(args) => app.fonts(args),
         Command::Deps(_) => app.deps(),
         Command::Migrate(args) => app.migrate(args),
@@ -399,7 +493,7 @@ impl App {
             paths,
             config,
             state,
-            registry: AdapterRegistry::milestone1(),
+            registry: AdapterRegistry::standard(),
             library,
             env,
         })
@@ -704,7 +798,7 @@ impl App {
         state_after.rendering.profile = profile;
         let mut options = self.options(command, cli_only, allow_create);
         options.require_all_targets = require_all_targets;
-        let manager = TransactionManager::new(&self.platform, AdapterRegistry::milestone1());
+        let manager = TransactionManager::new(&self.platform, AdapterRegistry::standard());
         let report = manager.apply(kiseki_tx::ApplyRequest {
             theme: &theme,
             artifacts: &output.artifacts,
@@ -882,7 +976,7 @@ impl App {
         }
         if args.session {
             self.ui.warn(
-                "--session is not supported by the enabled terminals in Milestone 1; applying globally",
+                "--session is not yet implemented for the active terminal; applying globally",
             );
         }
         let command = format!("use {}", state.active_theme);
@@ -921,15 +1015,110 @@ impl App {
         Ok(())
     }
 
+    fn gallery_client(&self) -> GalleryClient {
+        let mut cfg: GalleryConfig = self.config.gallery.clone();
+        if let Some(override_src) = self
+            .platform
+            .env_var("KISEKI_GALLERY_SOURCE")
+            .filter(|v| !v.trim().is_empty())
+        {
+            cfg.sources = override_src
+                .split(',')
+                .map(|part| part.trim().to_string())
+                .filter(|part| !part.is_empty())
+                .collect();
+        }
+        GalleryClient::from_config(&cfg, self.paths.gallery_cache_dir())
+    }
+
     fn pick(&mut self) -> Result<()> {
         let entries = self.library.list(&self.platform)?;
+        let installed_ids: BTreeSet<String> = entries
+            .iter()
+            .map(|entry| entry.id.as_str().to_string())
+            .collect();
         let active = self
             .state
             .as_ref()
             .map(|state| state.active_theme.as_str().to_string());
         let items = self.build_picker_items(&entries);
-        match kiseki_tui::run_picker(items, active.as_deref())? {
+        let client = self.gallery_client();
+        let installed_for_loader = installed_ids.clone();
+        let action = kiseki_tui::run_picker_with_gallery(items, active.as_deref(), move || {
+            let loaded = client.load_index(false)?;
+            let mapped = loaded
+                .index
+                .themes
+                .into_iter()
+                .map(|theme| {
+                    let author = theme
+                        .authors
+                        .first()
+                        .map(|a| a.name.clone())
+                        .unwrap_or_default();
+                    let swatch = ui::swatch_from_gallery_palette(&theme.preview.palette);
+                    GalleryPickerItem {
+                        installed: installed_for_loader.contains(&theme.id),
+                        id: theme.id,
+                        name: theme.name,
+                        subtitle: theme.subtitle,
+                        appearance: theme.appearance,
+                        version: theme.version,
+                        author,
+                        repo: theme.repo,
+                        stars: theme.metrics.stars,
+                        downloads: theme.metrics.downloads,
+                        trending_milli: (theme.metrics.trending_score.max(0.0) * 1000.0).round()
+                            as u64,
+                        updated_at: theme.updated_at,
+                        has_wallpaper: theme.capabilities.has_wallpaper,
+                        has_shader: theme.capabilities.has_shader,
+                        wcag_grade: theme.capabilities.wcag_grade,
+                        swatch,
+                    }
+                })
+                .collect();
+            Ok(mapped)
+        })?;
+
+        match action {
             PickerAction::Select(id) => {
+                let args = UseArgs {
+                    theme: id,
+                    profile: None,
+                    appearance: None,
+                    session: false,
+                    only: None,
+                };
+                self.use_theme(args)
+            }
+            PickerAction::InstallGallery(id) => {
+                if !installed_ids.contains(&id) {
+                    if !self.json {
+                        self.ui
+                            .info(&format!("正在从 Kiseki Gallery 安装社区主题 `{id}`..."));
+                    }
+                    let client = self.gallery_client();
+                    let report = client.install_target(
+                        &self.platform,
+                        &id,
+                        true,
+                        false,
+                        true,
+                        self.dry_run,
+                    )?;
+                    if !self.json && !self.dry_run {
+                        self.ui.success(&format!(
+                            "已安装 `{}`（{} 个文件，{:.1} KiB）",
+                            report.id,
+                            report.file_count,
+                            report.total_bytes as f64 / 1024.0
+                        ));
+                    }
+                    if self.dry_run {
+                        return Ok(());
+                    }
+                }
                 let args = UseArgs {
                     theme: id,
                     profile: None,
@@ -1868,7 +2057,7 @@ impl App {
     }
 
     fn rollback(&mut self, args: RollbackArgs) -> Result<()> {
-        let manager = TransactionManager::new(&self.platform, AdapterRegistry::milestone1());
+        let manager = TransactionManager::new(&self.platform, AdapterRegistry::standard());
         if args.list {
             let summaries = manager.list_journals()?;
             if self.json {
@@ -1918,7 +2107,7 @@ impl App {
                 "only `kiseki recover --safe` is supported; add --safe to continue",
             ));
         }
-        let manager = TransactionManager::new(&self.platform, AdapterRegistry::milestone1());
+        let manager = TransactionManager::new(&self.platform, AdapterRegistry::standard());
         if args.rollback && !self.dry_run {
             if let Some(summary) = manager.list_journals()?.first() {
                 let report = self.rollback_tx(&manager, &summary.tx_id)?;
@@ -2118,6 +2307,70 @@ impl App {
                     self.ui.theme_info(&resolved, &contrast, &loaded.root);
                 }
             }
+            ThemeCommand::Init {
+                id,
+                dir,
+                name,
+                author,
+                appearance,
+                with_shader,
+                force,
+            } => {
+                let theme_id = self.theme_id(&id)?;
+                let parsed_appearance: Appearance = appearance.parse()?;
+                let display_name =
+                    name.unwrap_or_else(|| kiseki_pkg::title_case_id(theme_id.as_str()));
+                let target_dir = dir.unwrap_or_else(|| PathBuf::from(theme_id.as_str()));
+                if self.dry_run {
+                    if self.json {
+                        self.emit_json(json!({
+                            "dryRun": true,
+                            "id": theme_id.as_str(),
+                            "name": display_name,
+                            "appearance": parsed_appearance.as_str(),
+                            "withShader": with_shader,
+                            "root": target_dir,
+                        }));
+                    } else {
+                        self.ui.info(&format!(
+                            "预览变更（未写入）：将在 {} 创建主题脚手架 {}",
+                            target_dir.display(),
+                            theme_id
+                        ));
+                    }
+                    return Ok(());
+                }
+                let result = kiseki_pkg::scaffold_theme_pack(
+                    &target_dir,
+                    &kiseki_pkg::ScaffoldOptions {
+                        id: theme_id,
+                        name: display_name,
+                        author,
+                        appearance: parsed_appearance,
+                        with_shader,
+                        force,
+                    },
+                )?;
+                if self.json {
+                    self.emit_json(json!({
+                        "id": result.id,
+                        "root": result.root,
+                        "files": result.files,
+                    }));
+                } else {
+                    self.ui.success(&format!(
+                        "created starter theme `{}` ({} files) at {}",
+                        result.id,
+                        result.files.len(),
+                        result.root.display()
+                    ));
+                    self.ui.info(&format!(
+                        "下一步：运行 `kiseki theme validate {}` 与 `kiseki theme install {}`",
+                        result.root.display(),
+                        result.root.display()
+                    ));
+                }
+            }
             ThemeCommand::Validate { path } => {
                 let validation = kiseki_pkg::validate_theme_dir(&path)?;
                 if self.json {
@@ -2142,54 +2395,79 @@ impl App {
                     return Err(KisekiError::schema("theme pack has blocking errors"));
                 }
             }
-            ThemeCommand::Install { path, force } => {
+            ThemeCommand::Install {
+                target,
+                force,
+                local,
+                gallery,
+            } => {
+                let client = self.gallery_client();
+                let report = client.install_target(
+                    &self.platform,
+                    &target,
+                    force,
+                    local,
+                    gallery,
+                    self.dry_run,
+                )?;
                 if self.dry_run {
-                    // Validate the pack (read-only) so the preview is honest,
-                    // but never copy a byte into the community store.
-                    let validation = kiseki_pkg::validate_theme_dir(&path)?;
-                    let id = validation
-                        .pack
-                        .as_ref()
-                        .map(|pack| pack.manifest.id.as_str().to_string());
                     if self.json {
                         self.emit_json(json!({
                             "dryRun": true,
-                            "id": id,
-                            "path": path,
-                            "valid": validation.is_valid(),
-                            "files": validation.file_count,
-                            "bytes": validation.total_bytes,
+                            "id": report.id,
+                            "source": report.source_kind,
+                            "path": report.path,
+                            "valid": report.valid,
+                            "files": report.file_count,
+                            "bytes": report.total_bytes,
                         }));
                     } else {
                         self.ui.info(&format!(
-                            "预览变更（未写入）：将安装 {}（{} 个文件）",
-                            id.unwrap_or_else(|| path.display().to_string()),
-                            validation.file_count
+                            "预览变更（未写入）：将从 {} 安装 {}（{} 个文件）",
+                            report.source_kind, report.id, report.file_count
                         ));
                     }
-                    if !validation.is_valid() {
-                        // The preview is honest about the pack, but an invalid
-                        // pack must still be a non-zero exit.
+                    if !report.valid {
                         return Err(KisekiError::schema("theme pack has blocking errors"));
                     }
                     return Ok(());
                 }
-                let installed = kiseki_pkg::install_from_dir(&self.platform, &path, force)?;
                 if self.json {
                     self.emit_json(json!({
-                        "id": installed.id,
-                        "path": installed.path,
-                        "files": installed.file_count,
-                        "bytes": installed.total_bytes,
+                        "id": report.id,
+                        "source": report.source_kind,
+                        "path": report.path,
+                        "files": report.file_count,
+                        "bytes": report.total_bytes,
+                        "origin": report.origin,
                     }));
                 } else {
+                    let dest = report
+                        .path
+                        .as_ref()
+                        .map(|p| p.display().to_string())
+                        .unwrap_or_default();
                     self.ui.success(&format!(
-                        "installed {} ({} files, {:.1} KiB) at {}",
-                        installed.id,
-                        installed.file_count,
-                        installed.total_bytes as f64 / 1024.0,
-                        installed.path.display()
+                        "installed {} from {} ({} files, {:.1} KiB) at {}",
+                        report.id,
+                        report.source_kind,
+                        report.file_count,
+                        report.total_bytes as f64 / 1024.0,
+                        dest
                     ));
+                }
+            }
+            ThemeCommand::Update { theme, all } => {
+                let target = if all { None } else { theme.as_deref() };
+                let client = self.gallery_client();
+                let outcomes = client.update_installed(&self.platform, target, self.dry_run)?;
+                if self.json {
+                    self.emit_json(json!({
+                        "dryRun": self.dry_run,
+                        "updates": outcomes,
+                    }));
+                } else {
+                    self.ui.theme_updates(&outcomes, self.dry_run);
                 }
             }
             ThemeCommand::Remove { theme } => {
@@ -2209,10 +2487,168 @@ impl App {
                     return Ok(());
                 }
                 let removed = kiseki_pkg::remove_installed(&self.platform, &theme)?;
+                let _ = OriginRegistry::remove(&self.platform, &self.paths, &theme);
                 if self.json {
                     self.emit_json(json!({ "removed": theme, "path": removed }));
                 } else {
                     self.ui.success(&format!("removed {theme}"));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    // ------------------------------------------------------------- gallery
+    fn gallery(&mut self, args: GalleryArgs) -> Result<()> {
+        let client = self.gallery_client();
+        match args.command {
+            GalleryCommand::Sources => {
+                let sources = client.sources().to_vec();
+                if self.json {
+                    self.emit_json(json!({
+                        "sources": sources,
+                        "githubProxy": self.config.gallery.github_proxy,
+                        "cacheTtlSecs": self.config.gallery.cache_ttl_secs,
+                    }));
+                } else {
+                    self.ui.header("Kiseki Gallery 索引源");
+                    for (idx, src) in sources.iter().enumerate() {
+                        self.ui.bullet(&format!("[{}] {src}", idx + 1));
+                    }
+                    if let Some(proxy) = self.config.gallery.github_proxy.as_deref() {
+                        self.ui.kv("GitHub 代理前缀", proxy);
+                    }
+                }
+            }
+            GalleryCommand::Refresh => {
+                let loaded = client.load_index(true)?;
+                for warning in &loaded.warnings {
+                    if !self.json {
+                        self.ui.warn(warning);
+                    }
+                }
+                if self.json {
+                    self.emit_json(json!({
+                        "source": loaded.source,
+                        "themes": loaded.index.themes.len(),
+                        "generatedAt": loaded.index.generated_at,
+                        "fromCache": loaded.from_cache,
+                        "stale": loaded.stale,
+                        "warnings": loaded.warnings,
+                    }));
+                } else {
+                    self.ui.success(&format!(
+                        "已刷新社区主题索引：共 {} 套主题（来源 {}）",
+                        loaded.index.themes.len(),
+                        loaded.source
+                    ));
+                }
+            }
+            GalleryCommand::Search {
+                query,
+                sort,
+                dark,
+                light,
+                shader,
+                wallpaper,
+                tag,
+                refresh,
+            } => {
+                if dark && light {
+                    return Err(KisekiError::other(
+                        "--dark and --light are mutually exclusive",
+                    ));
+                }
+                let sort: GallerySort = sort.parse()?;
+                let appearance = if dark {
+                    Some(Appearance::Dark)
+                } else if light {
+                    Some(Appearance::Light)
+                } else {
+                    None
+                };
+                let loaded = client.load_index(refresh)?;
+                for warning in &loaded.warnings {
+                    if !self.json {
+                        self.ui.warn(warning);
+                    }
+                }
+                let filter = GalleryFilter {
+                    query,
+                    appearance,
+                    has_shader: shader,
+                    has_wallpaper: wallpaper,
+                    tag,
+                    sort,
+                };
+                let matches = filter_and_sort(&loaded.index.themes, &filter);
+                let installed: BTreeSet<String> = self
+                    .library
+                    .list(&self.platform)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|e| e.id.into_string())
+                    .collect();
+
+                if self.json {
+                    self.emit_json(json!({
+                        "source": loaded.source,
+                        "fromCache": loaded.from_cache,
+                        "stale": loaded.stale,
+                        "sort": sort.as_str(),
+                        "count": matches.len(),
+                        "themes": matches.iter().map(|theme| json!({
+                            "id": theme.id,
+                            "name": theme.name,
+                            "subtitle": theme.subtitle,
+                            "version": theme.version,
+                            "appearance": theme.appearance.as_str(),
+                            "tags": theme.tags,
+                            "authors": theme.authors,
+                            "license": theme.license,
+                            "repo": theme.repo,
+                            "commit": theme.commit,
+                            "updatedAt": theme.updated_at,
+                            "installed": installed.contains(&theme.id),
+                            "capabilities": theme.capabilities,
+                            "metrics": theme.metrics,
+                            "preview": theme.preview,
+                        })).collect::<Vec<_>>(),
+                    }));
+                } else {
+                    self.ui.gallery_list(
+                        &matches,
+                        sort,
+                        &installed,
+                        loaded.from_cache,
+                        loaded.stale,
+                    );
+                }
+            }
+            GalleryCommand::Info { id, refresh } => {
+                let loaded = client.load_index(refresh)?;
+                let theme = loaded.index.find(&id).ok_or_else(|| {
+                    KisekiError::ThemeNotFound(format!("{id} not found in gallery index"))
+                })?;
+                let updates = client
+                    .load_updates()
+                    .ok()
+                    .flatten()
+                    .and_then(|u| u.themes.get(&theme.id).cloned());
+                let installed = self
+                    .library
+                    .list(&self.platform)
+                    .unwrap_or_default()
+                    .iter()
+                    .any(|e| e.id.as_str() == theme.id);
+                if self.json {
+                    self.emit_json(json!({
+                        "theme": theme,
+                        "installed": installed,
+                        "updates": updates,
+                    }));
+                } else {
+                    self.ui.gallery_info(theme, updates.as_ref(), installed);
                 }
             }
         }
@@ -2315,7 +2751,7 @@ impl App {
                 plans.push(adapter.plan_unhook(&detection, &self.paths)?);
             }
         }
-        let manager = TransactionManager::new(&self.platform, AdapterRegistry::milestone1());
+        let manager = TransactionManager::new(&self.platform, AdapterRegistry::standard());
         let report = manager.apply_unhooks(&state, plans, "uninstall", self.dry_run)?;
 
         // A read-only or failed host unhook means the host still references
@@ -2373,7 +2809,7 @@ impl App {
     // ---------------------------------------------------------- shell-init
     fn shell_init(&mut self, shell: &str) -> Result<()> {
         let shell = kiseki_compiler::ShellKind::parse(shell)
-            .ok_or_else(|| KisekiError::other("shell must be zsh or pwsh"))?;
+            .ok_or_else(|| KisekiError::other("shell must be zsh, bash, fish or pwsh"))?;
         let script = kiseki_compiler::shell_init_script(
             shell,
             self.paths.config_dir(),

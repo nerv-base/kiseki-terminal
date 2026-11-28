@@ -293,6 +293,30 @@ impl State {
 // config.toml
 // ---------------------------------------------------------------------------
 
+/// Community theme gallery settings (`config.toml` `[gallery]`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
+pub struct GalleryConfig {
+    /// Ordered list of gallery `index.json` URLs or local file paths.
+    /// Empty uses Kiseki's built-in official sources.
+    pub sources: Vec<String>,
+    /// Optional proxy prefix prepended to GitHub archive URLs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub github_proxy: Option<String>,
+    /// Local index cache TTL in seconds (default: 900 = 15 minutes).
+    pub cache_ttl_secs: u64,
+}
+
+impl Default for GalleryConfig {
+    fn default() -> Self {
+        Self {
+            sources: Vec::new(),
+            github_proxy: None,
+            cache_ttl_secs: 900,
+        }
+    }
+}
+
 /// `config.toml` — long-lived user preferences.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default, deny_unknown_fields)]
@@ -315,6 +339,9 @@ pub struct Config {
     pub theme_dirs: Vec<PathBuf>,
     /// Persistence strategy for transaction writes (`full` | `batch` | `none`).
     pub durability: Durability,
+    /// Community theme gallery index sources, cache TTL and optional GitHub proxy.
+    #[serde(default)]
+    pub gallery: GalleryConfig,
 }
 
 impl Default for Config {
@@ -329,6 +356,7 @@ impl Default for Config {
             auto_update_check: false,
             theme_dirs: Vec::new(),
             durability: Durability::Batch,
+            gallery: GalleryConfig::default(),
         }
     }
 }
@@ -583,6 +611,11 @@ mod tests {
             auto_update_check: true,
             theme_dirs: vec![PathBuf::from("/themes/extra")],
             durability: Durability::Full,
+            gallery: GalleryConfig {
+                sources: vec!["https://example.com/gallery/index.json".to_string()],
+                github_proxy: Some("https://mirror.example/".to_string()),
+                cache_ttl_secs: 600,
+            },
         };
         config.save(&platform, &paths).unwrap();
         let loaded = Config::load(&platform, &paths).unwrap();

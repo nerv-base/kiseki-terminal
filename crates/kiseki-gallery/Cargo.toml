@@ -1,0 +1,24 @@
+[package]
+name = "kiseki-gallery"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+kiseki-types.workspace = true
+kiseki-platform.workspace = true
+kiseki-pkg.workspace = true
+kiseki-state.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tempfile.workspace = true
+ureq.workspace = true
+flate2.workspace = true
+tar.workspace = true
+
+[dev-dependencies]
+kiseki-schema.workspace = true

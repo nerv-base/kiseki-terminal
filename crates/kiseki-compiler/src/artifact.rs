@@ -123,8 +123,15 @@ impl ArtifactMap {
 /// Canonical artefact names.
 pub mod names {
     pub const GHOSTTY_CONF: &str = "ghostty.conf";
+    pub const KITTY_CONF: &str = "kitty.conf";
+    pub const WEZTERM_LUA: &str = "wezterm.lua";
+    pub const ITERM2_DYNAMIC_PROFILE: &str = "iterm2-dynamic-profile.json";
+    pub const ALACRITTY_TOML: &str = "alacritty.toml";
+    pub const APPLE_TERMINAL_SCRIPT: &str = "apple-terminal.applescript";
     pub const ENV_ZSH: &str = "env.zsh";
     pub const ENV_PS1: &str = "env.ps1";
+    pub const ENV_BASH: &str = "env.bash";
+    pub const ENV_FISH: &str = "env.fish";
     pub const PROMPT_OMP: &str = "prompt.omp.json";
     pub const PROMPT_OMP_PALETTE: &str = "prompt.omp.palette.json";
     pub const STARSHIP_PALETTE: &str = "starship-palette.toml";
@@ -132,6 +139,17 @@ pub mod names {
     pub const WT_VISUAL: &str = "wt-visual.json";
     pub const SHADER_GLSL: &str = "shaders/active.glsl";
     pub const SHADER_HLSL: &str = "shaders/active.hlsl";
+    // Tier 2 ecosystem artefacts (RFC-0003 §4)
+    pub const NVIM_LUA: &str = "nvim/kiseki.lua";
+    pub const VIM_VIM: &str = "vim/kiseki.vim";
+    pub const HELIX_TOML: &str = "helix/kiseki.toml";
+    pub const TMUX_CONF: &str = "tmux.conf";
+    pub const ZELLIJ_KDL: &str = "zellij.kdl";
+    pub const OPENCODE_JSON: &str = "opencode.json";
+    pub const BAT_TMTHEME: &str = "bat/Kiseki.tmTheme";
+    pub const DELTA_GITCONFIG: &str = "delta.gitconfig";
+    pub const LAZYGIT_YML: &str = "lazygit.yml";
+    pub const BTOP_THEME: &str = "btop/kiseki.theme";
 }
 
 #[cfg(test)]

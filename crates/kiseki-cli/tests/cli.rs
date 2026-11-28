@@ -543,7 +543,11 @@ fn shell_init_json_and_unsupported_shell_fail() {
     let sandbox = Sandbox::new();
     let json = sandbox.json(&["shell-init", "pwsh", "--json"]);
     assert!(json["script"].as_str().unwrap().contains("KisekiSyncHook"));
-    let output = sandbox.run(&["shell-init", "fish"]);
+    let bash = sandbox.json(&["shell-init", "bash", "--json"]);
+    assert!(bash["script"].as_str().unwrap().contains("PROMPT_COMMAND"));
+    let fish = sandbox.json(&["shell-init", "fish", "--json"]);
+    assert!(fish["script"].as_str().unwrap().contains("fish_prompt"));
+    let output = sandbox.run(&["shell-init", "csh"]);
     assert!(!output.status.success());
 }
 
@@ -1416,15 +1420,32 @@ fn status_json_and_human_output_match_baseline_for_plain_and_composed() {
     assert_eq!(
         plain_json["artifacts"],
         serde_json::json!([
+            "alacritty.toml",
+            "apple-terminal.applescript",
+            "bat/Kiseki.tmTheme",
+            "btop/kiseki.theme",
+            "delta.gitconfig",
+            "env.bash",
+            "env.fish",
             "env.ps1",
             "env.zsh",
             "fastfetch.jsonc",
             "ghostty.conf",
+            "helix/kiseki.toml",
+            "iterm2-dynamic-profile.json",
+            "kitty.conf",
+            "lazygit.yml",
+            "nvim/kiseki.lua",
+            "opencode.json",
             "prompt.omp.json",
             "shaders/active.glsl",
             "shaders/active.hlsl",
             "starship-palette.toml",
-            "wt-visual.json"
+            "tmux.conf",
+            "vim/kiseki.vim",
+            "wezterm.lua",
+            "wt-visual.json",
+            "zellij.kdl"
         ])
     );
 
@@ -1713,4 +1734,356 @@ fn dry_run_with_ghostty_binary_writes_no_version_cache() {
     );
     assert!(!deps_cache.exists(), "--dry-run must never write deps-cache.json");
     assert!(!font_cache.exists(), "--dry-run must never write font-cache.json");
+}
+
+#[test]
+fn theme_init_scaffolds_valid_installable_packs() {
+    let sandbox = Sandbox::new();
+    let dark_dir = sandbox.path("my-dark-theme");
+    let light_dir = sandbox.path("my-light-theme");
+
+    // `--dry-run` creates nothing.
+    sandbox.run_ok(&[
+        "theme",
+        "init",
+        "my-dark-theme",
+        "--dir",
+        dark_dir.to_str().unwrap(),
+        "--with-shader",
+        "--dry-run",
+        "--quiet",
+    ]);
+    assert!(!dark_dir.exists());
+
+    // Scaffold dark + live shader and light static packs, validate, install, use.
+    let created = sandbox.json(&[
+        "theme",
+        "init",
+        "my-dark-theme",
+        "--dir",
+        dark_dir.to_str().unwrap(),
+        "--author",
+        "Test Author",
+        "--with-shader",
+        "--json",
+    ]);
+    assert_eq!(created["id"], "my-dark-theme");
+    assert!(dark_dir.join("shaders/live.glsl").is_file());
+    assert!(dark_dir.join("shaders/live.hlsl").is_file());
+
+    let validation = sandbox.json(&[
+        "theme",
+        "validate",
+        dark_dir.to_str().unwrap(),
+        "--json",
+    ]);
+    assert_eq!(validation["valid"], true);
+
+    sandbox.run_ok(&[
+        "theme",
+        "init",
+        "my-light-theme",
+        "--dir",
+        light_dir.to_str().unwrap(),
+        "--appearance",
+        "light",
+        "--quiet",
+    ]);
+    let light_val = sandbox.json(&[
+        "theme",
+        "validate",
+        light_dir.to_str().unwrap(),
+        "--json",
+    ]);
+    assert_eq!(light_val["valid"], true);
+
+    sandbox.run_ok(&["theme", "install", dark_dir.to_str().unwrap(), "--quiet"]);
+    sandbox.run_ok(&["use", "my-dark-theme", "--render-only", "--quiet"]);
+    let status = sandbox.json(&["status", "--json"]);
+    assert_eq!(status["state"]["activeTheme"], "my-dark-theme");
+}
+
+#[test]
+fn tier1_new_terminals_and_shells_anchor_and_unhook_cleanly() {
+    let sandbox = Sandbox::new();
+    let kitty = sandbox.path("kitty.conf");
+    let wezterm = sandbox.path("wezterm.lua");
+    let alacritty = sandbox.path("alacritty.toml");
+    let bashrc = sandbox.path(".bashrc");
+    let fish = sandbox.path("config.fish");
+
+    fs::write(&kitty, "font_size 12\n").unwrap();
+    fs::write(
+        &wezterm,
+        "local wezterm = require 'wezterm'\nlocal cfg = wezterm.config_builder()\nreturn cfg\n",
+    )
+    .unwrap();
+    fs::write(&alacritty, "[window]\ndecorations = \"full\"\n").unwrap();
+    fs::write(&bashrc, "export EDITOR=vim\n").unwrap();
+    fs::write(&fish, "set -g fish_greeting\n").unwrap();
+
+    let run = |args: &[&str]| {
+        let mut cmd = sandbox.command();
+        cmd.env("KISEKI_KITTY_CONFIG", &kitty)
+            .env("KISEKI_WEZTERM_CONFIG", &wezterm)
+            .env("KISEKI_ALACRITTY_CONFIG", &alacritty)
+            .env("KISEKI_BASHRC", &bashrc)
+            .env("KISEKI_FISH_CONFIG", &fish)
+            .args(args);
+        let output = cmd.output().expect("run kiseki");
+        assert!(
+            output.status.success(),
+            "kiseki {args:?} failed:\nstdout={}\nstderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+
+    run(&["use", "nerv-eva", "--only", "wezterm,alacritty", "--quiet"]);
+    assert!(fs::read_to_string(&wezterm).unwrap().contains("apply(cfg)"));
+    assert!(fs::read_to_string(&alacritty).unwrap().contains("alacritty.toml"));
+
+    if cfg!(not(windows)) {
+        run(&["use", "nerv-eva", "--only", "kitty,bash,fish", "--quiet"]);
+        assert!(fs::read_to_string(&kitty).unwrap().contains("include "));
+        assert!(fs::read_to_string(&bashrc).unwrap().contains("PROMPT_COMMAND"));
+        assert!(fs::read_to_string(&fish).unwrap().contains("fish_prompt"));
+    }
+
+    run(&["uninstall", "--quiet"]);
+    assert!(!fs::read_to_string(&wezterm).unwrap().contains("kiseki"));
+    assert!(!fs::read_to_string(&alacritty).unwrap().contains("kiseki"));
+    if cfg!(not(windows)) {
+        assert!(!fs::read_to_string(&kitty).unwrap().contains("kiseki"));
+        assert!(!fs::read_to_string(&bashrc).unwrap().contains("kiseki"));
+        assert!(!fs::read_to_string(&fish).unwrap().contains("kiseki"));
+    }
+}
+
+#[test]
+fn tier2_opt_in_adapters_only_write_host_dropins_when_explicitly_selected() {
+    let sandbox = Sandbox::new();
+    let nvim = sandbox.path("host/nvim/colors/kiseki.lua");
+    let helix = sandbox.path("host/helix/themes/kiseki.toml");
+    let bat = sandbox.path("host/bat/themes/Kiseki.tmTheme");
+    let zellij = sandbox.path("host/zellij/themes/kiseki.kdl");
+    let opencode = sandbox.path("host/opencode/themes/kiseki.json");
+    let btop = sandbox.path("host/btop/themes/kiseki.theme");
+
+    let run = |args: &[&str]| {
+        let mut cmd = sandbox.command();
+        cmd.env("KISEKI_NVIM_COLORS_FILE", &nvim)
+            .env("KISEKI_HELIX_THEME_FILE", &helix)
+            .env("KISEKI_BAT_THEME_FILE", &bat)
+            .env("KISEKI_ZELLIJ_THEME_FILE", &zellij)
+            .env("KISEKI_OPENCODE_THEME_FILE", &opencode)
+            .env("KISEKI_BTOP_THEME_FILE", &btop)
+            .args(args);
+        let output = cmd.output().expect("run kiseki");
+        assert!(
+            output.status.success(),
+            "kiseki {args:?} failed:\nstdout={}\nstderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+
+    // Default `use` must NOT touch Tier 2 host directories, while still emitting `generated/*`.
+    run(&["use", "nerv-eva", "--quiet"]);
+    assert!(sandbox.kiseki_home().join("generated/nvim/kiseki.lua").is_file());
+    assert!(sandbox.kiseki_home().join("generated/bat/Kiseki.tmTheme").is_file());
+    assert!(!nvim.exists());
+    assert!(!helix.exists());
+    assert!(!bat.exists());
+
+    // Explicit opt-in via `--only` writes every selected Tier 2 drop-in cleanly.
+    run(&[
+        "use",
+        "nerv-eva",
+        "--only",
+        "neovim,helix,bat,zellij,opencode,btop",
+        "--quiet",
+    ]);
+    assert!(nvim.is_file());
+    assert!(helix.is_file());
+    assert!(bat.is_file());
+    assert!(zellij.is_file());
+    assert!(opencode.is_file());
+    assert!(btop.is_file());
+
+    // Uninstall removes all Kiseki-owned Tier 2 drop-in files.
+    run(&["uninstall", "--quiet"]);
+    assert!(!nvim.exists());
+    assert!(!helix.exists());
+    assert!(!bat.exists());
+    assert!(!zellij.exists());
+    assert!(!opencode.exists());
+    assert!(!btop.exists());
+}
+
+#[test]
+fn gallery_search_info_install_archive_and_update_end_to_end() {
+    let sandbox = Sandbox::new();
+    let pack_src = sandbox.path("src/neon-harbor");
+    let out = sandbox
+        .command()
+        .args([
+            "theme",
+            "init",
+            "neon-harbor",
+            "--dir",
+            pack_src.to_str().unwrap(),
+            "--with-shader",
+            "--json",
+        ])
+        .output()
+        .expect("init starter pack");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+
+    // 1. Pack v1.0.0 & install directly from local `.kiseki.tar.gz` archive.
+    let manifest_path = pack_src.join("manifest.json");
+    let raw_manifest = std::fs::read_to_string(&manifest_path).unwrap();
+    std::fs::write(&manifest_path, raw_manifest.replace("\"0.1.0\"", "\"1.0.0\"")).unwrap();
+    let tar_v1 = kiseki_gallery::pack_dir_tar_gz(&pack_src, Some("neon-harbor-v1")).unwrap();
+    let sha_v1 = kiseki_gallery::sha256_hex(&tar_v1);
+    let archive_v1 = sandbox.path("dist/neon-harbor-1.0.0.kiseki.tar.gz");
+    std::fs::create_dir_all(archive_v1.parent().unwrap()).unwrap();
+    std::fs::write(&archive_v1, &tar_v1).unwrap();
+
+    let out = sandbox
+        .command()
+        .args(["theme", "install", archive_v1.to_str().unwrap(), "--json"])
+        .output()
+        .expect("install archive");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let installed_json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(installed_json["id"], "neon-harbor");
+    assert_eq!(installed_json["source"], "archive");
+
+    // Remove so we can test installing from Gallery index cleanly.
+    let out = sandbox
+        .command()
+        .args(["theme", "remove", "neon-harbor", "--quiet"])
+        .output()
+        .expect("remove");
+    assert!(out.status.success());
+
+    // 2. Write a local Gallery index pointing at v1.0.0 archive.
+    let index_path = sandbox.path("gallery/index.json");
+    std::fs::create_dir_all(index_path.parent().unwrap()).unwrap();
+    let write_index = |version: &str, commit: &str, archive: &std::path::Path, sha: &str| {
+        let doc = serde_json::json!({
+            "schemaVersion": 1,
+            "generatedAt": "2026-11-28T10:00:00Z",
+            "themes": [{
+                "id": "neon-harbor",
+                "name": "Neon Harbor",
+                "subtitle": "Harbor glow community theme",
+                "version": version,
+                "appearance": "dark",
+                "tags": ["dark", "live-shader"],
+                "authors": [{ "name": "Alice" }],
+                "license": "MIT",
+                "repo": "alice/neon-harbor",
+                "subpath": ".",
+                "commit": commit,
+                "createdAt": "2026-11-20T00:00:00Z",
+                "updatedAt": "2026-11-28T00:00:00Z",
+                "capabilities": {
+                    "hasWallpaper": false,
+                    "hasShader": true,
+                    "shaderProfiles": ["eco", "balanced", "ultra"],
+                    "wcagGrade": "AA"
+                },
+                "metrics": {
+                    "stars": 88,
+                    "stars7d": 12,
+                    "downloads": 310,
+                    "downloads30d": 200,
+                    "trendingScore": 4.2
+                },
+                "download": {
+                    "url": format!("file://{}", archive.display()),
+                    "sha256": sha,
+                    "bytes": 2048
+                },
+                "preview": {
+                    "palette": {
+                        "base": "#131722",
+                        "surface0": "#1D2333",
+                        "textPrimary": "#E9EEF8",
+                        "accentPrimary": "#74C7EC",
+                        "accentSecondary": "#F5A9B8",
+                        "keyword": "#CBA6F7",
+                        "string": "#A6E3A1",
+                        "function": "#89B4FA"
+                    }
+                }
+            }]
+        });
+        std::fs::write(&index_path, serde_json::to_vec_pretty(&doc).unwrap()).unwrap();
+    };
+    write_index("1.0.0", "1111aaaa", &archive_v1, &sha_v1);
+    let gallery_src = format!("file://{}", index_path.display());
+
+    // Search + info.
+    let out = sandbox
+        .command()
+        .env("KISEKI_GALLERY_SOURCE", &gallery_src)
+        .args(["gallery", "search", "harbor", "--sort", "stars", "--shader", "--json"])
+        .output()
+        .expect("gallery search");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let search_json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(search_json["count"], 1);
+    assert_eq!(search_json["themes"][0]["id"], "neon-harbor");
+
+    let out = sandbox
+        .command()
+        .env("KISEKI_GALLERY_SOURCE", &gallery_src)
+        .args(["gallery", "info", "neon-harbor", "--json"])
+        .output()
+        .expect("gallery info");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let info_json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(info_json["theme"]["version"], "1.0.0");
+
+    // Install by flat short ID and activate.
+    let out = sandbox
+        .command()
+        .env("KISEKI_GALLERY_SOURCE", &gallery_src)
+        .args(["theme", "install", "neon-harbor", "--json"])
+        .output()
+        .expect("install from gallery");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let install_json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(install_json["source"], "gallery");
+    assert_eq!(install_json["origin"]["commit"], "1111aaaa");
+
+    let out = sandbox
+        .command()
+        .args(["use", "neon-harbor", "--quiet"])
+        .output()
+        .expect("use gallery theme");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+
+    // 3. Publish v1.1.0 in index and run `kiseki theme update`.
+    std::fs::write(&manifest_path, raw_manifest.replace("\"0.1.0\"", "\"1.1.0\"")).unwrap();
+    let tar_v2 = kiseki_gallery::pack_dir_tar_gz(&pack_src, Some("neon-harbor-v2")).unwrap();
+    let sha_v2 = kiseki_gallery::sha256_hex(&tar_v2);
+    let archive_v2 = sandbox.path("dist/neon-harbor-1.1.0.kiseki.tar.gz");
+    std::fs::write(&archive_v2, &tar_v2).unwrap();
+    write_index("1.1.0", "2222bbbb", &archive_v2, &sha_v2);
+
+    let out = sandbox
+        .command()
+        .env("KISEKI_GALLERY_SOURCE", &gallery_src)
+        .args(["theme", "update", "--all", "--json"])
+        .output()
+        .expect("theme update");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let update_json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(update_json["updates"][0]["status"], "updated");
+    assert_eq!(update_json["updates"][0]["fromVersion"], "1.0.0");
+    assert_eq!(update_json["updates"][0]["toVersion"], "1.1.0");
 }

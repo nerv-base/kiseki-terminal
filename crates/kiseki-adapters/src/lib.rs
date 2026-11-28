@@ -5,11 +5,17 @@
 //! journaling, snapshotting, locking and rollback all live in `kiseki-tx`, so
 //! every adapter inherits the same safety guarantees.
 
+pub mod alacritty;
+pub mod apple_terminal;
 pub mod fastfetch;
 pub mod ghostty;
+pub mod iterm2;
+pub mod kitty;
 pub mod prompt;
 pub mod registry;
 pub mod shell;
+pub mod tier2;
+pub mod wezterm;
 pub mod windows_terminal;
 
 use std::path::PathBuf;
@@ -19,11 +25,20 @@ use kiseki_platform::{PathKind, Platform};
 use kiseki_schema::ResolvedTheme;
 use kiseki_types::{CapabilityFlags, Diagnostic, DiagnosticReport, EnvContext, PromptPolicy, Result};
 
+pub use alacritty::AlacrittyAdapter;
+pub use apple_terminal::AppleTerminalAdapter;
 pub use fastfetch::FastfetchAdapter;
 pub use ghostty::GhosttyAdapter;
+pub use iterm2::ITerm2Adapter;
+pub use kitty::KittyAdapter;
 pub use prompt::PromptAdapter;
 pub use registry::AdapterRegistry;
-pub use shell::{PowerShellAdapter, ZshAdapter};
+pub use shell::{BashAdapter, FishAdapter, PowerShellAdapter, ZshAdapter};
+pub use tier2::{
+    BatAdapter, BtopAdapter, DeltaAdapter, HelixAdapter, LazygitAdapter, NeovimAdapter,
+    OpenCodeAdapter, TmuxAdapter, VimAdapter, ZellijAdapter,
+};
+pub use wezterm::WezTermAdapter;
 pub use windows_terminal::{
     capture_baseline, detect_profile_conflicts, patch_settings, restore_settings, ProfileConflict, WtBaseline,
     WindowsTerminalAdapter,
@@ -162,6 +177,33 @@ pub enum FileOperation {
     },
     /// Restore the values captured the first time we took over the file.
     RestoreWindowsTerminal { target: PathBuf, baseline: PathBuf },
+    /// Write a Kiseki-owned drop-in file inside a host application directory
+    /// (for example iTerm2 DynamicProfiles or Helix/Zellij/bat/btop themes).
+    WriteHostFile { target: PathBuf, content: String },
+    /// Remove a Kiseki-owned drop-in file during `uninstall`.
+    RemoveHostFile { target: PathBuf },
+    /// Safely inject or update a `pcall(dofile, ...)` anchor before `return <ident>`
+    /// in `wezterm.lua` (degrades to `RenderOnly` when structure is non-standard).
+    PatchWezTermLua {
+        target: PathBuf,
+        begin: String,
+        end: String,
+        generated_path: PathBuf,
+    },
+    /// Safely inject or update `general.import` in `alacritty.toml`.
+    PatchAlacrittyToml {
+        target: PathBuf,
+        begin: String,
+        end: String,
+        generated_path: PathBuf,
+    },
+    /// Remove Kiseki's `general.import` entry from `alacritty.toml`.
+    UnhookAlacrittyToml {
+        target: PathBuf,
+        begin: String,
+        end: String,
+        generated_path: PathBuf,
+    },
 }
 
 impl FileOperation {
@@ -178,6 +220,11 @@ impl FileOperation {
             Self::RemoveMarkerBlock { target, .. } => format!("unanchor:{}", target.display()),
             Self::PatchWindowsTerminal { target, .. } => format!("jsonc-patch:{}", target.display()),
             Self::RestoreWindowsTerminal { target, .. } => format!("jsonc-restore:{}", target.display()),
+            Self::WriteHostFile { target, .. } => format!("dropin:{}", target.display()),
+            Self::RemoveHostFile { target } => format!("remove-dropin:{}", target.display()),
+            Self::PatchWezTermLua { target, .. } => format!("wezterm-patch:{}", target.display()),
+            Self::PatchAlacrittyToml { target, .. } => format!("alacritty-patch:{}", target.display()),
+            Self::UnhookAlacrittyToml { target, .. } => format!("alacritty-unhook:{}", target.display()),
         }
     }
 }

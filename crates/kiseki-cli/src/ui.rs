@@ -4,10 +4,14 @@
 //! use standard Unicode characters with graceful degradation under `NO_COLOR`,
 //! `TERM=dumb`, `--quiet`, or non-TTY stdout.
 
+use std::collections::BTreeSet;
 use std::io::IsTerminal;
 
 use kiseki_adapters::DetectionReport;
 use kiseki_compiler::ArtifactMap;
+use kiseki_gallery::{
+    GalleryPalettePreview, GallerySort, GalleryTheme, GalleryThemeUpdateNotes, UpdateOutcome,
+};
 use kiseki_pkg::{MigrationPlan, MigrationReport, ThemeEntry, ThemeSource, ThemeValidation};
 use kiseki_platform::{
     deps::{Summary, ToolProbe, ToolStatus},
@@ -1014,6 +1018,231 @@ impl Ui {
             println!("{text}");
         }
     }
+
+    // ------------------------------------------------------------- gallery
+    pub fn gallery_list(
+        &self,
+        themes: &[&GalleryTheme],
+        sort: GallerySort,
+        installed: &BTreeSet<String>,
+        from_cache: bool,
+        stale: bool,
+    ) {
+        if self.quiet {
+            return;
+        }
+        let cache_note = if stale {
+            " · 离线缓存"
+        } else if from_cache {
+            " · 已缓存"
+        } else {
+            ""
+        };
+        self.header(&format!(
+            "Kiseki Gallery 社区市场 · {} 套 · 排序: {}{}",
+            themes.len(),
+            sort.as_str(),
+            cache_note
+        ));
+        if themes.is_empty() {
+            self.info("未找到匹配的社区主题");
+            return;
+        }
+        for theme in themes {
+            let swatch = swatch_from_gallery_palette(&theme.preview.palette);
+            let strip = if self.color {
+                format!(
+                    "{}{}{} ",
+                    self.paint_rgb(swatch.accent, "█", false),
+                    self.paint_rgb(swatch.secondary, "█", false),
+                    self.paint_rgb(swatch.star, "█", false),
+                )
+            } else {
+                String::new()
+            };
+            let status_mark = if installed.contains(&theme.id) {
+                self.green("✓")
+            } else {
+                self.dim("+")
+            };
+            let mut caps = Vec::new();
+            if theme.capabilities.has_wallpaper {
+                caps.push("壁纸");
+            }
+            if theme.capabilities.has_shader {
+                caps.push("Shader");
+            }
+            if !theme.capabilities.wcag_grade.is_empty() {
+                caps.push(theme.capabilities.wcag_grade.as_str());
+            }
+            let cap_str = if caps.is_empty() {
+                String::new()
+            } else {
+                format!(" [{}]", caps.join("/"))
+            };
+            println!(
+                "  {status_mark} {strip}{:<20} {:<20} ★{:<5} ↓{:<6} {}",
+                self.accent(&theme.id),
+                theme.name,
+                theme.metrics.stars,
+                theme.metrics.downloads,
+                self.dim(&format!("v{}{cap_str}", theme.version))
+            );
+            if !theme.subtitle.is_empty() {
+                println!("      {}", self.dim(&theme.subtitle));
+            }
+        }
+        println!();
+        self.info("安装主题：kiseki theme install <id> && kiseki use <id>");
+    }
+
+    pub fn gallery_info(
+        &self,
+        theme: &GalleryTheme,
+        updates: Option<&GalleryThemeUpdateNotes>,
+        installed: bool,
+    ) {
+        if self.quiet {
+            return;
+        }
+        self.header(&format!("{} ({})", theme.name, theme.id));
+        self.kv("版本", &format!("v{}", theme.version));
+        self.kv("明暗属性", appearance_label(theme.appearance));
+        if !theme.subtitle.is_empty() {
+            self.kv("简介", &theme.subtitle);
+        }
+        if !theme.authors.is_empty() {
+            let names: Vec<&str> = theme.authors.iter().map(|a| a.name.as_str()).collect();
+            self.kv("作者", &names.join(", "));
+        }
+        self.kv("仓库", &format!("https://github.com/{}", theme.repo));
+        self.kv("许可证", &theme.license);
+        self.kv(
+            "热度指标",
+            &format!(
+                "★ {} (+{} / 7d) · ↓ {} (+{} / 30d)",
+                theme.metrics.stars,
+                theme.metrics.stars7d,
+                theme.metrics.downloads,
+                theme.metrics.downloads30d
+            ),
+        );
+        self.kv(
+            "能力披露",
+            &format!(
+                "壁纸: {} · Shader: {} · WCAG: {}",
+                if theme.capabilities.has_wallpaper {
+                    "是"
+                } else {
+                    "否"
+                },
+                if theme.capabilities.has_shader {
+                    theme.capabilities.shader_profiles.join("/")
+                } else {
+                    "无".to_string()
+                },
+                if theme.capabilities.wcag_grade.is_empty() {
+                    "-"
+                } else {
+                    &theme.capabilities.wcag_grade
+                }
+            ),
+        );
+        self.kv(
+            "本机状态",
+            if installed { "已安装" } else { "未安装" },
+        );
+        if let Some(notes) = updates {
+            if let Some(text) = notes.release_notes.as_deref().filter(|s| !s.is_empty()) {
+                self.header("最近更新说明");
+                for line in text.lines().take(8) {
+                    self.bullet(line);
+                }
+            }
+        }
+        println!();
+        self.info(&format!(
+            "安装命令：kiseki theme install {} && kiseki use {}",
+            theme.id, theme.id
+        ));
+    }
+
+    pub fn theme_updates(&self, outcomes: &[UpdateOutcome], dry_run: bool) {
+        if self.quiet {
+            return;
+        }
+        let title = if dry_run {
+            "社区主题更新检查（dry-run）"
+        } else {
+            "社区主题更新结果"
+        };
+        self.header(title);
+        if outcomes.is_empty() {
+            self.info("尚无通过 Kiseki Gallery 安装的社区主题");
+            return;
+        }
+        for outcome in outcomes {
+            let from = outcome.from_version.as_deref().unwrap_or("-");
+            let to = outcome.to_version.as_deref().unwrap_or("-");
+            let badge = match outcome.status.as_str() {
+                "updated" => self.green("✓ 已更新"),
+                "available" => self.cyan("↑ 可更新"),
+                "up-to-date" => self.dim("· 已最新"),
+                _ => self.yellow("~ 已跳过"),
+            };
+            let note = outcome
+                .note
+                .as_deref()
+                .map(|n| format!(" ({n})"))
+                .unwrap_or_default();
+            println!(
+                "  {badge}  {:<20} {from} → {to}{}",
+                outcome.id,
+                self.dim(&note)
+            );
+        }
+    }
+}
+
+pub fn swatch_from_gallery_palette(palette: &GalleryPalettePreview) -> ThemeSwatch {
+    let mut swatch = ThemeSwatch::default();
+    if let Some(rgb) = parse_hex_rgb(&palette.base) {
+        swatch.bg = rgb;
+    }
+    if let Some(rgb) = parse_hex_rgb(&palette.surface0) {
+        swatch.surface = rgb;
+    }
+    if let Some(rgb) = parse_hex_rgb(&palette.text_primary) {
+        swatch.fg = rgb;
+    }
+    if let Some(rgb) = parse_hex_rgb(&palette.accent_primary) {
+        swatch.accent = rgb;
+        swatch.border = rgb;
+    }
+    if let Some(rgb) = parse_hex_rgb(&palette.accent_secondary) {
+        swatch.secondary = rgb;
+    }
+    if let Some(rgb) = parse_hex_rgb(&palette.keyword) {
+        swatch.tertiary = rgb;
+    }
+    if let Some(rgb) = parse_hex_rgb(&palette.string) {
+        swatch.dot_green = rgb;
+    }
+    if let Some(rgb) = parse_hex_rgb(&palette.function) {
+        swatch.star = rgb;
+    }
+    swatch
+}
+
+fn parse_hex_rgb(raw: &str) -> Option<(u8, u8, u8)> {
+    let hex = raw.trim().strip_prefix('#')?;
+    if hex.len() != 6 {
+        return None;
+    }
+    let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+    let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+    let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+    Some((r, g, b))
 }
 
 /// Converts a resolved Kiseki theme into a compact TUI/CLI [`ThemeSwatch`].

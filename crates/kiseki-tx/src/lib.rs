@@ -562,7 +562,10 @@ impl<'a> TransactionManager<'a> {
             .detect_all(request.env, self.platform, plan_options)
         {
             if let Ok(detection) = result {
-                if detection.installed || detection.config_path.is_some() {
+                if detection.installed
+                    || detection.config_path.is_some()
+                    || plan_options.explicit_only
+                {
                     detections.insert(id, detection);
                 }
             }
@@ -753,6 +756,106 @@ impl<'a> TransactionManager<'a> {
                     self.platform.remove_file(baseline)?;
                 }
                 Ok(outcome)
+            }
+            FileOperation::WriteHostFile { target, content } => {
+                if let Ok(Some(existing)) = self.platform.read_to_string(target) {
+                    if existing == *content {
+                        return self.unchanged_host(target);
+                    }
+                }
+                self.write_host(target, content.as_bytes(), durability)
+            }
+            FileOperation::RemoveHostFile { target } => {
+                if !self.platform.exists(target) {
+                    return Ok(HostApply::Skipped(format!(
+                        "{} does not exist",
+                        target.display()
+                    )));
+                }
+                match self.platform.inspect(target) {
+                    PathKind::ReadOnlyFile | PathKind::ReadOnlySymlink(_) => {
+                        return Ok(HostApply::RenderOnly(format!(
+                            "{} is read-only; could not remove",
+                            target.display()
+                        )));
+                    }
+                    _ => {}
+                }
+                self.platform.remove_file(target)?;
+                Ok(HostApply::Applied(format!("removed {}", target.display())))
+            }
+            FileOperation::PatchWezTermLua {
+                target,
+                begin,
+                end,
+                generated_path,
+            } => {
+                let original = self.platform.read_to_string(target)?.unwrap_or_default();
+                match kiseki_compiler::wezterm::patch_wezterm_lua(
+                    &original,
+                    begin,
+                    end,
+                    generated_path,
+                ) {
+                    Ok(updated) => {
+                        if updated == original && self.platform.exists(target) {
+                            return self.unchanged_host(target);
+                        }
+                        self.write_host(target, updated.as_bytes(), durability)
+                    }
+                    Err(hint) => Ok(HostApply::RenderOnly(format!(
+                        "{} uses a custom Lua return layout; add manually: {hint}",
+                        target.display()
+                    ))),
+                }
+            }
+            FileOperation::PatchAlacrittyToml {
+                target,
+                begin,
+                end,
+                generated_path,
+            } => {
+                let original = self.platform.read_to_string(target)?.unwrap_or_default();
+                match kiseki_compiler::alacritty::patch_alacritty_toml(
+                    &original,
+                    begin,
+                    end,
+                    generated_path,
+                ) {
+                    Ok(updated) => {
+                        if updated == original && self.platform.exists(target) {
+                            return self.unchanged_host(target);
+                        }
+                        self.write_host(target, updated.as_bytes(), durability)
+                    }
+                    Err(hint) => Ok(HostApply::RenderOnly(format!(
+                        "{} uses a custom TOML layout; add manually:\n{hint}",
+                        target.display()
+                    ))),
+                }
+            }
+            FileOperation::UnhookAlacrittyToml {
+                target,
+                begin,
+                end,
+                generated_path,
+            } => {
+                let Some(original) = self.platform.read_to_string(target)? else {
+                    return Ok(HostApply::Skipped(format!(
+                        "{} does not exist",
+                        target.display()
+                    )));
+                };
+                let updated = kiseki_compiler::alacritty::unhook_alacritty_toml(
+                    &original,
+                    begin,
+                    end,
+                    generated_path,
+                );
+                if updated == original {
+                    return self.unchanged_host(target);
+                }
+                self.write_host(target, updated.as_bytes(), durability)
             }
         }
     }
@@ -1114,7 +1217,12 @@ pub fn resolve_target(paths: &kiseki_platform::KisekiPaths, operation: &FileOper
         FileOperation::UpsertMarkerBlock { target, .. }
         | FileOperation::RemoveMarkerBlock { target, .. }
         | FileOperation::PatchWindowsTerminal { target, .. }
-        | FileOperation::RestoreWindowsTerminal { target, .. } => target.clone(),
+        | FileOperation::RestoreWindowsTerminal { target, .. }
+        | FileOperation::WriteHostFile { target, .. }
+        | FileOperation::RemoveHostFile { target }
+        | FileOperation::PatchWezTermLua { target, .. }
+        | FileOperation::PatchAlacrittyToml { target, .. }
+        | FileOperation::UnhookAlacrittyToml { target, .. } => target.clone(),
     }
 }
 
@@ -2307,9 +2415,20 @@ mod tests {
         );
         assert_eq!(batch_stats.full_writes, 0, "unchanged hosts must not fsync");
         assert_eq!(batch_stats.file_only_writes, 1, "only state.json uses FileOnly");
+        let distinct_artifact_dirs: std::collections::BTreeSet<&str> = nerv_output
+            .artifacts
+            .paths()
+            .into_iter()
+            .map(|path| path.rsplit_once('/').map_or("", |(dir, _)| dir))
+            .collect();
+        let max_dir_syncs = distinct_artifact_dirs.len() + 3;
         assert!(
-            batch_stats.dir_syncs <= 5,
-            "expected batched dir syncs <= 5, got {batch_stats:?}"
+            batch_stats.dir_syncs <= max_dir_syncs,
+            "expected batched dir syncs <= {max_dir_syncs} (one per generated dir + state/journal), got {batch_stats:?}"
+        );
+        assert!(
+            batch_stats.dir_syncs < full_stats.full_writes / 2,
+            "batch durability must substantially reduce syncs: batch={batch_stats:?}, full={full_stats:?}"
         );
 
         // Steady-state switch under Durability::None issues zero fsyncs.

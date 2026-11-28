@@ -15,6 +15,41 @@ pub struct AdapterRegistry {
 }
 
 impl AdapterRegistry {
+    /// Registers every built-in Tier 1 and Tier 2 adapter (RFC-0003 §4).
+    pub fn standard() -> Self {
+        Self {
+            adapters: vec![
+                // Tier 1 Terminals
+                Box::new(crate::GhosttyAdapter),
+                Box::new(crate::WindowsTerminalAdapter),
+                Box::new(crate::KittyAdapter),
+                Box::new(crate::WezTermAdapter),
+                Box::new(crate::ITerm2Adapter),
+                Box::new(crate::AlacrittyAdapter),
+                Box::new(crate::AppleTerminalAdapter),
+                // Tier 1 Shells
+                Box::new(crate::ZshAdapter),
+                Box::new(crate::BashAdapter),
+                Box::new(crate::FishAdapter),
+                Box::new(crate::PowerShellAdapter),
+                // Tier 1 Prompt & System Card
+                Box::new(crate::PromptAdapter),
+                Box::new(crate::FastfetchAdapter),
+                // Tier 2 Opt-In Ecosystem Tools
+                Box::new(crate::NeovimAdapter),
+                Box::new(crate::VimAdapter),
+                Box::new(crate::HelixAdapter),
+                Box::new(crate::TmuxAdapter),
+                Box::new(crate::ZellijAdapter),
+                Box::new(crate::OpenCodeAdapter),
+                Box::new(crate::BatAdapter),
+                Box::new(crate::DeltaAdapter),
+                Box::new(crate::LazygitAdapter),
+                Box::new(crate::BtopAdapter),
+            ],
+        }
+    }
+
     /// Registers the Milestone 1 vertical slice:
     /// Ghostty + Windows Terminal + Zsh + PowerShell + Prompt + Fastfetch.
     pub fn milestone1() -> Self {
@@ -67,7 +102,7 @@ impl AdapterRegistry {
 
 impl Default for AdapterRegistry {
     fn default() -> Self {
-        Self::milestone1()
+        Self::standard()
     }
 }
 

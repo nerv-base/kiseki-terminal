@@ -1,4 +1,5 @@
-//! Interactive Ratatui theme picker, one-Enter init wizard, and Kiseki 8-bit logo.
+//! Interactive Ratatui theme picker (with optional Gallery tab), one-Enter
+//! init wizard, and Kiseki 8-bit logo.
 //!
 //! Zero Nerd Font dependency: all borders, swatches and logos use standard
 //! Unicode box-drawing / half-block characters with an automatic pure-ASCII
@@ -24,7 +25,45 @@ pub fn enable_ansi_support() {
     }
 }
 
-/// One row in the theme picker or init wizard.
+/// Active tab in the interactive picker.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum PickerTab {
+    #[default]
+    Local,
+    Gallery,
+}
+
+/// Sort mode inside the Gallery tab.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum GallerySortMode {
+    #[default]
+    Trending,
+    Downloads,
+    Stars,
+    Updated,
+}
+
+impl GallerySortMode {
+    pub const fn next(self) -> Self {
+        match self {
+            Self::Trending => Self::Downloads,
+            Self::Downloads => Self::Stars,
+            Self::Stars => Self::Updated,
+            Self::Updated => Self::Trending,
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Trending => "热门",
+            Self::Downloads => "下载",
+            Self::Stars => "Star",
+            Self::Updated => "最新",
+        }
+    }
+}
+
+/// One row in the local theme picker or init wizard.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PickerItem {
     /// Theme identifier (`nerv-eva`).
@@ -81,11 +120,45 @@ impl PickerItem {
     }
 }
 
+/// One community theme entry shown inside the TUI `Gallery` tab.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GalleryPickerItem {
+    pub id: String,
+    pub name: String,
+    pub subtitle: String,
+    pub appearance: Appearance,
+    pub version: String,
+    pub author: String,
+    pub repo: String,
+    pub stars: u64,
+    pub downloads: u64,
+    /// `trendingScore * 1000` rounded to integer for deterministic `Ord`/`Eq`.
+    pub trending_milli: u64,
+    pub updated_at: String,
+    pub has_wallpaper: bool,
+    pub has_shader: bool,
+    pub wcag_grade: String,
+    pub installed: bool,
+    pub swatch: ThemeSwatch,
+}
+
+/// Background load state for the TUI `Gallery` tab.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum GalleryLoadState {
+    #[default]
+    Idle,
+    Loading,
+    Ready(Vec<GalleryPickerItem>),
+    Failed(String),
+}
+
 /// What the picker is asking the CLI to do.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PickerAction {
-    /// Commit the theme (Enter).
+    /// Commit a locally available theme (Enter in Local tab).
     Select(String),
+    /// Install (if needed) and activate a community theme (Enter in Gallery tab).
+    InstallGallery(String),
     /// Live-preview the theme without persisting (Space / cursor move).
     Preview(String),
     /// Exit without changing anything (Esc / q / Ctrl+C).
@@ -105,6 +178,8 @@ pub enum PickerInput {
     Space,
     Cancel,
     Backspace,
+    SwitchTab,
+    CycleSort,
     Char(char),
 }
 
@@ -115,6 +190,11 @@ pub struct PickerSession {
     cursor: usize,
     query: String,
     action: PickerAction,
+    tab: PickerTab,
+    gallery_enabled: bool,
+    gallery_state: GalleryLoadState,
+    gallery_cursor: usize,
+    gallery_sort: GallerySortMode,
 }
 
 impl PickerSession {
@@ -128,7 +208,17 @@ impl PickerSession {
             cursor,
             query: String::new(),
             action: PickerAction::None,
+            tab: PickerTab::Local,
+            gallery_enabled: false,
+            gallery_state: GalleryLoadState::Idle,
+            gallery_cursor: 0,
+            gallery_sort: GallerySortMode::Trending,
         }
+    }
+
+    pub fn with_gallery_enabled(mut self, enabled: bool) -> Self {
+        self.gallery_enabled = enabled;
+        self
     }
 
     pub fn items(&self) -> &[PickerItem] {
@@ -137,6 +227,31 @@ impl PickerSession {
 
     pub fn cursor(&self) -> usize {
         self.cursor
+    }
+
+    pub fn tab(&self) -> PickerTab {
+        self.tab
+    }
+
+    pub fn gallery_enabled(&self) -> bool {
+        self.gallery_enabled
+    }
+
+    pub fn gallery_state(&self) -> &GalleryLoadState {
+        &self.gallery_state
+    }
+
+    pub fn gallery_cursor(&self) -> usize {
+        self.gallery_cursor
+    }
+
+    pub fn gallery_sort(&self) -> GallerySortMode {
+        self.gallery_sort
+    }
+
+    pub fn set_gallery_state(&mut self, state: GalleryLoadState) {
+        self.gallery_state = state;
+        self.gallery_cursor = self.visible_gallery_indices().first().copied().unwrap_or(0);
     }
 
     pub fn query(&self) -> &str {
@@ -151,12 +266,32 @@ impl PickerSession {
         std::mem::replace(&mut self.action, PickerAction::None)
     }
 
-    /// The item under the cursor.
+    /// The local item under the cursor.
     pub fn current(&self) -> Option<&PickerItem> {
         self.items.get(self.cursor)
     }
 
-    /// Indices currently visible under the search query.
+    /// The gallery item under the cursor when Gallery items are loaded.
+    pub fn current_gallery(&self) -> Option<&GalleryPickerItem> {
+        match &self.gallery_state {
+            GalleryLoadState::Ready(list) => list.get(self.gallery_cursor),
+            _ => None,
+        }
+    }
+
+    /// Active swatch across either tab.
+    pub fn active_swatch(&self) -> ThemeSwatch {
+        match self.tab {
+            PickerTab::Local => self.current().map(|i| i.swatch).unwrap_or_default(),
+            PickerTab::Gallery => self
+                .current_gallery()
+                .map(|i| i.swatch)
+                .or_else(|| self.current().map(|i| i.swatch))
+                .unwrap_or_default(),
+        }
+    }
+
+    /// Indices currently visible in the Local tab under the search query.
     pub fn visible_indices(&self) -> Vec<usize> {
         if self.query.is_empty() {
             return (0..self.items.len()).collect();
@@ -177,49 +312,146 @@ impl PickerSession {
             .collect()
     }
 
-    pub fn move_up(&mut self) {
-        let visible = self.visible_indices();
-        if visible.is_empty() {
-            return;
-        }
-        let position = visible
-            .iter()
-            .position(|index| *index == self.cursor)
-            .unwrap_or(0);
-        let next = if position == 0 {
-            visible.len() - 1
-        } else {
-            position - 1
+    /// Sorted + filtered indices in the Gallery tab.
+    pub fn visible_gallery_indices(&self) -> Vec<usize> {
+        let GalleryLoadState::Ready(list) = &self.gallery_state else {
+            return Vec::new();
         };
-        self.cursor = visible[next];
-        self.emit_preview();
+        let needle = self.query.trim().to_ascii_lowercase();
+        let mut indices: Vec<usize> = list
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| {
+                needle.is_empty()
+                    || item.id.to_ascii_lowercase().contains(&needle)
+                    || item.name.to_ascii_lowercase().contains(&needle)
+                    || item.subtitle.to_ascii_lowercase().contains(&needle)
+                    || item.author.to_ascii_lowercase().contains(&needle)
+                    || item.repo.to_ascii_lowercase().contains(&needle)
+            })
+            .map(|(idx, _)| idx)
+            .collect();
+
+        indices.sort_by(|&a, &b| {
+            let lhs = &list[a];
+            let rhs = &list[b];
+            let ord = match self.gallery_sort {
+                GallerySortMode::Trending => rhs
+                    .trending_milli
+                    .cmp(&lhs.trending_milli)
+                    .then_with(|| rhs.downloads.cmp(&lhs.downloads))
+                    .then_with(|| rhs.stars.cmp(&lhs.stars)),
+                GallerySortMode::Downloads => rhs.downloads.cmp(&lhs.downloads),
+                GallerySortMode::Stars => rhs.stars.cmp(&lhs.stars),
+                GallerySortMode::Updated => rhs.updated_at.cmp(&lhs.updated_at),
+            };
+            ord.then_with(|| lhs.id.cmp(&rhs.id))
+        });
+
+        indices
+    }
+
+    pub fn move_up(&mut self) {
+        match self.tab {
+            PickerTab::Local => {
+                let visible = self.visible_indices();
+                if visible.is_empty() {
+                    return;
+                }
+                let position = visible
+                    .iter()
+                    .position(|index| *index == self.cursor)
+                    .unwrap_or(0);
+                let next = if position == 0 {
+                    visible.len() - 1
+                } else {
+                    position - 1
+                };
+                self.cursor = visible[next];
+                self.emit_preview();
+            }
+            PickerTab::Gallery => {
+                let visible = self.visible_gallery_indices();
+                if visible.is_empty() {
+                    return;
+                }
+                let position = visible
+                    .iter()
+                    .position(|index| *index == self.gallery_cursor)
+                    .unwrap_or(0);
+                let next = if position == 0 {
+                    visible.len() - 1
+                } else {
+                    position - 1
+                };
+                self.gallery_cursor = visible[next];
+                self.action = PickerAction::None;
+            }
+        }
     }
 
     pub fn move_down(&mut self) {
-        let visible = self.visible_indices();
-        if visible.is_empty() {
-            return;
+        match self.tab {
+            PickerTab::Local => {
+                let visible = self.visible_indices();
+                if visible.is_empty() {
+                    return;
+                }
+                let position = visible
+                    .iter()
+                    .position(|index| *index == self.cursor)
+                    .unwrap_or(0);
+                let next = (position + 1) % visible.len();
+                self.cursor = visible[next];
+                self.emit_preview();
+            }
+            PickerTab::Gallery => {
+                let visible = self.visible_gallery_indices();
+                if visible.is_empty() {
+                    return;
+                }
+                let position = visible
+                    .iter()
+                    .position(|index| *index == self.gallery_cursor)
+                    .unwrap_or(0);
+                let next = (position + 1) % visible.len();
+                self.gallery_cursor = visible[next];
+                self.action = PickerAction::None;
+            }
         }
-        let position = visible
-            .iter()
-            .position(|index| *index == self.cursor)
-            .unwrap_or(0);
-        let next = (position + 1) % visible.len();
-        self.cursor = visible[next];
-        self.emit_preview();
     }
 
     pub fn move_home(&mut self) {
-        if let Some(first) = self.visible_indices().first().copied() {
-            self.cursor = first;
-            self.emit_preview();
+        match self.tab {
+            PickerTab::Local => {
+                if let Some(first) = self.visible_indices().first().copied() {
+                    self.cursor = first;
+                    self.emit_preview();
+                }
+            }
+            PickerTab::Gallery => {
+                if let Some(first) = self.visible_gallery_indices().first().copied() {
+                    self.gallery_cursor = first;
+                }
+                self.action = PickerAction::None;
+            }
         }
     }
 
     pub fn move_end(&mut self) {
-        if let Some(last) = self.visible_indices().last().copied() {
-            self.cursor = last;
-            self.emit_preview();
+        match self.tab {
+            PickerTab::Local => {
+                if let Some(last) = self.visible_indices().last().copied() {
+                    self.cursor = last;
+                    self.emit_preview();
+                }
+            }
+            PickerTab::Gallery => {
+                if let Some(last) = self.visible_gallery_indices().last().copied() {
+                    self.gallery_cursor = last;
+                }
+                self.action = PickerAction::None;
+            }
         }
     }
 
@@ -230,13 +462,26 @@ impl PickerSession {
     }
 
     pub fn preview(&mut self) -> PickerAction {
-        self.emit_preview();
+        if self.tab == PickerTab::Local {
+            self.emit_preview();
+        } else {
+            self.action = PickerAction::None;
+        }
         self.action.clone()
     }
 
     pub fn select(&mut self) -> PickerAction {
-        if let Some(item) = self.current() {
-            self.action = PickerAction::Select(item.id.clone());
+        match self.tab {
+            PickerTab::Local => {
+                if let Some(item) = self.current() {
+                    self.action = PickerAction::Select(item.id.clone());
+                }
+            }
+            PickerTab::Gallery => {
+                if let Some(item) = self.current_gallery() {
+                    self.action = PickerAction::InstallGallery(item.id.clone());
+                }
+            }
         }
         self.action.clone()
     }
@@ -256,6 +501,30 @@ impl PickerSession {
             PickerInput::Enter => return self.select(),
             PickerInput::Space => return self.preview(),
             PickerInput::Cancel => return self.cancel(),
+            PickerInput::SwitchTab => {
+                if self.gallery_enabled {
+                    self.tab = match self.tab {
+                        PickerTab::Local => PickerTab::Gallery,
+                        PickerTab::Gallery => PickerTab::Local,
+                    };
+                    if self.tab == PickerTab::Gallery {
+                        let vis = self.visible_gallery_indices();
+                        if !vis.contains(&self.gallery_cursor) {
+                            self.gallery_cursor = vis.first().copied().unwrap_or(0);
+                        }
+                    }
+                }
+                self.action = PickerAction::None;
+            }
+            PickerInput::CycleSort => {
+                if self.tab == PickerTab::Gallery {
+                    self.gallery_sort = self.gallery_sort.next();
+                    if let Some(first) = self.visible_gallery_indices().first().copied() {
+                        self.gallery_cursor = first;
+                    }
+                }
+                self.action = PickerAction::None;
+            }
             PickerInput::Backspace => {
                 self.query.pop();
                 self.action = PickerAction::None;
@@ -269,7 +538,7 @@ impl PickerSession {
     }
 }
 
-/// Runs the Ratatui interactive theme picker.
+/// Runs the Ratatui interactive theme picker (local tab only).
 ///
 /// Non-TTY callers get [`PickerAction::Cancel`] so scripts never block.
 pub fn run_picker(items: Vec<PickerItem>, active: Option<&str>) -> Result<PickerAction> {
@@ -277,7 +546,26 @@ pub fn run_picker(items: Vec<PickerItem>, active: Option<&str>) -> Result<Picker
     if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
         return Ok(PickerAction::Cancel);
     }
-    picker::run(&mut session).map(|_| session.action().clone())
+    picker::run(&mut session, None).map(|_| session.action().clone())
+}
+
+/// Runs the interactive theme picker with a lazy-loaded `Gallery` tab.
+///
+/// `loader` is only invoked if the user explicitly presses `Tab` to visit the
+/// Gallery tab, preserving zero-network startup on the Local tab.
+pub fn run_picker_with_gallery<F>(
+    items: Vec<PickerItem>,
+    active: Option<&str>,
+    loader: F,
+) -> Result<PickerAction>
+where
+    F: FnOnce() -> Result<Vec<GalleryPickerItem>> + Send + 'static,
+{
+    let mut session = PickerSession::new(items, active).with_gallery_enabled(true);
+    if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
+        return Ok(PickerAction::Cancel);
+    }
+    picker::run(&mut session, Some(Box::new(loader))).map(|_| session.action().clone())
 }
 
 /// Everything `init` detected before presenting the wizard.
@@ -359,6 +647,47 @@ mod tests {
         ]
     }
 
+    fn gallery_items() -> Vec<GalleryPickerItem> {
+        vec![
+            GalleryPickerItem {
+                id: "tokyo-midnight".into(),
+                name: "Tokyo Midnight".into(),
+                subtitle: "City pop indigo".into(),
+                appearance: Appearance::Dark,
+                version: "1.2.0".into(),
+                author: "Alice".into(),
+                repo: "alice/tokyo-midnight".into(),
+                stars: 180,
+                downloads: 420,
+                trending_milli: 4800,
+                updated_at: "2026-11-28T00:00:00Z".into(),
+                has_wallpaper: true,
+                has_shader: true,
+                wcag_grade: "AA".into(),
+                installed: false,
+                swatch: ThemeSwatch::default(),
+            },
+            GalleryPickerItem {
+                id: "snow-lotus".into(),
+                name: "Snow Lotus".into(),
+                subtitle: "Clean daylight".into(),
+                appearance: Appearance::Light,
+                version: "1.0.0".into(),
+                author: "Bob".into(),
+                repo: "bob/snow-lotus".into(),
+                stars: 450,
+                downloads: 120,
+                trending_milli: 3900,
+                updated_at: "2026-11-20T00:00:00Z".into(),
+                has_wallpaper: false,
+                has_shader: false,
+                wcag_grade: "AAA".into(),
+                installed: true,
+                swatch: ThemeSwatch::default(),
+            },
+        ]
+    }
+
     #[test]
     fn session_starts_on_the_active_theme() {
         let session = PickerSession::new(items(), Some("shinkai-rain"));
@@ -412,6 +741,29 @@ mod tests {
         assert_eq!(session.take_action(), PickerAction::None);
         let mut session = PickerSession::new(items(), None);
         assert_eq!(session.handle(PickerInput::Cancel), PickerAction::Cancel);
+    }
+
+    #[test]
+    fn gallery_tab_switches_sorts_and_emits_install_action() {
+        let mut session = PickerSession::new(items(), None).with_gallery_enabled(true);
+        assert_eq!(session.tab(), PickerTab::Local);
+        session.handle(PickerInput::SwitchTab);
+        assert_eq!(session.tab(), PickerTab::Gallery);
+
+        session.set_gallery_state(GalleryLoadState::Ready(gallery_items()));
+        assert_eq!(session.current_gallery().unwrap().id, "tokyo-midnight");
+
+        // Trending -> Downloads -> Stars (snow-lotus has more stars).
+        session.handle(PickerInput::CycleSort);
+        assert_eq!(session.gallery_sort(), GallerySortMode::Downloads);
+        session.handle(PickerInput::CycleSort);
+        assert_eq!(session.gallery_sort(), GallerySortMode::Stars);
+        assert_eq!(session.current_gallery().unwrap().id, "snow-lotus");
+
+        assert_eq!(
+            session.handle(PickerInput::Enter),
+            PickerAction::InstallGallery("snow-lotus".into())
+        );
     }
 
     #[test]

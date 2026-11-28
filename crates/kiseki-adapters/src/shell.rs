@@ -472,6 +472,414 @@ pub fn script_for(kind: ShellKind, config_dir: &std::path::Path, aliases: bool) 
     shell::init_script(kind, config_dir, aliases)
 }
 
+// ---------------------------------------------------------------------------
+// Bash
+// ---------------------------------------------------------------------------
+
+/// Bash shell adapter (RFC-0003 §4).
+pub struct BashAdapter;
+
+impl BashAdapter {
+    fn config_path(platform: &dyn Platform) -> Option<std::path::PathBuf> {
+        if let Some(explicit) = platform
+            .env_var("KISEKI_BASHRC")
+            .filter(|v| !v.trim().is_empty())
+        {
+            return Some(std::path::PathBuf::from(explicit));
+        }
+        if platform.os() == OsKind::Windows {
+            return None;
+        }
+        let home = platform.env_var("HOME").map(std::path::PathBuf::from)?;
+        let bashrc = home.join(".bashrc");
+        let bash_profile = home.join(".bash_profile");
+        if platform.exists(&bashrc) {
+            Some(bashrc)
+        } else if platform.os() == OsKind::MacOs && platform.exists(&bash_profile) {
+            Some(bash_profile)
+        } else {
+            Some(bashrc)
+        }
+    }
+}
+
+impl Adapter for BashAdapter {
+    fn id(&self) -> &'static str {
+        "bash"
+    }
+
+    fn display_name(&self) -> &'static str {
+        "Bash"
+    }
+
+    fn kind(&self) -> AdapterKind {
+        AdapterKind::Shell
+    }
+
+    fn tier(&self) -> IntegrationTier {
+        IntegrationTier::Tier1Managed
+    }
+
+    fn detect(&self, env: &EnvContext, platform: &dyn Platform) -> Result<DetectionReport> {
+        if platform.os() == OsKind::Windows {
+            return Ok(DetectionReport::not_installed("Bash adapter targets Unix/WSL"));
+        }
+        let config_path = Self::config_path(platform);
+        let path_kind = config_path
+            .as_deref()
+            .map(|path| platform.inspect(path))
+            .unwrap_or(PathKind::Missing);
+        let active = platform
+            .env_var("SHELL")
+            .is_some_and(|shell| shell.ends_with("/bash") || shell == "bash");
+        // On macOS `/bin/bash` always exists even for pure Zsh users; only treat
+        // Bash as installed when a `.bashrc`/`.bash_profile` exists or `$SHELL` is bash.
+        let installed = path_kind != PathKind::Missing || active;
+        let mut notes = Vec::new();
+        if path_kind == PathKind::Missing {
+            notes.push("no .bashrc found; generated env.bash is available for manual sourcing".to_string());
+        }
+        if env.is_ssh {
+            notes.push("SSH session: host config writes are suppressed".to_string());
+        }
+        Ok(DetectionReport {
+            installed,
+            version: None,
+            config_path,
+            path_kind,
+            extra_config_paths: Vec::new(),
+            active_in_session: active,
+            notes,
+        })
+    }
+
+    fn capabilities(&self, _detection: &DetectionReport, _env: &EnvContext) -> CapabilityFlags {
+        CapabilityFlags::empty()
+    }
+
+    fn plan(
+        &self,
+        ctx: &PlanContext<'_>,
+        detection: &DetectionReport,
+        _caps: CapabilityFlags,
+    ) -> Result<AdapterPlan> {
+        let mut plan = AdapterPlan::new(self.id());
+        plan.add_generated(ctx.artifacts, kiseki_compiler::artifact_names::ENV_BASH);
+        let body = shell::bash_init_script(ctx.paths.config_dir(), ctx.options.aliases);
+        for diagnostic in shell::lint_shell_artifacts(&body) {
+            plan.diagnostic(diagnostic);
+        }
+
+        let Some(config_path) = detection.config_path.as_ref() else {
+            return Ok(plan);
+        };
+        if !detection.installed {
+            return Ok(plan);
+        }
+        if !ctx.options.host_writes_allowed(ctx.env) {
+            plan.render_only = true;
+            plan.diagnostic(
+                Diagnostic::info(
+                    "adapter.bash.render-only",
+                    "host writes suppressed; source generated/env.bash manually",
+                )
+                .with_hint(format!(
+                    "source \"{}/env.bash\"",
+                    ctx.paths.config_dir().join("generated").display()
+                )),
+            );
+            return Ok(plan);
+        }
+        if detection.path_kind == PathKind::Missing && !ctx.options.allow_create_host_files {
+            plan.diagnostic(
+                Diagnostic::info(
+                    "adapter.bash.no-profile",
+                    "no .bashrc found; generated env.bash was not mounted",
+                )
+                .with_hint(format!(
+                    "add `source \"{}/env.bash\"` to your bash startup file",
+                    ctx.paths.config_dir().join("generated").display()
+                )),
+            );
+            return Ok(plan);
+        }
+        if !detection.path_kind.is_writable() {
+            plan.render_only = true;
+            plan.diagnostic(render_only_diagnostic(
+                self.id(),
+                config_path,
+                detection.path_kind.label(),
+                format!(
+                    "add `source \"{}/env.bash\"` to your Nix/Home Manager bash config",
+                    ctx.paths.config_dir().join("generated").display()
+                ),
+            ));
+            return Ok(plan);
+        }
+        plan.push(FileOperation::UpsertMarkerBlock {
+            target: config_path.clone(),
+            begin: MARKER_BEGIN.to_string(),
+            end: MARKER_END.to_string(),
+            body,
+        });
+        Ok(plan)
+    }
+
+    fn validate(&self, plan: &AdapterPlan, _platform: &dyn Platform) -> Result<ValidationReport> {
+        let mut report = ValidationReport::ok();
+        for diagnostic in plan.diagnostics.iter().filter(|d| d.is_fatal()) {
+            report.push(diagnostic.clone());
+        }
+        for operation in &plan.operations {
+            match operation {
+                FileOperation::UpsertMarkerBlock { body, .. } => {
+                    for d in shell::lint_shell_artifacts(body) {
+                        report.push(d);
+                    }
+                }
+                FileOperation::WriteGenerated { relative, content }
+                    if relative.as_str() == kiseki_compiler::artifact_names::ENV_BASH =>
+                {
+                    for d in shell::lint_shell_artifacts(content) {
+                        report.push(d);
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(report)
+    }
+
+    fn reload(
+        &self,
+        _detection: &DetectionReport,
+        _caps: CapabilityFlags,
+        _platform: &dyn Platform,
+    ) -> Result<ReloadOutcome> {
+        Ok(ReloadOutcome::AutoReload {
+            detail: "running bash sessions sync on the next prompt via state.gen".to_string(),
+        })
+    }
+
+    fn plan_unhook(
+        &self,
+        detection: &DetectionReport,
+        _paths: &kiseki_platform::KisekiPaths,
+    ) -> Result<AdapterPlan> {
+        let mut plan = AdapterPlan::new(self.id());
+        if let Some(target) = detection.config_path.as_ref() {
+            plan.push(FileOperation::RemoveMarkerBlock {
+                target: target.clone(),
+                begin: MARKER_BEGIN.to_string(),
+                end: MARKER_END.to_string(),
+            });
+        }
+        Ok(plan)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Fish
+// ---------------------------------------------------------------------------
+
+/// Fish shell adapter (RFC-0003 §4).
+pub struct FishAdapter;
+
+impl FishAdapter {
+    fn config_path(platform: &dyn Platform) -> Option<std::path::PathBuf> {
+        if let Some(explicit) = platform
+            .env_var("KISEKI_FISH_CONFIG")
+            .filter(|v| !v.trim().is_empty())
+        {
+            return Some(std::path::PathBuf::from(explicit));
+        }
+        if platform.os() == OsKind::Windows {
+            return None;
+        }
+        let home = platform.env_var("HOME").map(std::path::PathBuf::from)?;
+        let config_home = platform
+            .env_var("XDG_CONFIG_HOME")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| home.join(".config"));
+        Some(config_home.join("fish").join("config.fish"))
+    }
+}
+
+impl Adapter for FishAdapter {
+    fn id(&self) -> &'static str {
+        "fish"
+    }
+
+    fn display_name(&self) -> &'static str {
+        "Fish"
+    }
+
+    fn kind(&self) -> AdapterKind {
+        AdapterKind::Shell
+    }
+
+    fn tier(&self) -> IntegrationTier {
+        IntegrationTier::Tier1Managed
+    }
+
+    fn detect(&self, env: &EnvContext, platform: &dyn Platform) -> Result<DetectionReport> {
+        if platform.os() == OsKind::Windows {
+            return Ok(DetectionReport::not_installed("Fish adapter targets Unix/WSL"));
+        }
+        let config_path = Self::config_path(platform);
+        let path_kind = config_path
+            .as_deref()
+            .map(|path| platform.inspect(path))
+            .unwrap_or(PathKind::Missing);
+        let active = platform
+            .env_var("SHELL")
+            .is_some_and(|shell| shell.ends_with("/fish") || shell == "fish");
+        let installed = platform.which("fish").is_some()
+            || path_kind != PathKind::Missing
+            || active;
+        let mut notes = Vec::new();
+        if installed && path_kind == PathKind::Missing {
+            notes.push("no config.fish found; generated env.fish is available for manual sourcing".to_string());
+        }
+        if env.is_ssh {
+            notes.push("SSH session: host config writes are suppressed".to_string());
+        }
+        Ok(DetectionReport {
+            installed,
+            version: None,
+            config_path,
+            path_kind,
+            extra_config_paths: Vec::new(),
+            active_in_session: active,
+            notes,
+        })
+    }
+
+    fn capabilities(&self, _detection: &DetectionReport, _env: &EnvContext) -> CapabilityFlags {
+        CapabilityFlags::empty()
+    }
+
+    fn plan(
+        &self,
+        ctx: &PlanContext<'_>,
+        detection: &DetectionReport,
+        _caps: CapabilityFlags,
+    ) -> Result<AdapterPlan> {
+        let mut plan = AdapterPlan::new(self.id());
+        plan.add_generated(ctx.artifacts, kiseki_compiler::artifact_names::ENV_FISH);
+        let body = shell::fish_init_script(ctx.paths.config_dir(), ctx.options.aliases);
+        for diagnostic in shell::lint_shell_artifacts(&body) {
+            plan.diagnostic(diagnostic);
+        }
+
+        let Some(config_path) = detection.config_path.as_ref() else {
+            return Ok(plan);
+        };
+        if !detection.installed {
+            return Ok(plan);
+        }
+        if !ctx.options.host_writes_allowed(ctx.env) {
+            plan.render_only = true;
+            plan.diagnostic(
+                Diagnostic::info(
+                    "adapter.fish.render-only",
+                    "host writes suppressed; source generated/env.fish manually",
+                )
+                .with_hint(format!(
+                    "source \"{}/env.fish\"",
+                    ctx.paths.config_dir().join("generated").display()
+                )),
+            );
+            return Ok(plan);
+        }
+        if detection.path_kind == PathKind::Missing && !ctx.options.allow_create_host_files {
+            plan.diagnostic(
+                Diagnostic::info(
+                    "adapter.fish.no-profile",
+                    "no config.fish found; generated env.fish was not mounted",
+                )
+                .with_hint(format!(
+                    "add `source \"{}/env.fish\"` to config.fish",
+                    ctx.paths.config_dir().join("generated").display()
+                )),
+            );
+            return Ok(plan);
+        }
+        if !detection.path_kind.is_writable() {
+            plan.render_only = true;
+            plan.diagnostic(render_only_diagnostic(
+                self.id(),
+                config_path,
+                detection.path_kind.label(),
+                format!(
+                    "add `source \"{}/env.fish\"` to your Nix/Home Manager fish config",
+                    ctx.paths.config_dir().join("generated").display()
+                ),
+            ));
+            return Ok(plan);
+        }
+        plan.push(FileOperation::UpsertMarkerBlock {
+            target: config_path.clone(),
+            begin: MARKER_BEGIN.to_string(),
+            end: MARKER_END.to_string(),
+            body,
+        });
+        Ok(plan)
+    }
+
+    fn validate(&self, plan: &AdapterPlan, _platform: &dyn Platform) -> Result<ValidationReport> {
+        let mut report = ValidationReport::ok();
+        for diagnostic in plan.diagnostics.iter().filter(|d| d.is_fatal()) {
+            report.push(diagnostic.clone());
+        }
+        for operation in &plan.operations {
+            match operation {
+                FileOperation::UpsertMarkerBlock { body, .. } => {
+                    for d in shell::lint_shell_artifacts(body) {
+                        report.push(d);
+                    }
+                }
+                FileOperation::WriteGenerated { relative, content }
+                    if relative.as_str() == kiseki_compiler::artifact_names::ENV_FISH =>
+                {
+                    for d in shell::lint_shell_artifacts(content) {
+                        report.push(d);
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(report)
+    }
+
+    fn reload(
+        &self,
+        _detection: &DetectionReport,
+        _caps: CapabilityFlags,
+        _platform: &dyn Platform,
+    ) -> Result<ReloadOutcome> {
+        Ok(ReloadOutcome::AutoReload {
+            detail: "running fish sessions sync on the next prompt via state.gen".to_string(),
+        })
+    }
+
+    fn plan_unhook(
+        &self,
+        detection: &DetectionReport,
+        _paths: &kiseki_platform::KisekiPaths,
+    ) -> Result<AdapterPlan> {
+        let mut plan = AdapterPlan::new(self.id());
+        if let Some(target) = detection.config_path.as_ref() {
+            plan.push(FileOperation::RemoveMarkerBlock {
+                target: target.clone(),
+                begin: MARKER_BEGIN.to_string(),
+                end: MARKER_END.to_string(),
+            });
+        }
+        Ok(plan)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

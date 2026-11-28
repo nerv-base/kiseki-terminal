@@ -340,6 +340,13 @@ pub fn detect_v1(platform: &dyn Platform) -> Result<Option<V1Detection>> {
             }
         }
     }
+    for path in candidate_kitty_configs(platform) {
+        if let Ok(Some(contents)) = platform.read_to_string(&path) {
+            if contents.contains(V1_BEGIN) {
+                configs.push(V1ConfigHook::hash(path));
+            }
+        }
+    }
 
     let mut shims = Vec::new();
     if let Some(legacy) = legacy_dir.as_ref() {
@@ -694,6 +701,22 @@ fn candidate_wezterm_configs(platform: &dyn Platform) -> Vec<PathBuf> {
         home.join(".wezterm.lua"),
         config_home.join("wezterm").join("wezterm.lua"),
     ]
+}
+
+/// v1 Kitty configs (`$XDG_CONFIG_HOME/kitty/kitty.conf`).
+fn candidate_kitty_configs(platform: &dyn Platform) -> Vec<PathBuf> {
+    let Some(home) = platform
+        .env_var("HOME")
+        .or_else(|| platform.env_var("USERPROFILE"))
+        .map(PathBuf::from)
+    else {
+        return Vec::new();
+    };
+    let config_home = platform
+        .env_var("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".config"));
+    vec![config_home.join("kitty").join("kitty.conf")]
 }
 
 #[cfg(test)]

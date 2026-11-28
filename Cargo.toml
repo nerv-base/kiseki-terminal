@@ -10,13 +10,14 @@ members = [
     "crates/kiseki-tx",
     "crates/kiseki-state",
     "crates/kiseki-pkg",
+    "crates/kiseki-gallery",
     "crates/kiseki-tui",
     "crates/kiseki-cli",
     "crates/kiseki-bench",
 ]
 
 [workspace.package]
-version = "2.0.0"
+version = "2.0.0-beta.1"
 edition = "2021"
 rust-version = "1.85"
 license = "MIT"
@@ -33,6 +34,7 @@ kiseki-adapters = { path = "crates/kiseki-adapters" }
 kiseki-tx = { path = "crates/kiseki-tx" }
 kiseki-state = { path = "crates/kiseki-state" }
 kiseki-pkg = { path = "crates/kiseki-pkg" }
+kiseki-gallery = { path = "crates/kiseki-gallery" }
 kiseki-tui = { path = "crates/kiseki-tui" }
 
 serde = { version = "1", features = ["derive"] }
@@ -51,6 +53,9 @@ clap = { version = "4", features = ["derive", "wrap_help"] }
 clap_complete = "4"
 ratatui = "0.30"
 crossterm = "0.29"
+ureq = { version = "3", default-features = false, features = ["rustls", "gzip"] }
+flate2 = "1"
+tar = "0.4"
 
 [profile.release]
 opt-level = "z"
