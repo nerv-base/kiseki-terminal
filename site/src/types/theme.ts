@@ -46,6 +46,19 @@ export interface GalleryThemeEntry {
   };
   preview: {
     thumbUrl?: string | null;
+    /** Optional wallpaper asset URL used by built-in theme live terminal previews. */
+    wallpaperUrl?: string | null;
+    /** Optional opacity tuning (0..1) for realistic wallpaper blending inside previews. */
+    wallpaperOpacity?: number;
+    /** Optional prompt chrome preview colors. */
+    prompt?: {
+      badgeText: string;
+      badgeBg: string;
+      badgeFg: string;
+      pathBg: string;
+      pathFg: string;
+      symbol: string;
+    };
     palette: {
       base: string;
       surface0: string;

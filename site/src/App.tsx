@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FC } from 'react';
 import { BootCurtain } from './components/BootCurtain';
 import { DocsHub } from './components/DocsHub';
-import { GalleryHub } from './components/GalleryHub';
+import { GalleryHub, type GalleryCanvasMode } from './components/GalleryHub';
 import { Header } from './components/Header';
 import { HeroSection } from './components/HeroSection';
 import { InstallSection } from './components/InstallSection';
@@ -79,6 +79,7 @@ export const App: FC = () => {
   const [installTab, setInstallTab] = useState<InstallTab>(() => defaultInstallTabForOS(detectedOS));
   const [docChapter, setDocChapter] = useState<DocChapterId>(initialRoute.docChapter ?? 'quickstart');
   const [docSearch, setDocSearch] = useState('');
+  const [galleryMode, setGalleryMode] = useState<GalleryCanvasMode>('dark');
 
   const nextLogId = useRef(2);
   const [logLines, setLogLines] = useState<TermLogLine[]>([
@@ -443,7 +444,7 @@ export const App: FC = () => {
 
   return (
     <div id="kiseki-app" data-ui-theme={layers.ui} data-typo-theme={layers.typography} style={appCssVars}>
-      <div className="k-film-grain fixed inset-0 z-0" />
+      {view !== 'gallery' && <div className="k-film-grain fixed inset-0 z-0" />}
 
       <BootCurtain done={bootDone} />
 
@@ -451,6 +452,7 @@ export const App: FC = () => {
         view={view}
         scrolled={scrolled}
         lang={lang}
+        galleryMode={galleryMode}
         onNavigate={(target) => navigateTo(target)}
         onToggleLang={() => setLang((l) => (l === 'zh' ? 'en' : 'zh'))}
       />
@@ -515,6 +517,8 @@ export const App: FC = () => {
       {view === 'gallery' && (
         <GalleryHub
           lang={lang}
+          canvasMode={galleryMode}
+          onToggleCanvasMode={() => setGalleryMode((m) => (m === 'dark' ? 'light' : 'dark'))}
           onTryOfficialTheme={(id) => {
             activateTheme(id, true, false);
             navigateTo('terminal');

@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "./fonts.css";
+@import "./gallery.css";
 
 html {
   font-size: clamp(16px, calc(16px + (min(100vw, 177.78vh) - 1680px) * 0.0052), 25px);

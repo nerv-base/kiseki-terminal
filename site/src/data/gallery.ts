@@ -21,6 +21,7 @@ export const OFFICIAL_GALLERY_THEMES: GalleryThemeEntry[] = THEME_ORDER.map((id,
   const meta = WORLD_META[id];
   const p = pack.tokens.palette;
   const s = pack.tokens.syntax;
+  const pr = pack.tokens.overrides.prompt;
   return {
     id,
     name: pack.manifest.name,
@@ -49,7 +50,19 @@ export const OFFICIAL_GALLERY_THEMES: GalleryThemeEntry[] = THEME_ORDER.map((id,
       trendingScore: 0.01 * (THEME_ORDER.length - idx),
     },
     preview: {
-      thumbUrl: pack.thumbUrl || pack.wallpaperUrl,
+      // Use real terminal screenshots (previews/*.webp) showing actual Fastfetch ANSI art,
+      // Oh My Posh prompts, bat syntax highlighting, and wallpapers.
+      thumbUrl: `/previews/${id}.webp`,
+      wallpaperUrl: pack.wallpaperUrl || pack.thumbUrl || null,
+      wallpaperOpacity: pack.tokens.atmosphere.wallpaper?.opacity ?? 0.42,
+      prompt: {
+        badgeText: pr.badgeText || id.toUpperCase(),
+        badgeBg: pr.segmentColors.badgeBg || p.accents.primary,
+        badgeFg: pr.segmentColors.badgeFg || p.text.inverse,
+        pathBg: pr.segmentColors.pathBg || p.surfaces.surface0,
+        pathFg: pr.segmentColors.pathFg || p.text.primary,
+        symbol: pr.promptSymbol || '❯',
+      },
       palette: {
         base: p.surfaces.base,
         surface0: p.surfaces.surface0,

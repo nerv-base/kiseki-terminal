@@ -510,10 +510,10 @@ jobs:
             --cache-control "public, max-age=86400" --remote
 
           for pair in \
-            "OFL-JetBrainsMono.txt|https://raw.githubusercontent.com/ryanoasis/nerd-fonts/v3.5.1/patched-fonts/JetBrainsMono/OFL.txt" \
-            "OFL-DepartureMono.txt|https://raw.githubusercontent.com/ryanoasis/nerd-fonts/v3.5.1/patched-fonts/DepartureMono/OFL.txt" \
+            "OFL-JetBrainsMono.txt|https://raw.githubusercontent.com/JetBrains/JetBrainsMono/master/OFL.txt" \
+            "OFL-DepartureMono.txt|https://raw.githubusercontent.com/rektdeckard/departure-mono/main/LICENSE" \
             "OFL-MapleMono.txt|https://raw.githubusercontent.com/subframe7536/maple-font/variable/OFL.txt" \
-            "OFL-FusionPixel.txt|https://raw.githubusercontent.com/TakWolf/fusion-pixel-font/master/LICENSE-OFL.txt"; do
+            "OFL-FusionPixel.txt|https://raw.githubusercontent.com/TakWolf/fusion-pixel-font/master/LICENSE-OFL"; do
             lic_name="${pair%%|*}"
             lic_url="${pair#*|}"
             if curl -fsSL --retry 2 --connect-timeout 10 --max-time 30 "$lic_url" -o "${tmp_deps}/${lic_name}"; then
