@@ -139,6 +139,7 @@ impl ThemeLibrary {
         {
             return Ok(false);
         }
+        let expected: BTreeSet<&str> = theme.files.iter().map(|file| file.path).collect();
         let mut dirs_to_sync = BTreeSet::new();
         for file in theme.files {
             let dest = target.join(file.path);
@@ -147,8 +148,20 @@ impl ThemeLibrary {
                 dirs_to_sync.insert(parent.to_path_buf());
             }
         }
-        // Clean up the marker used by pre-release builds; it lived inside the
-        // pack and would fail the strict extension whitelist.
+        // Clean up stale files left behind when an official pack upgrades
+        // (e.g. a legacy `assets/wallpaper.png` superseded by `wallpaper.jpg`,
+        // or the pre-release `.kiseki-bundled-version` marker).
+        if target.is_dir() {
+            for entry in collect_files(&target)? {
+                if !entry.is_dir && !expected.contains(entry.relative.as_str()) {
+                    let stale = target.join(&entry.relative);
+                    platform.remove_file(&stale)?;
+                    if let Some(parent) = stale.parent() {
+                        dirs_to_sync.insert(parent.to_path_buf());
+                    }
+                }
+            }
+        }
         platform.remove_file(&target.join(".kiseki-bundled-version"))?;
         for dir in &dirs_to_sync {
             platform.sync_dir(dir)?;
@@ -683,6 +696,35 @@ mod tests {
         );
         let versions = std::fs::read_to_string(official.join(".versions.json")).unwrap();
         assert!(versions.contains(bundled_theme("starlight-8bit").unwrap().version));
+    }
+
+    #[test]
+    fn upgrading_bundled_pack_removes_stale_wallpaper_png() {
+        let (_dir, platform) = platform();
+        let library = ThemeLibrary::open(&platform, &[]);
+        let id = ThemeId::new("shinkai-rain").unwrap();
+        let official = platform.paths().official_themes_dir();
+        let root = official.join("shinkai-rain");
+
+        // Simulate an older 2.0.2 install that had `assets/wallpaper.png`.
+        platform
+            .write_preserving_symlinks(
+                &official.join(".versions.json"),
+                br#"{"shinkai-rain":"2.0.2"}"#,
+            )
+            .unwrap();
+        let legacy_png = root.join("assets/wallpaper.png");
+        platform
+            .write_preserving_symlinks(&legacy_png, b"legacy png bytes")
+            .unwrap();
+        assert!(legacy_png.exists());
+
+        let loaded = library.load(&platform, &id).unwrap();
+        assert!(
+            !legacy_png.exists(),
+            "stale assets/wallpaper.png must be deleted on bundled upgrade"
+        );
+        assert!(loaded.root.join("assets/wallpaper.jpg").exists());
     }
 
     #[test]

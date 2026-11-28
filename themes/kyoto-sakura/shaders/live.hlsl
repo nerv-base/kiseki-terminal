@@ -22,22 +22,41 @@ float kiseki_hash21(float2 p) {
     return frac(p.x * p.y);
 }
 
-float2 kiseki_cover_uv(float2 uv, float2 screenSize, float2 imgSize) {
+float2 kiseki_cover_uv(float2 uv, float2 screenSize, float2 imgSize, float anchorY) {
     float screenAspect = screenSize.x / max(screenSize.y, 1.0);
     float imgAspect = imgSize.x / max(imgSize.y, 1.0);
     float2 outUV = uv;
     if (screenAspect > imgAspect) {
-        float visH = imgAspect / screenAspect;
-        outUV.y = (1.0 - visH) + uv.y * visH;
+        float visH = imgAspect / max(screenAspect, 0.0001);
+        outUV.y = (1.0 - visH) * anchorY + uv.y * visH;
     } else {
-        float visW = screenAspect / imgAspect;
+        float visW = screenAspect / max(imgAspect, 0.0001);
         outUV.x = (1.0 - visW) + uv.x * visW;
     }
     return saturate(outUV);
 }
 
-float kiseki_sakura_layer(float2 aspectUV, float gridScale, float speed, float seed) {
-    float2 p = aspectUV * gridScale;
+float3 kiseki_sample_wall(float2 sampleUV, float2 imgSize, float texelPerPx) {
+    float3 result;
+#if KISEKI_QUALITY_LEVEL >= 2
+    if (texelPerPx > 1.35) {
+        float2 stepUV = texelPerPx / max(imgSize, float2(1.0, 1.0));
+        float3 c0 = imageTexture.Sample(samplerState, saturate(sampleUV + float2(-0.125, -0.375) * stepUV)).rgb;
+        float3 c1 = imageTexture.Sample(samplerState, saturate(sampleUV + float2(0.375, -0.125) * stepUV)).rgb;
+        float3 c2 = imageTexture.Sample(samplerState, saturate(sampleUV + float2(-0.375, 0.125) * stepUV)).rgb;
+        float3 c3 = imageTexture.Sample(samplerState, saturate(sampleUV + float2(0.125, 0.375) * stepUV)).rgb;
+        result = 0.25 * (c0 + c1 + c2 + c3);
+    } else {
+        result = imageTexture.Sample(samplerState, saturate(sampleUV)).rgb;
+    }
+#else
+    result = imageTexture.Sample(samplerState, saturate(sampleUV)).rgb;
+#endif
+    return result;
+}
+
+float kiseki_sakura_layer(float2 dipUV, float gridScale, float speed, float seed) {
+    float2 p = dipUV * gridScale;
     p.x += Time * speed * 0.55;
     p.y -= Time * speed * 0.42;
 
@@ -58,18 +77,24 @@ float kiseki_sakura_layer(float2 aspectUV, float gridScale, float speed, float s
     float2 rq = float2(q.x * ca - q.y * sa, q.x * sa + q.y * ca);
     float flutter = 0.45 + 0.55 * abs(sin(phase * 1.3));
     float d = length(float2(rq.x * 1.2, rq.y * (2.8 / max(flutter, 0.001))));
-    return (1.0 - smoothstep(0.032, 0.082, d)) * (0.55 + 0.45 * h);
+    return (1.0 - smoothstep(0.026, 0.072, d)) * (0.55 + 0.45 * h);
 }
 
 float4 main(float4 pos : SV_POSITION, float2 tex : TEXCOORD) : SV_TARGET {
-    float4 term = shaderTexture.Sample(samplerState, tex);
+    float texW, texH;
+    shaderTexture.GetDimensions(texW, texH);
+    float2 texSize = max(float2(texW, texH), float2(1.0, 1.0));
+    float2 uv = saturate(pos.xy / texSize);
+    float4 term = shaderTexture.Load(int3(pos.xy, 0));
 
     float imgW, imgH;
     imageTexture.GetDimensions(imgW, imgH);
-    float2 imgUV = kiseki_cover_uv(tex, Resolution, float2(max(imgW, 1.0), max(imgH, 1.0)));
+    float2 imgSize = max(float2(imgW, imgH), float2(1.0, 1.0));
+    float2 imgUV = kiseki_cover_uv(uv, texSize, imgSize, 0.36);
 
-    float narrow = kiseki_narrow_factor(Resolution);
-    float aspect = Resolution.x / max(Resolution.y, 1.0);
+    float narrow = kiseki_narrow_factor(texSize);
+    float bgOpacity = KISEKI_BG_OPACITY * lerp(0.28, 1.0, narrow);
+    float texelPerPx = min(imgSize.x / max(texSize.x, 1.0), imgSize.y / max(texSize.y, 1.0));
 
     // --- 1. Tranquil moonlit temple pond horizontal shimmer -----------------
 #if KISEKI_QUALITY_LEVEL >= 2
@@ -78,9 +103,9 @@ float4 main(float4 pos : SV_POSITION, float2 tex : TEXCOORD) : SV_TARGET {
         * (KISEKI_PARAM_POND_RIPPLE_AMP * 1.35) * pondMask;
     float rippleY = cos(imgUV.x * 70.0 + Time * 1.3)
         * (KISEKI_PARAM_POND_RIPPLE_AMP * 0.56) * pondMask;
-    float3 wall = imageTexture.Sample(samplerState, saturate(imgUV + float2(rippleX, rippleY))).rgb;
+    float3 wall = kiseki_sample_wall(imgUV + float2(rippleX, rippleY), imgSize, texelPerPx);
 #else
-    float3 wall = imageTexture.Sample(samplerState, imgUV).rgb;
+    float3 wall = kiseki_sample_wall(imgUV, imgSize, texelPerPx);
 #endif
 
     // --- 2. Warm organic stone lantern candle-glow flicker ------------------
@@ -91,21 +116,23 @@ float4 main(float4 pos : SV_POSITION, float2 tex : TEXCOORD) : SV_TARGET {
         + 0.17 * sin(Time * 6.1 + 1.4);
     wall += KISEKI_ACCENT_SECONDARY * lanternHalo * (0.16 * flicker);
 
-    float3 animBg = lerp(KISEKI_BASE_BG, wall, KISEKI_BG_OPACITY);
+    float3 animBg = lerp(KISEKI_BASE_BG, wall, bgOpacity);
 
     // --- 3. Parallax layers of drifting & fluttering sakura petals ----------
-    float2 aspectUV = float2(tex.x * aspect, tex.y);
+    float dipScale = 900.0 * max(Scale, 1.0);
+    float2 dipUV = pos.xy / dipScale;
+    float2 dipSize = texSize / dipScale;
     float speed = KISEKI_PARAM_PETAL_SPEED;
-    float petalsFar = kiseki_sakura_layer(aspectUV, 5.2, 0.28 * speed, 3.7);
+    float petalsFar = kiseki_sakura_layer(dipUV, 5.6, 0.28 * speed, 3.7);
     animBg += KISEKI_ACCENT_PRIMARY * (petalsFar * 0.26);
 
 #if KISEKI_QUALITY_LEVEL >= 2
-    float petalsNear = kiseki_sakura_layer(aspectUV, 3.4, 0.42 * speed, 11.9);
+    float petalsNear = kiseki_sakura_layer(dipUV, 3.8, 0.42 * speed, 11.9);
     float3 sakuraLight = lerp(KISEKI_ACCENT_PRIMARY, float3(1.0, 0.94, 0.97), 0.55);
     animBg += sakuraLight * (petalsNear * 0.34);
 #endif
 
-    // --- 4. Meandering golden shrine fireflies ------------------------------
+    // --- 4. Meandering golden shrine fireflies (DIP-sized orbs) -------------
 #if KISEKI_QUALITY_LEVEL >= 2
     [unroll]
     for (int i = 0; i < 6; i++) {
@@ -118,10 +145,10 @@ float4 main(float4 pos : SV_POSITION, float2 tex : TEXCOORD) : SV_TARGET {
             sin(Time * (0.28 + fi * 0.06) + fi * 2.1) * 0.075,
             cos(Time * (0.22 + fi * 0.05) + fi * 1.7) * 0.055
         );
-        float2 fp = float2((center.x + wander.x) * aspect, center.y + wander.y);
-        float d = length(aspectUV - fp);
+        float2 fp = (center + wander) * dipSize;
+        float d = length(dipUV - fp);
         float pulse = pow(0.5 + 0.5 * sin(Time * (1.1 + fi * 0.25) + fi * 3.7), 2.5);
-        float orb = exp(-d * 115.0) * 0.55 + exp(-d * 30.0) * 0.14;
+        float orb = exp(-d * 130.0) * 0.55 + exp(-d * 34.0) * 0.14;
         animBg += KISEKI_ACCENT_SECONDARY * orb * pulse;
     }
 #else
@@ -136,10 +163,10 @@ float4 main(float4 pos : SV_POSITION, float2 tex : TEXCOORD) : SV_TARGET {
             sin(Time * (0.28 + fi * 0.06) + fi * 2.1) * 0.075,
             cos(Time * (0.22 + fi * 0.05) + fi * 1.7) * 0.055
         );
-        float2 fp = float2((center.x + wander.x) * aspect, center.y + wander.y);
-        float d = length(aspectUV - fp);
+        float2 fp = (center + wander) * dipSize;
+        float d = length(dipUV - fp);
         float pulse = pow(0.5 + 0.5 * sin(Time * (1.1 + fi * 0.25) + fi * 3.7), 2.5);
-        float orb = exp(-d * 115.0) * 0.55 + exp(-d * 30.0) * 0.14;
+        float orb = exp(-d * 130.0) * 0.55 + exp(-d * 34.0) * 0.14;
         animBg += KISEKI_ACCENT_SECONDARY * orb * pulse;
     }
 #endif

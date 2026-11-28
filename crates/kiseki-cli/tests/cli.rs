@@ -49,6 +49,8 @@ impl Sandbox {
             .env_clear()
             .env("PATH", std::env::var_os("PATH").unwrap_or_default())
             .env("HOME", self.home())
+            .env("TEMP", self.dir.path())
+            .env("TMP", self.dir.path())
             .env("KISEKI_HOME", self.kiseki_home())
             .env("KISEKI_ZSHRC", self.path(".zshrc"))
             .env("KISEKI_GHOSTTY_CONFIG", self.path("ghostty-config"))
@@ -102,6 +104,15 @@ fn version_and_help_are_available() {
     for command in ["use", "pick", "status", "compose", "profile", "doctor", "theme", "shell-init"] {
         assert!(stdout.contains(command), "help is missing {command}:\n{stdout}");
     }
+    assert!(stdout.contains("打印帮助信息"), "root help missing Chinese help flag:\n{stdout}");
+    assert!(stdout.contains("打印版本信息"), "root help missing Chinese version flag:\n{stdout}");
+    assert!(!stdout.contains("Print help"), "root help leaked English Print help:\n{stdout}");
+    assert!(!stdout.contains("Print version"), "root help leaked English Print version:\n{stdout}");
+
+    let sub_output = sandbox.run_ok(&["use", "--help"]);
+    let sub_stdout = String::from_utf8_lossy(&sub_output.stdout);
+    assert!(sub_stdout.contains("打印帮助信息"), "{sub_stdout}");
+    assert!(!sub_stdout.contains("Print help"), "{sub_stdout}");
 }
 
 #[test]

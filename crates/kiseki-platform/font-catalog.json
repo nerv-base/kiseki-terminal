@@ -8,9 +8,9 @@
       "license": "OFL-1.1",
       "version": "3.3.0",
       "families": {
-        "macos": ["JetBrainsMono Nerd Font", "JetBrainsMonoNF"],
-        "windows": ["JetBrainsMono Nerd Font", "JetBrainsMonoNF"],
-        "linux": ["JetBrainsMono Nerd Font", "JetBrainsMonoNF"]
+        "macos": ["JetBrainsMono Nerd Font", "JetBrainsMono NF", "JetBrainsMonoNF"],
+        "windows": ["JetBrainsMono Nerd Font", "JetBrainsMono NF", "JetBrainsMonoNF"],
+        "linux": ["JetBrainsMono Nerd Font", "JetBrainsMono NF", "JetBrainsMonoNF"]
       },
       "postScriptNames": ["JetBrainsMonoNF-Regular"],
       "download": {
@@ -29,7 +29,7 @@
         "windows": ["Maple Mono NF CN", "Maple Mono NF"],
         "linux": ["Maple Mono NF CN", "Maple Mono NF"]
       },
-      "postScriptNames": ["MapleMonoNF-CN-Regular"],
+      "postScriptNames": ["MapleMono-NF-CN-Regular", "MapleMonoNF-CN-Regular"],
       "download": {
         "url": "https://github.com/subframe7536/maple-font/releases/download/v7.5/MapleMono-NF-CN.zip",
         "fileName": "MapleMono-NF-CN.zip",
@@ -42,11 +42,11 @@
       "license": "OFL-1.1",
       "version": "1.1.0",
       "families": {
-        "macos": ["DepartureMono Nerd Font", "Departure Mono"],
-        "windows": ["DepartureMono Nerd Font", "Departure Mono"],
-        "linux": ["DepartureMono Nerd Font", "Departure Mono"]
+        "macos": ["DepartureMono Nerd Font", "DepartureMono NF", "DepartureMonoNF", "Departure Mono"],
+        "windows": ["DepartureMono Nerd Font", "DepartureMono NF", "DepartureMonoNF", "Departure Mono"],
+        "linux": ["DepartureMono Nerd Font", "DepartureMono NF", "DepartureMonoNF", "Departure Mono"]
       },
-      "postScriptNames": ["DepartureMonoNF-Regular"],
+      "postScriptNames": ["DepartureMonoNF", "DepartureMonoNF-Regular"],
       "download": {
         "url": "https://github.com/ryanoasis/nerd-fonts/releases/download/v3.3.0/DepartureMono.zip",
         "fileName": "DepartureMono.zip",

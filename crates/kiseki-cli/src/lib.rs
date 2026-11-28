@@ -5,6 +5,7 @@
 //! delegated to `kiseki-tui`.
 
 pub mod deps_install;
+pub mod help_i18n;
 pub mod ui;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -13,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 use clap::builder::styling::{AnsiColor, Effects, Styles};
-use clap::{CommandFactory, Parser, Subcommand};
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use kiseki_adapters::{AdapterRegistry, DetectionReport, PlanOptions};
 use kiseki_compiler::{compile, CompileInput, CompileOptions};
 use kiseki_gallery::{
@@ -449,7 +450,12 @@ pub struct UninstallArgs {
 /// Runs the CLI, returning the process exit code.
 pub fn main_entry() -> i32 {
     kiseki_tui::enable_ansi_support();
-    let cli = Cli::parse();
+    let cmd = help_i18n::localize_command(Cli::command(), help_i18n::detect_lang());
+    let matches = cmd.get_matches();
+    let cli = match Cli::from_arg_matches(&matches) {
+        Ok(cli) => cli,
+        Err(error) => error.exit(),
+    };
     let json = cli.json;
     let ui = Ui::new(cli.quiet);
     let (result, json_emitted) = run_tracked(cli, ui);
@@ -3056,7 +3062,8 @@ impl App {
             }
         };
         let mut buffer = Vec::new();
-        clap_complete::generate(generator, &mut Cli::command(), "kiseki", &mut buffer);
+        let mut cmd = help_i18n::localize_command(Cli::command(), help_i18n::detect_lang());
+        clap_complete::generate(generator, &mut cmd, "kiseki", &mut buffer);
         let mut script = String::from_utf8_lossy(&buffer).into_owned();
         if matches!(generator, clap_complete::Shell::PowerShell) {
             script = make_powershell_completions_ascii_safe(&script);

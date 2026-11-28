@@ -467,6 +467,7 @@ pub fn omp_config(theme: &ResolvedTheme) -> Value {
             {
                 "type": "prompt",
                 "alignment": "right",
+                "overflow": "hide",
                 "segments": right_segments
             },
             {
@@ -664,6 +665,8 @@ mod tests {
         assert_eq!(config["blocks"][0]["type"], "prompt");
         let blocks = config["blocks"].as_array().unwrap();
         assert_eq!(blocks.len(), 3);
+        assert_eq!(blocks[1]["alignment"], "right");
+        assert_eq!(blocks[1]["overflow"], "hide");
         let segments = blocks[0]["segments"].as_array().unwrap();
         assert_eq!(segments.len(), 7);
         for block in blocks {

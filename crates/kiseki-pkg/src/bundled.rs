@@ -94,7 +94,7 @@ const NERV_EVA_FILES: &[BundledFile] = &[
 
 const NERV_EVA: BundledTheme = BundledTheme {
     id: "nerv-eva",
-    version: "2.0.2",
+    version: "2.0.3",
     name: "NERV UNIT-02",
     tagline: "特務機関 NERV 弐号機 · 战术蓝图暗红橙",
     files: NERV_EVA_FILES,
@@ -107,8 +107,8 @@ const KYOTO_SAKURA_FILES: &[BundledFile] = &[
     BundledFile::new("CREDITS.md", include_bytes!("../../../themes/kyoto-sakura/CREDITS.md")),
     BundledFile::new("assets/logo.txt", include_bytes!("../../../themes/kyoto-sakura/assets/logo.txt")),
     BundledFile::new(
-        "assets/wallpaper.png",
-        include_bytes!("../../../themes/kyoto-sakura/assets/wallpaper.png"),
+        "assets/wallpaper.jpg",
+        include_bytes!("../../../themes/kyoto-sakura/assets/wallpaper.jpg"),
     ),
     BundledFile::new(
         "shaders/live.glsl",
@@ -126,7 +126,7 @@ const KYOTO_SAKURA_FILES: &[BundledFile] = &[
 
 const KYOTO_SAKURA: BundledTheme = BundledTheme {
     id: "kyoto-sakura",
-    version: "2.0.2",
+    version: "2.0.3",
     name: "Kyoto Sakura",
     tagline: "夜樱绘卷 · 和风月夜神社与垂枝樱",
     files: KYOTO_SAKURA_FILES,
@@ -139,8 +139,8 @@ const SHINKAI_RAIN_FILES: &[BundledFile] = &[
     BundledFile::new("CREDITS.md", include_bytes!("../../../themes/shinkai-rain/CREDITS.md")),
     BundledFile::new("assets/logo.txt", include_bytes!("../../../themes/shinkai-rain/assets/logo.txt")),
     BundledFile::new(
-        "assets/wallpaper.png",
-        include_bytes!("../../../themes/shinkai-rain/assets/wallpaper.png"),
+        "assets/wallpaper.jpg",
+        include_bytes!("../../../themes/shinkai-rain/assets/wallpaper.jpg"),
     ),
     BundledFile::new(
         "shaders/live.glsl",
@@ -158,7 +158,7 @@ const SHINKAI_RAIN_FILES: &[BundledFile] = &[
 
 const SHINKAI_RAIN: BundledTheme = BundledTheme {
     id: "shinkai-rain",
-    version: "2.0.2",
+    version: "2.0.3",
     name: "Shinkai Rain",
     tagline: "言叶之雨 · 新海诚东京雨夜电影感",
     files: SHINKAI_RAIN_FILES,
@@ -193,7 +193,7 @@ const STARLIGHT_8BIT_FILES: &[BundledFile] = &[
 
 const STARLIGHT_8BIT: BundledTheme = BundledTheme {
     id: "starlight-8bit",
-    version: "2.0.2",
+    version: "2.0.3",
     name: "Starlight 8-Bit",
     tagline: "星屑 8-Bit · 复古二次元像素夜空",
     files: STARLIGHT_8BIT_FILES,
@@ -224,7 +224,6 @@ mod tests {
                 "LICENSE",
                 "CREDITS.md",
                 "assets/logo.txt",
-                "assets/wallpaper.png",
                 "shaders/live.glsl",
                 "shaders/live.hlsl",
             ] {
@@ -234,8 +233,19 @@ mod tests {
                 serde_json::from_str(theme.manifest_json()).unwrap();
             assert_eq!(manifest.id.as_str(), theme.id);
             assert_eq!(manifest.version, theme.version);
-            let _tokens: kiseki_schema::ThemeTokens =
+            let tokens: kiseki_schema::ThemeTokens =
                 serde_json::from_str(theme.tokens_json()).unwrap();
+            let wallpaper_path = tokens
+                .atmosphere
+                .as_ref()
+                .and_then(|atmosphere| atmosphere.wallpaper.as_ref())
+                .map(|wallpaper| wallpaper.path.as_str())
+                .expect("bundled theme declares wallpaper path");
+            assert!(
+                theme.file(wallpaper_path).is_some(),
+                "{} missing declared wallpaper {wallpaper_path}",
+                theme.id
+            );
             assert!(theme.glsl().unwrap().contains("mainImage"));
             assert!(theme.hlsl().unwrap().contains("cbuffer PixelShaderSettings"));
         }

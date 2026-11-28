@@ -881,8 +881,8 @@ mod tests {
     #[test]
     fn excessive_loop_budget_is_rejected_at_eco() {
         let template = NERV_EVA_HLSL.replace(
-            "float narrow = kiseki_narrow_factor(Resolution);",
-            "float narrow = kiseki_narrow_factor(Resolution);\n    for (int i = 0; i < 16; i++) { narrow += 0.001; }",
+            "float narrow = kiseki_narrow_factor(texSize);",
+            "float narrow = kiseki_narrow_factor(texSize);\n    for (int i = 0; i < 16; i++) { narrow += 0.001; }",
         );
         let report = validate_hlsl(&theme(RenderingProfile::Eco), &template);
         assert!(report.has_fatal());
@@ -958,8 +958,8 @@ mod tests {
     #[test]
     fn glsl_vector_types_are_rejected_in_hlsl() {
         let template = NERV_EVA_HLSL.replace(
-            "float3 animBg = lerp(KISEKI_BASE_BG, wall, KISEKI_BG_OPACITY);",
-            "vec3 animBg = lerp(KISEKI_BASE_BG, wall, KISEKI_BG_OPACITY);",
+            "float3 animBg = lerp(KISEKI_BASE_BG, wall, bgOpacity);",
+            "vec3 animBg = lerp(KISEKI_BASE_BG, wall, bgOpacity);",
         );
         let report = validate_hlsl(&theme(RenderingProfile::Balanced), &template);
         assert!(report.has_fatal());

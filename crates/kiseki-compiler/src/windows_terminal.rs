@@ -177,10 +177,24 @@ pub fn build(
     let mut defaults = Map::new();
     defaults.insert("colorScheme".to_string(), json!(scheme_name));
 
-    let face = font_families
-        .first()
-        .cloned()
-        .unwrap_or_else(|| "monospace".to_string());
+    let mut unique_faces: Vec<&str> = Vec::new();
+    for family in font_families {
+        let trimmed = family.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if !unique_faces
+            .iter()
+            .any(|existing| existing.eq_ignore_ascii_case(trimmed))
+        {
+            unique_faces.push(trimmed);
+        }
+    }
+    let face = if unique_faces.is_empty() {
+        "monospace".to_string()
+    } else {
+        unique_faces.join(", ")
+    };
     let mut font = Map::new();
     font.insert("face".to_string(), json!(face));
     if let Some(size) = theme.typography.size_pt {
@@ -353,7 +367,7 @@ mod tests {
     fn defaults_carry_font_cursor_opacity_and_padding() {
         let payload = build(&theme(RenderingProfile::Balanced), &["Maple Mono NF CN".into()], None, None);
         assert_eq!(payload.defaults["font"]["face"], "Maple Mono NF CN");
-        assert_eq!(payload.defaults["font"]["size"], 11.0);
+        assert_eq!(payload.defaults["font"]["size"], 12.0);
         assert_eq!(payload.defaults["font"]["weight"], "normal");
         assert_eq!(payload.defaults["cursorShape"], "filledBox");
         assert_eq!(payload.defaults["opacity"], 95);
@@ -469,5 +483,25 @@ mod tests {
         let codes: Vec<String> = payload.lint().into_iter().map(|d| d.code).collect();
         assert!(codes.contains(&"adapter.wt.forbidden-key".to_string()));
         assert!(codes.contains(&"adapter.wt.unmanaged-key".to_string()));
+    }
+
+    #[test]
+    fn font_face_joins_deduplicated_fallback_chain() {
+        let payload = build(
+            &theme(RenderingProfile::Balanced),
+            &[
+                "DepartureMono Nerd Font".into(),
+                "Fusion Pixel 12px Mono zh-Hans".into(),
+                "departuremono nerd font".into(),
+                "   ".into(),
+                "JetBrainsMono Nerd Font".into(),
+            ],
+            None,
+            None,
+        );
+        assert_eq!(
+            payload.defaults["font"]["face"],
+            "DepartureMono Nerd Font, Fusion Pixel 12px Mono zh-Hans, JetBrainsMono Nerd Font"
+        );
     }
 }

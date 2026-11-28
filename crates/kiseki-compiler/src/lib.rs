@@ -352,9 +352,15 @@ pub fn compile(input: &CompileInput<'_>) -> Result<CompileOutput> {
             theme,
             &options.config_dir,
             options.prompt_policy,
+            options.aliases,
             vendor_bin,
         ),
-        None => shell::env_ps1(theme, &options.config_dir, options.prompt_policy),
+        None => shell::env_ps1(
+            theme,
+            &options.config_dir,
+            options.prompt_policy,
+            options.aliases,
+        ),
     };
     diagnostics.extend(shell::lint_shell_artifacts(&ps1));
     artifacts.insert(artifact::names::ENV_PS1, ps1)?;

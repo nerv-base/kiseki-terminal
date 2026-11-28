@@ -18,8 +18,8 @@ vec3 kiseki_unpremul(vec4 texel) {
     return texel.rgb / max(texel.a, 0.001);
 }
 
-float kiseki_sakura_layer(vec2 aspectUV, float gridScale, float speed, float seed) {
-    vec2 p = aspectUV * gridScale;
+float kiseki_sakura_layer(vec2 dipUV, float gridScale, float speed, float seed) {
+    vec2 p = dipUV * gridScale;
     p.x += iTime * speed * 0.55;
     p.y -= iTime * speed * 0.42;
 
@@ -40,7 +40,7 @@ float kiseki_sakura_layer(vec2 aspectUV, float gridScale, float speed, float see
     vec2 rq = vec2(q.x * ca - q.y * sa, q.x * sa + q.y * ca);
     float flutter = 0.45 + 0.55 * abs(sin(phase * 1.3));
     float d = length(vec2(rq.x * 1.2, rq.y * (2.8 / max(flutter, 0.001))));
-    return (1.0 - smoothstep(0.032, 0.082, d)) * (0.55 + 0.45 * h);
+    return (1.0 - smoothstep(0.026, 0.072, d)) * (0.55 + 0.45 * h);
 }
 
 void mainImage(out vec4 fragColor, in vec2 fragCoord) {
@@ -51,7 +51,6 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
 
     float bgMask = kiseki_bg_mask(term, uv);
     float narrow = kiseki_narrow_factor(res);
-    float aspect = res.x / max(res.y, 1.0);
 
     // --- 1. Tranquil moonlit temple pond shimmer in bottom-right reflection -
 #if KISEKI_QUALITY_LEVEL >= 2
@@ -75,18 +74,20 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
     col += KISEKI_ACCENT_SECONDARY * lanternHalo * (0.11 * flicker) * bgMask;
 
     // --- 3. Parallax layers of drifting & fluttering sakura petals ----------
-    vec2 aspectUV = vec2(uv.x * aspect, uv.y);
+    float refUnit = max(clamp(min(res.x, res.y), 720.0, 1350.0), 1.0);
+    vec2 dipUV = fragCoord / refUnit;
+    vec2 dipSize = res / refUnit;
     float speed = KISEKI_PARAM_PETAL_SPEED;
-    float petalsFar = kiseki_sakura_layer(aspectUV, 5.2, 0.28 * speed, 3.7);
+    float petalsFar = kiseki_sakura_layer(dipUV, 5.6, 0.28 * speed, 3.7);
     col += KISEKI_ACCENT_PRIMARY * (petalsFar * 0.24) * bgMask;
 
 #if KISEKI_QUALITY_LEVEL >= 2
-    float petalsNear = kiseki_sakura_layer(aspectUV, 3.4, 0.42 * speed, 11.9);
+    float petalsNear = kiseki_sakura_layer(dipUV, 3.8, 0.42 * speed, 11.9);
     vec3 sakuraLight = mix(KISEKI_ACCENT_PRIMARY, vec3(1.0, 0.94, 0.97), 0.55);
     col += sakuraLight * (petalsNear * 0.32) * bgMask;
 #endif
 
-    // --- 4. Meandering golden shrine fireflies ------------------------------
+    // --- 4. Meandering golden shrine fireflies (DIP-sized orbs) -------------
 #if KISEKI_QUALITY_LEVEL >= 2
     for (int i = 0; i < 6; i++) {
         float fi = float(i);
@@ -98,10 +99,10 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
             sin(iTime * (0.28 + fi * 0.06) + fi * 2.1) * 0.075,
             cos(iTime * (0.22 + fi * 0.05) + fi * 1.7) * 0.055
         );
-        vec2 fp = vec2((center.x + wander.x) * aspect, center.y + wander.y);
-        float d = length(aspectUV - fp);
+        vec2 fp = (center + wander) * dipSize;
+        float d = length(dipUV - fp);
         float pulse = pow(0.5 + 0.5 * sin(iTime * (1.1 + fi * 0.25) + fi * 3.7), 2.5);
-        float orb = exp(-d * 115.0) * 0.55 + exp(-d * 30.0) * 0.14;
+        float orb = exp(-d * 130.0) * 0.55 + exp(-d * 34.0) * 0.14;
         col += KISEKI_ACCENT_SECONDARY * orb * pulse * bgMask;
     }
 #else
@@ -115,10 +116,10 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
             sin(iTime * (0.28 + fi * 0.06) + fi * 2.1) * 0.075,
             cos(iTime * (0.22 + fi * 0.05) + fi * 1.7) * 0.055
         );
-        vec2 fp = vec2((center.x + wander.x) * aspect, center.y + wander.y);
-        float d = length(aspectUV - fp);
+        vec2 fp = (center + wander) * dipSize;
+        float d = length(dipUV - fp);
         float pulse = pow(0.5 + 0.5 * sin(iTime * (1.1 + fi * 0.25) + fi * 3.7), 2.5);
-        float orb = exp(-d * 115.0) * 0.55 + exp(-d * 30.0) * 0.14;
+        float orb = exp(-d * 130.0) * 0.55 + exp(-d * 34.0) * 0.14;
         col += KISEKI_ACCENT_SECONDARY * orb * pulse * bgMask;
     }
 #endif

@@ -20,12 +20,25 @@ pub const V1_END: &str = "# <<< kiseki-terminal <<<";
 pub const V1_LUA_BEGIN: &str = "-- >>> kiseki-terminal >>>";
 /// v1 Lua closing marker.
 pub const V1_LUA_END: &str = "-- <<< kiseki-terminal <<<";
-/// Marker written at the top of every v1 shim.
+/// Marker written at the top of every v1 shim (POSIX shell / PowerShell).
 pub const V1_SHIM_MARKER: &str = "# kiseki-terminal-shim";
+/// All recognised v1 shim markers across shell, batch (`.cmd`/`.bat`) and PowerShell scripts.
+const V1_SHIM_MARKERS: &[&str] = &[
+    V1_SHIM_MARKER,
+    "REM kiseki-terminal-shim",
+    "rem kiseki-terminal-shim",
+    ":: kiseki-terminal-shim",
+];
 /// The eight unprefixed shims v1 wrote to `$PATH`.
 pub const V1_SHIM_NAMES: &[&str] = &[
     "theme", "themes", "live", "motion", "crt", "termbg", "termfont", "fetch",
 ];
+
+fn has_v1_shim_marker(contents: &str) -> bool {
+    V1_SHIM_MARKERS
+        .iter()
+        .any(|marker| contents.contains(marker))
+}
 
 /// Preferences extracted from the v1 directory.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -233,7 +246,7 @@ impl MigrationPlan {
                         continue;
                     }
                     let contents = platform.read_to_string(path)?.unwrap_or_default();
-                    if !contents.contains(V1_SHIM_MARKER) {
+                    if !has_v1_shim_marker(&contents) {
                         report.notes.push(format!(
                             "kept {}: no v1 shim marker found",
                             path.display()
@@ -349,6 +362,17 @@ pub fn detect_v1(platform: &dyn Platform) -> Result<Option<V1Detection>> {
     }
 
     let mut shims = Vec::new();
+    let mut seen_shims = std::collections::BTreeSet::new();
+    let mut push_shim = |path: PathBuf| {
+        let key = if platform.os() == OsKind::Windows {
+            path.to_string_lossy().replace('\\', "/").to_ascii_lowercase()
+        } else {
+            path.to_string_lossy().into_owned()
+        };
+        if seen_shims.insert(key) {
+            shims.push(path);
+        }
+    };
     if let Some(legacy) = legacy_dir.as_ref() {
         let installed = legacy.join("installed-shims.txt");
         if let Ok(Some(contents)) = platform.read_to_string(&installed) {
@@ -358,22 +382,27 @@ pub fn detect_v1(platform: &dyn Platform) -> Result<Option<V1Detection>> {
                     continue;
                 }
                 let path = PathBuf::from(line);
-                if path.exists() {
-                    shims.push(path);
+                if platform.exists(&path) {
+                    push_shim(path);
                 }
             }
         }
     }
-    if shims.is_empty() {
-        for dir in shim_dirs(platform) {
-            for name in V1_SHIM_NAMES {
-                let path = dir.join(name);
+    let extensions: &[&str] = if platform.os() == OsKind::Windows {
+        &["", ".cmd", ".bat", ".ps1"]
+    } else {
+        &[""]
+    };
+    for dir in shim_dirs(platform) {
+        for name in V1_SHIM_NAMES {
+            for ext in extensions {
+                let path = dir.join(format!("{name}{ext}"));
                 if !platform.exists(&path) {
                     continue;
                 }
                 if let Ok(Some(contents)) = platform.read_to_string(&path) {
-                    if contents.contains(V1_SHIM_MARKER) {
-                        shims.push(path);
+                    if has_v1_shim_marker(&contents) {
+                        push_shim(path);
                     }
                 }
             }
@@ -445,7 +474,7 @@ pub fn is_v1_shim(platform: &dyn Platform, path: &Path) -> bool {
         .read_to_string(path)
         .ok()
         .flatten()
-        .is_some_and(|contents| contents.contains(V1_SHIM_MARKER))
+        .is_some_and(|contents| has_v1_shim_marker(&contents))
 }
 
 fn candidate_shell_configs(platform: &dyn Platform) -> Vec<PathBuf> {
@@ -467,16 +496,21 @@ fn candidate_shell_configs(platform: &dyn Platform) -> Vec<PathBuf> {
     ];
     match platform.os() {
         OsKind::Windows => {
-            paths.push(
-                home.join("Documents")
-                    .join("PowerShell")
-                    .join("Microsoft.PowerShell_profile.ps1"),
-            );
-            paths.push(
-                home.join("Documents")
-                    .join("WindowsPowerShell")
-                    .join("Microsoft.PowerShell_profile.ps1"),
-            );
+            let mut seen = std::collections::BTreeSet::new();
+            for docs_dir in kiseki_platform::windows_documents_dirs(platform) {
+                for shell_dir in ["PowerShell", "WindowsPowerShell"] {
+                    for profile_name in ["Microsoft.PowerShell_profile.ps1", "profile.ps1"] {
+                        let candidate = docs_dir.join(shell_dir).join(profile_name);
+                        let key = candidate
+                            .to_string_lossy()
+                            .replace('\\', "/")
+                            .to_ascii_lowercase();
+                        if seen.insert(key) {
+                            paths.push(candidate);
+                        }
+                    }
+                }
+            }
         }
         OsKind::MacOs | OsKind::Linux => {
             paths.push(
@@ -490,18 +524,29 @@ fn candidate_shell_configs(platform: &dyn Platform) -> Vec<PathBuf> {
 }
 
 fn shim_dirs(platform: &dyn Platform) -> Vec<PathBuf> {
-    let home = platform
+    let mut dirs = Vec::new();
+    if let Some(home) = platform
         .env_var("HOME")
         .or_else(|| platform.env_var("USERPROFILE"))
-        .map(PathBuf::from);
-    match home {
-        Some(home) => vec![
-            home.join(".local").join("bin"),
-            home.join(".kiseki-terminal").join("bin"),
-            home.join(".config").join("kiseki-terminal").join("bin"),
-        ],
-        None => Vec::new(),
+        .map(PathBuf::from)
+    {
+        dirs.push(home.join(".local").join("bin"));
+        dirs.push(home.join(".kiseki-terminal").join("bin"));
+        dirs.push(home.join(".config").join("kiseki-terminal").join("bin"));
+        if platform.os() == OsKind::Windows {
+            dirs.push(home.join("bin"));
+        }
     }
+    if platform.os() == OsKind::Windows {
+        if let Some(local) = platform
+            .env_var("LOCALAPPDATA")
+            .filter(|value| !value.trim().is_empty())
+            .map(PathBuf::from)
+        {
+            dirs.push(local.join("kiseki-terminal").join("bin"));
+        }
+    }
+    dirs
 }
 
 fn read_preferences(platform: &dyn Platform, legacy: Option<&Path>) -> Result<V1Preferences> {
@@ -1232,5 +1277,66 @@ mod tests {
             Some("Maple Mono NF CN")
         );
         assert_eq!(detection.preferences.font_size_pt, None);
+    }
+
+    #[test]
+    fn windows_detects_onedrive_documents_profiles_and_batch_shims() {
+        let (dir, platform) = platform();
+        platform.set_os(OsKind::Windows);
+        platform.set_env("USERPROFILE", &dir.path().to_string_lossy());
+        let onedrive = dir.path().join("OneDrive");
+        platform.set_env("OneDrive", &onedrive.to_string_lossy());
+
+        // v1 profile hooks in OneDrive\Documents (PS7) and OneDrive\文档 (PS 5.1).
+        let ps7 = onedrive
+            .join("Documents")
+            .join("PowerShell")
+            .join("Microsoft.PowerShell_profile.ps1");
+        let ps51 = onedrive
+            .join("文档")
+            .join("WindowsPowerShell")
+            .join("Microsoft.PowerShell_profile.ps1");
+        let hook_body = format!("# user line\n{V1_BEGIN}\n. ~/.config/kiseki-terminal/profile-loader.ps1\n{V1_END}\n");
+        platform.write_preserving_symlinks(&ps7, hook_body.as_bytes()).unwrap();
+        platform.write_preserving_symlinks(&ps51, hook_body.as_bytes()).unwrap();
+
+        // Windows .cmd / .bat / .ps1 shims plus an unrelated .cmd that must survive.
+        let bin = dir.path().join(".local").join("bin");
+        let cmd_shim = bin.join("themes.cmd");
+        let bat_shim = bin.join("theme.bat");
+        let ps1_shim = bin.join("live.ps1");
+        let user_cmd = bin.join("fetch.cmd");
+        platform
+            .write_preserving_symlinks(&cmd_shim, b"@echo off\r\nREM kiseki-terminal-shim\r\n")
+            .unwrap();
+        platform
+            .write_preserving_symlinks(&bat_shim, b"@echo off\r\n:: kiseki-terminal-shim\r\n")
+            .unwrap();
+        platform
+            .write_preserving_symlinks(&ps1_shim, b"# kiseki-terminal-shim\n")
+            .unwrap();
+        platform
+            .write_preserving_symlinks(&user_cmd, b"@echo off\r\necho user tool\r\n")
+            .unwrap();
+
+        let detection = detect_v1(&platform).unwrap().unwrap();
+        let cfg_paths = detection.config_paths();
+        assert!(cfg_paths.contains(&&ps7), "missing OneDrive Documents profile: {cfg_paths:?}");
+        assert!(cfg_paths.contains(&&ps51), "missing OneDrive 中文文档 profile: {cfg_paths:?}");
+        assert!(detection.shims.contains(&cmd_shim), "{:?}", detection.shims);
+        assert!(detection.shims.contains(&bat_shim), "{:?}", detection.shims);
+        assert!(detection.shims.contains(&ps1_shim), "{:?}", detection.shims);
+        assert!(!detection.shims.contains(&user_cmd));
+
+        let plan = plan_migration(&platform, detection).unwrap();
+        let report = plan.execute(&platform).unwrap();
+        assert_eq!(report.removed_marker_blocks.len(), 2);
+        assert_eq!(report.deleted_shims.len(), 3);
+        assert!(!std::fs::read_to_string(&ps7).unwrap().contains(V1_BEGIN));
+        assert!(!std::fs::read_to_string(&ps51).unwrap().contains(V1_BEGIN));
+        assert!(!cmd_shim.exists());
+        assert!(!bat_shim.exists());
+        assert!(!ps1_shim.exists());
+        assert!(user_cmd.exists());
     }
 }

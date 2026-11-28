@@ -198,6 +198,126 @@ impl KisekiPaths {
     }
 }
 
+/// Queries Windows `SHGetKnownFolderPath(FOLDERID_Documents)` for the real
+/// "My Documents" directory (which OneDrive Known Folder Move often redirects
+/// to `OneDrive\Documents` or localized `OneDrive\文档`).
+#[cfg(windows)]
+pub fn windows_known_documents_dir() -> Option<PathBuf> {
+    use std::ffi::OsString;
+    use std::os::windows::ffi::OsStringExt;
+    use std::ptr;
+
+    #[repr(C)]
+    struct Guid {
+        data1: u32,
+        data2: u16,
+        data3: u16,
+        data4: [u8; 8],
+    }
+
+    // FOLDERID_Documents = {FDD39AD0-238F-46AF-ADB4-6C85480369C7}
+    const FOLDERID_DOCUMENTS: Guid = Guid {
+        data1: 0xFDD3_9AD0,
+        data2: 0x238F,
+        data3: 0x46AF,
+        data4: [0xAD, 0xB4, 0x6C, 0x85, 0x48, 0x03, 0x69, 0xC7],
+    };
+
+    #[link(name = "shell32")]
+    extern "system" {
+        fn SHGetKnownFolderPath(
+            rfid: *const Guid,
+            dw_flags: u32,
+            h_token: *mut std::ffi::c_void,
+            ppsz_path: *mut *mut u16,
+        ) -> i32;
+    }
+
+    #[link(name = "ole32")]
+    extern "system" {
+        fn CoTaskMemFree(pv: *mut std::ffi::c_void);
+    }
+
+    let mut raw_ptr: *mut u16 = ptr::null_mut();
+    // SAFETY: `FOLDERID_DOCUMENTS` is a valid static GUID and `raw_ptr` is a
+    // valid out-pointer. If S_OK (0), Windows allocates a NUL-terminated UTF-16
+    // buffer owned by the caller and freed with `CoTaskMemFree`.
+    let hr = unsafe { SHGetKnownFolderPath(&FOLDERID_DOCUMENTS, 0, ptr::null_mut(), &mut raw_ptr) };
+    if hr != 0 || raw_ptr.is_null() {
+        return None;
+    }
+    let path = unsafe {
+        let mut len = 0usize;
+        while *raw_ptr.add(len) != 0 {
+            len += 1;
+        }
+        let slice = std::slice::from_raw_parts(raw_ptr, len);
+        let os_str = OsString::from_wide(slice);
+        CoTaskMemFree(raw_ptr.cast());
+        PathBuf::from(os_str)
+    };
+    if path.as_os_str().is_empty() {
+        None
+    } else {
+        Some(path)
+    }
+}
+
+#[cfg(not(windows))]
+pub fn windows_known_documents_dir() -> Option<PathBuf> {
+    None
+}
+
+/// Returns candidate Windows "Documents" directories in priority order:
+/// 1. `SHGetKnownFolderPath(FOLDERID_Documents)` (real host only, never mocks)
+/// 2. `%USERPROFILE%\Documents` (or `$HOME/Documents`)
+/// 3. `%OneDrive%`, `%OneDriveConsumer%`, `%OneDriveCommercial%` under both
+///    `Documents` and localized `文档`.
+///
+/// Paths are deduplicated case-insensitively with slash normalization.
+pub fn windows_documents_dirs(platform: &dyn crate::Platform) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    let mut push_unique = |candidate: PathBuf| {
+        let key = candidate
+            .to_string_lossy()
+            .replace('\\', "/")
+            .trim_end_matches('/')
+            .to_ascii_lowercase();
+        if !key.is_empty() && seen.insert(key) {
+            dirs.push(candidate);
+        }
+    };
+
+    if platform.os() == OsKind::Windows && !platform.is_mock() {
+        if let Some(known) = windows_known_documents_dir() {
+            push_unique(known);
+        }
+    }
+
+    if let Some(home) = platform
+        .env_var("USERPROFILE")
+        .or_else(|| platform.env_var("HOME"))
+        .filter(|value| !value.trim().is_empty())
+        .map(PathBuf::from)
+    {
+        push_unique(home.join("Documents"));
+    }
+
+    for var in ["OneDrive", "OneDriveConsumer", "OneDriveCommercial"] {
+        if let Some(root) = platform
+            .env_var(var)
+            .filter(|value| !value.trim().is_empty())
+            .map(PathBuf::from)
+        {
+            push_unique(root.join("Documents"));
+            push_unique(root.join("文档"));
+        }
+    }
+
+    dirs
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -290,5 +410,32 @@ mod tests {
         assert_eq!(paths.shaders_dir(), Path::new("/c/generated/shaders"));
         assert_eq!(paths.journal_dir(), Path::new("/d/journal"));
         assert_eq!(paths.official_themes_dir(), Path::new("/d/themes/official"));
+    }
+
+    #[test]
+    fn windows_documents_dirs_collects_userprofile_and_onedrive_variants() {
+        let dir = tempfile::tempdir().unwrap();
+        let platform = crate::MockPlatform::new(dir.path());
+        platform.set_os(OsKind::Windows);
+        platform.set_env("USERPROFILE", r"C:\Users\demo");
+        platform.set_env("OneDrive", r"C:\Users\demo\OneDrive");
+        platform.set_env("OneDriveConsumer", r"c:\users\demo\onedrive");
+        platform.set_env("OneDriveCommercial", r"C:\Users\demo\OneDrive - Corp");
+
+        let dirs = windows_documents_dirs(&platform);
+        let normalized: Vec<String> = dirs
+            .iter()
+            .map(|p| p.to_string_lossy().replace('\\', "/"))
+            .collect();
+        assert_eq!(
+            normalized,
+            vec![
+                "C:/Users/demo/Documents",
+                "C:/Users/demo/OneDrive/Documents",
+                "C:/Users/demo/OneDrive/文档",
+                "C:/Users/demo/OneDrive - Corp/Documents",
+                "C:/Users/demo/OneDrive - Corp/文档",
+            ]
+        );
     }
 }

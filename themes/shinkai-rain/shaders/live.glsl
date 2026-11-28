@@ -18,8 +18,8 @@ vec3 kiseki_unpremul(vec4 texel) {
     return texel.rgb / max(texel.a, 0.001);
 }
 
-float kiseki_rain_layer(vec2 uv, float cols, float speed, float seed) {
-    vec2 ruv = vec2(uv.x + uv.y * 0.22, uv.y);
+float kiseki_rain_layer(vec2 dipUV, float cols, float speed, float seed, float halfWidth) {
+    vec2 ruv = vec2(dipUV.x + dipUV.y * 0.22, dipUV.y);
     ruv.x *= cols;
     float colId = floor(ruv.x);
     float xLocal = fract(ruv.x) - 0.5;
@@ -36,7 +36,7 @@ float kiseki_rain_layer(vec2 uv, float cols, float speed, float seed) {
     }
 
     float xOff = (h2 - 0.76) * 0.55;
-    float streakX = 1.0 - smoothstep(0.0, 0.055, abs(xLocal - xOff));
+    float streakX = 1.0 - smoothstep(0.0, halfWidth, abs(xLocal - xOff));
     float streakY = smoothstep(0.0, 0.65, yLocal) * (1.0 - smoothstep(0.84, 1.0, yLocal));
     return streakX * streakY * (0.45 + 0.55 * h);
 }
@@ -49,7 +49,6 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
 
     float bgMask = kiseki_bg_mask(term, uv);
     float narrow = kiseki_narrow_factor(res);
-    float aspect = res.x / max(res.y, 1.0);
 
     // --- 1. Subtle wet pavement shimmer strictly in bottom-right walkway ----
     float puddleMask = smoothstep(0.76, 0.86, uv.x) * smoothstep(0.72, 0.82, uv.y) * narrow;
@@ -69,24 +68,34 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
     float breathe = 0.5 + 0.5 * sin(iTime * KISEKI_PARAM_BOKEH_PULSE_HZ + uv.x * 3.0);
     col += col * bokehMask * (0.14 * breathe);
 
-    // --- 3. Parallax falling Tokyo night rain streaks -----------------------
-    vec2 aspectUV = vec2(uv.x * aspect, uv.y);
+    // --- 3. Parallax falling Tokyo night rain streaks (DIP-normalized) ------
+    float refUnit = max(clamp(min(res.x, res.y), 720.0, 1350.0), 1.0);
+    vec2 dipUV = fragCoord / refUnit;
+    float dpiScale = clamp(min(res.x, res.y) / 900.0, 1.0, 2.0);
     float speed = KISEKI_PARAM_RAIN_SPEED;
-    float rainFar = kiseki_rain_layer(aspectUV, 42.0, 1.35 * speed, 1.0);
+    float codeRainFade = mix(
+        0.52,
+        1.0,
+        smoothstep(KISEKI_SAFE_ZONE_END_X - 0.14, KISEKI_SAFE_ZONE_END_X + 0.16, uv.x)
+    );
+
+    float farHalf = max(min(0.042, min(0.95 * dpiScale, 1.45) * 46.0 / refUnit), 0.004);
+    float rainFar = kiseki_rain_layer(dipUV, 46.0, 1.35 * speed, 1.0, farHalf);
 
     vec3 aquaRain = mix(KISEKI_ACCENT_PRIMARY, vec3(0.55, 0.88, 0.96), 0.35);
     float rightWarm = smoothstep(0.55, 0.90, uv.x) * 0.35;
     vec3 rainCol = mix(aquaRain, KISEKI_ACCENT_SECONDARY, rightWarm);
-    col += rainCol * (rainFar * 0.14) * bgMask;
+    col += rainCol * (rainFar * 0.14) * codeRainFade * bgMask;
 
 #if KISEKI_QUALITY_LEVEL >= 2
-    float rainNear = kiseki_rain_layer(aspectUV, 26.0, 2.05 * speed, 7.3);
-    col += rainCol * (rainNear * 0.20) * bgMask;
+    float nearHalf = max(min(0.045, min(1.25 * dpiScale, 1.85) * 28.0 / refUnit), 0.004);
+    float rainNear = kiseki_rain_layer(dipUV, 28.0, 2.05 * speed, 7.3, nearHalf);
+    col += rainCol * (rainNear * 0.20) * codeRainFade * bgMask;
 
     // --- 4. Concentric puddle raindrop ring highlights in wet walkway -------
     if (puddleMask > 0.05) {
-        vec2 pCell = floor(aspectUV * 10.0);
-        vec2 pLoc = fract(aspectUV * 10.0) - 0.5;
+        vec2 pCell = floor(dipUV * 10.0);
+        vec2 pLoc = fract(dipUV * 10.0) - 0.5;
         float ph = kiseki_hash21(pCell + 19.1);
         float pt = fract(iTime * KISEKI_PARAM_PUDDLE_RING_RATE + ph);
         float rad = pt * 0.42;

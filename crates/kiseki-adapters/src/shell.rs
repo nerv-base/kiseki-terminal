@@ -247,23 +247,49 @@ impl PowerShellAdapter {
         };
         match platform.os() {
             OsKind::Windows => {
-                let pwsh7 = home
-                    .join("Documents")
+                let doc_dirs = kiseki_platform::windows_documents_dirs(platform);
+                let primary_docs = doc_dirs
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| home.join("Documents"));
+                let pwsh7 = primary_docs
                     .join("PowerShell")
                     .join("Microsoft.PowerShell_profile.ps1");
-                let ps51 = home
-                    .join("Documents")
+                let ps51 = primary_docs
                     .join("WindowsPowerShell")
                     .join("Microsoft.PowerShell_profile.ps1");
                 let has_pwsh7 = platform.which("pwsh").is_some()
                     || platform.inspect(&pwsh7) != PathKind::Missing;
                 let has_ps51 = platform.which("powershell").is_some()
                     || platform.inspect(&ps51) != PathKind::Missing;
-                match (has_pwsh7, has_ps51) {
+                let mut paths = match (has_pwsh7, has_ps51) {
                     (true, true) => vec![pwsh7, ps51],
                     (false, true) => vec![ps51],
                     _ => vec![pwsh7],
+                };
+                // Also include any already-existing PowerShell profiles under
+                // secondary Windows Documents roots (e.g. OneDrive vs local).
+                let mut seen: std::collections::BTreeSet<String> = paths
+                    .iter()
+                    .map(|p| p.to_string_lossy().replace('\\', "/").to_ascii_lowercase())
+                    .collect();
+                for docs_dir in doc_dirs.iter().skip(1) {
+                    for sub in ["PowerShell", "WindowsPowerShell"] {
+                        let candidate = docs_dir
+                            .join(sub)
+                            .join("Microsoft.PowerShell_profile.ps1");
+                        if platform.inspect(&candidate) != PathKind::Missing {
+                            let key = candidate
+                                .to_string_lossy()
+                                .replace('\\', "/")
+                                .to_ascii_lowercase();
+                            if seen.insert(key) {
+                                paths.push(candidate);
+                            }
+                        }
+                    }
                 }
+                paths
             }
             OsKind::MacOs | OsKind::Linux => vec![home
                 .join(".config")

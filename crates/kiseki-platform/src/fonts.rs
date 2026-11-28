@@ -88,9 +88,21 @@ pub fn resolve_font_id(id: &str) -> Option<&'static FontCatalogEntry> {
 #[serde(rename_all = "camelCase")]
 pub struct FontFaceInfo {
     pub family: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub aliases: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub post_script_name: Option<String>,
     pub path: PathBuf,
+}
+
+impl FontFaceInfo {
+    fn matches_family(&self, family: &str) -> bool {
+        self.family.eq_ignore_ascii_case(family)
+            || self
+                .aliases
+                .iter()
+                .any(|alias| alias.eq_ignore_ascii_case(family))
+    }
 }
 
 /// Every face found in the scanned directories.
@@ -108,6 +120,11 @@ impl FontInventory {
         for face in faces {
             if !self.families.contains(&face.family) {
                 self.families.insert(face.family.clone());
+            }
+            for alias in &face.aliases {
+                if !self.families.contains(alias) {
+                    self.families.insert(alias.clone());
+                }
             }
             if let Some(post_script) = &face.post_script_name {
                 self.post_script_names.insert(post_script.clone());
@@ -168,7 +185,7 @@ struct DiskFontCache {
     entries: BTreeMap<PathBuf, CacheEntry>,
 }
 
-const FONT_CACHE_VERSION: u32 = 2;
+const FONT_CACHE_VERSION: u32 = 3;
 
 /// Caches parsed faces per directory.
 ///
@@ -339,28 +356,72 @@ fn is_font_file(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-/// Reads the family and PostScript names out of a font file.
+/// Reads the family (preferring OpenType Typographic Family ID 16 as DirectWrite
+/// does, falling back to legacy Family ID 1) and PostScript names out of a font file.
 fn parse_face(path: &Path) -> Option<FontFaceInfo> {
     let data = std::fs::read(path).ok()?;
     // Collections contain several faces; index 0 is the regular weight in every
     // font we ship, and it keeps the scan cost flat.
     let face = ttf_parser::Face::parse(&data, 0).ok()?;
-    let mut family = None;
-    let mut post_script = None;
+    let mut typographic_en_us: Option<String> = None;
+    let mut typographic_any: Option<String> = None;
+    let mut legacy_en_us: Option<String> = None;
+    let mut legacy_any: Option<String> = None;
+    let mut all_names: Vec<String> = Vec::new();
+    let mut post_script: Option<String> = None;
     for name in face.names() {
         if !name.is_unicode() {
             continue;
         }
-        if name.name_id == ttf_parser::name_id::FAMILY && family.is_none() {
-            family = name.to_string();
-        }
-        if name.name_id == ttf_parser::name_id::POST_SCRIPT_NAME && post_script.is_none() {
-            post_script = name.to_string();
+        let is_en_us = name.language_id == 0x0409;
+        match name.name_id {
+            ttf_parser::name_id::TYPOGRAPHIC_FAMILY => {
+                if let Some(text) = name.to_string().filter(|s| !s.trim().is_empty()) {
+                    if is_en_us && typographic_en_us.is_none() {
+                        typographic_en_us = Some(text.clone());
+                    }
+                    if typographic_any.is_none() {
+                        typographic_any = Some(text.clone());
+                    }
+                    all_names.push(text);
+                }
+            }
+            ttf_parser::name_id::FAMILY => {
+                if let Some(text) = name.to_string().filter(|s| !s.trim().is_empty()) {
+                    if is_en_us && legacy_en_us.is_none() {
+                        legacy_en_us = Some(text.clone());
+                    }
+                    if legacy_any.is_none() {
+                        legacy_any = Some(text.clone());
+                    }
+                    all_names.push(text);
+                }
+            }
+            ttf_parser::name_id::POST_SCRIPT_NAME if post_script.is_none() || is_en_us => {
+                if let Some(text) = name.to_string().filter(|s| !s.trim().is_empty()) {
+                    post_script = Some(text);
+                }
+            }
+            _ => {}
         }
     }
-    let family = family?;
+    let family = typographic_en_us
+        .or(typographic_any)
+        .or(legacy_en_us)
+        .or(legacy_any)?;
+    let mut aliases = Vec::new();
+    for candidate in all_names {
+        if !candidate.eq_ignore_ascii_case(&family)
+            && !aliases
+                .iter()
+                .any(|existing: &String| existing.eq_ignore_ascii_case(&candidate))
+        {
+            aliases.push(candidate);
+        }
+    }
     Some(FontFaceInfo {
         family,
+        aliases,
         post_script_name: post_script,
         path: path.to_path_buf(),
     })
@@ -447,24 +508,27 @@ fn resolve_one(requested: &str, inventory: &FontInventory, os: OsKind) -> FontSt
                     path: inventory
                         .faces
                         .iter()
-                        .find(|face| face.family.eq_ignore_ascii_case(canonical))
+                        .find(|face| face.matches_family(canonical))
                         .map(|face| face.path.clone()),
                 };
             }
         }
         for post_script in &entry.post_script_names {
             if inventory.has_post_script_name(post_script) {
+                let matched_face = inventory.faces.iter().find(|face| {
+                    face.post_script_name
+                        .as_deref()
+                        .is_some_and(|ps| ps.eq_ignore_ascii_case(post_script))
+                });
                 return FontStatus {
                     requested: requested.to_string(),
                     catalog_id: Some(entry.id.clone()),
-                    resolved_family: entry
-                        .families
-                        .for_os(os)
-                        .first()
-                        .cloned()
+                    resolved_family: matched_face
+                        .map(|face| face.family.clone())
+                        .or_else(|| entry.families.for_os(os).first().cloned())
                         .unwrap_or_else(|| entry.display_name.clone()),
                     installed: true,
-                    path: None,
+                    path: matched_face.map(|face| face.path.clone()),
                 };
             }
         }
@@ -492,7 +556,7 @@ fn resolve_one(requested: &str, inventory: &FontInventory, os: OsKind) -> FontSt
             inventory
                 .faces
                 .iter()
-                .find(|face| face.family.eq_ignore_ascii_case(canonical))
+                .find(|face| face.matches_family(canonical))
                 .map(|face| face.path.clone())
         }),
     }
@@ -835,5 +899,117 @@ mod tests {
 
         let windows = default_font_dirs(OsKind::Windows, Some(home), &env);
         assert!(!windows.is_empty());
+    }
+
+    #[test]
+    fn scanner_prefers_typographic_family_id16_and_keeps_legacy_id1_alias() {
+        fn be16(value: u16) -> [u8; 2] {
+            value.to_be_bytes()
+        }
+        fn be32(value: u32) -> [u8; 4] {
+            value.to_be_bytes()
+        }
+
+        let mut head = vec![0u8; 54];
+        head[0..4].copy_from_slice(&be32(0x0001_0000));
+        head[12..16].copy_from_slice(&be32(0x5F0F_3CF5));
+        head[18..20].copy_from_slice(&be16(1000));
+
+        let mut hhea = vec![0u8; 36];
+        hhea[0..4].copy_from_slice(&be32(0x0001_0000));
+        hhea[34..36].copy_from_slice(&be16(1));
+
+        let mut maxp = vec![0u8; 6];
+        maxp[0..4].copy_from_slice(&be32(0x0000_5000));
+        maxp[4..6].copy_from_slice(&be16(1));
+
+        let hmtx = vec![0u8; 4];
+
+        let mut cmap_sub = vec![0u8; 32];
+        cmap_sub[0..2].copy_from_slice(&be16(4));
+        cmap_sub[2..4].copy_from_slice(&be16(32));
+        cmap_sub[6..8].copy_from_slice(&be16(4));
+        cmap_sub[14..16].copy_from_slice(&be16(0x20));
+        cmap_sub[16..18].copy_from_slice(&be16(0xFFFF));
+        cmap_sub[20..22].copy_from_slice(&be16(0x20));
+        cmap_sub[22..24].copy_from_slice(&be16(0xFFFF));
+        cmap_sub[26..28].copy_from_slice(&be16(1));
+        let mut cmap = vec![0u8; 12];
+        cmap[2..4].copy_from_slice(&be16(1));
+        cmap[4..8].copy_from_slice(&be32(3));
+        cmap[8..12].copy_from_slice(&be32(12));
+        cmap.extend_from_slice(&cmap_sub);
+
+        let mut records = Vec::new();
+        let mut strings = Vec::new();
+        for (lang_id, name_id, text) in [
+            (0x0409u16, 1u16, "JetBrainsMono NF"),
+            (0x0409u16, 6u16, "JetBrainsMonoNF-Regular"),
+            (0x0409u16, 16u16, "JetBrainsMono Nerd Font"),
+            (0x0809u16, 16u16, "JetBrainsMono NF"),
+        ] {
+            let mut utf16 = Vec::new();
+            for unit in text.encode_utf16() {
+                utf16.extend_from_slice(&be16(unit));
+            }
+            records.extend_from_slice(&be16(3));
+            records.extend_from_slice(&be16(1));
+            records.extend_from_slice(&be16(lang_id));
+            records.extend_from_slice(&be16(name_id));
+            records.extend_from_slice(&be16(utf16.len() as u16));
+            records.extend_from_slice(&be16(strings.len() as u16));
+            strings.extend_from_slice(&utf16);
+        }
+        let mut name = vec![0u8; 6];
+        name[2..4].copy_from_slice(&be16((records.len() / 12) as u16));
+        name[4..6].copy_from_slice(&be16((6 + records.len()) as u16));
+        name.extend_from_slice(&records);
+        name.extend_from_slice(&strings);
+
+        let tables: Vec<(&str, Vec<u8>)> = vec![
+            ("cmap", cmap),
+            ("head", head),
+            ("hhea", hhea),
+            ("hmtx", hmtx),
+            ("maxp", maxp),
+            ("name", name),
+        ];
+        let count = tables.len() as u16;
+        let mut out = Vec::new();
+        out.extend_from_slice(&be32(0x0001_0000));
+        out.extend_from_slice(&be16(count));
+        out.extend_from_slice(&be16(64));
+        out.extend_from_slice(&be16(3));
+        out.extend_from_slice(&be16(0));
+        let mut offset = 12 + 16 * u32::from(count);
+        for (tag, data) in &tables {
+            out.extend_from_slice(tag.as_bytes());
+            out.extend_from_slice(&be32(0));
+            out.extend_from_slice(&be32(offset));
+            out.extend_from_slice(&be32(data.len() as u32));
+            offset += data.len() as u32;
+            offset += (4 - (data.len() % 4)) as u32 % 4;
+        }
+        for (_, data) in &tables {
+            out.extend_from_slice(data);
+            let padding = (4 - (data.len() % 4)) % 4;
+            out.resize(out.len() + padding, 0);
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let font_path = dir.path().join("JetBrainsMonoNerdFont-Regular.ttf");
+        std::fs::write(&font_path, &out).unwrap();
+
+        let inventory = FontScanner::new().scan(&[dir.path().to_path_buf()]);
+        assert_eq!(inventory.faces.len(), 1);
+        assert_eq!(inventory.faces[0].family, "JetBrainsMono Nerd Font");
+        assert!(inventory.faces[0].aliases.iter().any(|a| a == "JetBrainsMono NF"));
+        assert!(inventory.has_family("JetBrainsMono Nerd Font"));
+        assert!(inventory.has_family("JetBrainsMono NF"));
+
+        let statuses = font_status(&["jetbrains-mono-nf".to_string()], &inventory, OsKind::Windows);
+        assert!(statuses[0].installed);
+        assert_eq!(statuses[0].resolved_family, "JetBrainsMono Nerd Font");
+        assert_eq!(statuses[0].path.as_deref(), Some(font_path.as_path()));
     }
 }

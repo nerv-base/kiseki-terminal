@@ -26,7 +26,7 @@ pub use ghostty::{
     ReloadOutcome,
 };
 pub use lock::{Lock, DEFAULT_TIMEOUT};
-pub use paths::KisekiPaths;
+pub use paths::{windows_documents_dirs, windows_known_documents_dir, KisekiPaths};
 pub use platform::{
     CommandOutput, MockPlatform, Platform, RecordedCommand, SyncStats, SystemPlatform, LOCK_TIMEOUT,
 };

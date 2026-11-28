@@ -57,7 +57,8 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
     // Aspect-ratio fade: 0.0 in narrow split panes, 1.0 on wide windows.
     float narrow = kiseki_narrow_factor(res);
 
-    float scale = max(1.0, round(min(res.x, res.y) / 720.0));
+    float refUnit = max(clamp(min(res.x, res.y), 720.0, 1350.0), 1.0);
+    float dipH = res.y / refUnit;
 
     // --- 1. Periodic micro RGB tactical glitch on the artwork zone only ------
 #if KISEKI_QUALITY_LEVEL >= 2
@@ -95,18 +96,19 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
     float heartbeat = 0.5 + 0.5 * sin(iTime * KISEKI_PARAM_HEARTBEAT_HZ);
     col += col * lineEnergy * (0.18 * heartbeat);
 
-    // --- 3. Slow sweeping MAGI amber tactical scan beam --------------------
+    // --- 3. Slow sweeping MAGI amber tactical scan beam (DIP thickness) ----
     float scanY = fract(iTime / KISEKI_PARAM_SCAN_PERIOD_SEC);
-    float dScan = abs(uv.y - scanY);
-    float scanCore = exp(-dScan * 220.0);
+    float dScanDip = abs(uv.y - scanY) * dipH;
+    float scanCore = exp(-dScanDip * 220.0);
     // NOTE: edges ordered low->high; the tail is expressed as a masked range.
-    float scanTail = (1.0 - smoothstep(0.0, 0.08, scanY - uv.y)) * step(uv.y, scanY) * 0.25;
+    float scanTail = (1.0 - smoothstep(0.0, 0.08, (scanY - uv.y) * dipH)) * step(uv.y, scanY) * 0.25;
 
     col += KISEKI_ACCENT_PRIMARY * (scanCore * 0.15 + scanTail * 0.045) * bgMask;
     col += KISEKI_ACCENT_PRIMARY * lineEnergy * (scanCore * 0.60 + scanTail * 0.35);
 
     // --- 4. AT-Field hexagonal radar shimmer anchored on the art half ------
-    vec2 hexCoord = fragCoord / (KISEKI_PARAM_HEX_CELL_PX * scale);
+    float hexCell = max(KISEKI_PARAM_HEX_CELL_PX * (refUnit / 900.0), 1.0);
+    vec2 hexCoord = fragCoord / hexCell;
     float hexLine = kiseki_hex_edge(hexCoord);
     float hexZone = smoothstep(0.45, 0.82, uv.x)
         * (1.0 - smoothstep(0.0, 0.12, abs(uv.y - 0.5) - 0.38))

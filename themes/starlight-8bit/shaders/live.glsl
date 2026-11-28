@@ -26,7 +26,9 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
 
     float bgMask = kiseki_bg_mask(term, uv);
     float narrow = kiseki_narrow_factor(res);
-    float scale = max(1.0, round(min(res.x, res.y) / 720.0));
+    float refUnit = max(clamp(min(res.x, res.y), 720.0, 1350.0), 1.0);
+    vec2 dipSize = res / refUnit;
+    float scale = max(1.0, round(refUnit / 720.0));
 
     // --- 1. Cozy breathing pulse on glowing cyan monitor & moon highlights --
     float rightZone = smoothstep(0.58, 0.78, uv.x) * narrow;
@@ -55,7 +57,7 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
         }
     }
 
-    // --- 3. Periodic 8-bit diagonal pixel shooting star ---------------------
+    // --- 3. Periodic 8-bit diagonal pixel shooting star (DIP-normalized) ----
     vec3 meteorAdd = vec3(0.0);
 #if KISEKI_QUALITY_LEVEL >= 2
     float cycle = max(KISEKI_PARAM_METEOR_CYCLE_SEC, 1.0);
@@ -66,16 +68,17 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
         vec2 startP = vec2(
             0.10 + kiseki_hash21(vec2(idx, 3.1)) * 0.24,
             0.08 + kiseki_hash21(vec2(idx, 9.7)) * 0.16
-        );
+        ) * dipSize;
         vec2 dir = normalize(vec2(0.86, 0.51));
-        vec2 head = startP + dir * (prog * 0.34);
+        vec2 head = startP + dir * (prog * 0.36);
 
-        vec2 qUV = (floor(fragCoord / max(pixSize, 1.0)) + 0.5) * pixSize / res;
-        vec2 rel = qUV - head;
+        vec2 qDip = (floor(fragCoord / max(pixSize, 1.0)) + 0.5) * pixSize / refUnit;
+        vec2 rel = qDip - head;
         float along = dot(rel, -dir);
         float perp = abs(dot(rel, vec2(-dir.y, dir.x)));
-        if (along >= 0.0 && along < 0.085 && perp < (pixSize * 0.75 / max(res.y, 1.0))) {
-            float tailFrac = along / 0.085;
+        float halfWidthDip = pixSize * 0.75 / refUnit;
+        if (along >= 0.0 && along < 0.095 && perp < halfWidthDip) {
+            float tailFrac = along / 0.095;
             float fade = (1.0 - tailFrac) * sin(prog * 3.14159265);
             vec3 meteorCol = mix(vec3(0.98, 0.99, 1.0), KISEKI_ACCENT_PRIMARY, tailFrac);
             meteorAdd = meteorCol * fade * 0.82 * (1.0 - smoothstep(0.55, 0.70, uv.x)) * bgMask;

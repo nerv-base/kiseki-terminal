@@ -178,6 +178,13 @@ pub struct DepManifest {
     pub rows: Vec<DepRow>,
 }
 
+/// One installed font file and whether its bytes were actually written/replaced on disk.
+#[derive(Debug, Clone)]
+struct InstalledFontFile {
+    path: PathBuf,
+    written_on_disk: bool,
+}
+
 /// Resolved target asset to install (or skip).
 #[derive(Debug, Clone)]
 struct PlannedJob {
@@ -433,7 +440,8 @@ pub fn install_dependencies(
     let worker_count = concurrency.min(queue.lock().unwrap().len().max(1));
     let done_flag = Arc::new(AtomicBool::new(false));
 
-    let newly_installed_fonts: Arc<Mutex<Vec<PathBuf>>> = Arc::new(Mutex::new(Vec::new()));
+    let newly_installed_fonts: Arc<Mutex<Vec<InstalledFontFile>>> =
+        Arc::new(Mutex::new(Vec::new()));
 
     std::thread::scope(|scope| {
         // Spawn live multi-line renderer thread on interactive TTYs.
@@ -482,7 +490,7 @@ pub fn install_dependencies(
                     if show_ui && !is_tty {
                         eprintln!("  ↓ 下载 {}...", job.label);
                     }
-                    let outcome = execute_job(
+                    let (outcome, font_records) = execute_job(
                         idx,
                         job,
                         &agent,
@@ -496,7 +504,7 @@ pub fn install_dependencies(
                     );
                     let _ = fs::remove_dir_all(&job_dir);
                     if outcome.status == "installed" && job.row.kind.is_font() {
-                        fonts_ref.lock().unwrap().extend(outcome.files.iter().cloned());
+                        fonts_ref.lock().unwrap().extend(font_records);
                     }
                     if show_ui && !is_tty {
                         match outcome.status.as_str() {
@@ -554,10 +562,16 @@ pub fn install_dependencies(
 
     if !installed_font_files.is_empty() {
         if let Some(ref fdir) = font_dir {
-            if let Some(warn) = finalize_platform_fonts(platform, fdir, &installed_font_files) {
+            if let Some(warn) =
+                finalize_platform_fonts(platform, fdir, &installed_font_files, options.force)
+            {
                 warnings.push(warn);
             }
         }
+        // Invalidate persisted font scan cache so subsequent `kiseki fonts status`
+        // and `kiseki use` immediately see newly installed families.
+        let _ = platform.remove_file(&paths.cache_dir().join("font-cache.json"));
+        let _ = platform.remove_file(&paths.font_cache_file());
     }
 
     let installed = items.iter().filter(|i| i.status == "installed").count();
@@ -1407,7 +1421,7 @@ fn execute_job(
     receipts_dir: &Path,
     job_dir: &Path,
     progress: &Arc<Mutex<ProgressState>>,
-) -> DepItemOutcome {
+) -> (DepItemOutcome, Vec<InstalledFontFile>) {
     let asset_path = job_dir.join("asset.part");
     let mut candidates: Vec<(String, String)> = mirrors
         .iter()
@@ -1457,16 +1471,19 @@ fn execute_job(
             let mut st = progress.lock().unwrap();
             st.items[idx].phase = ItemPhase::Failed(msg.clone());
         }
-        return DepItemOutcome {
-            id: job.id.clone(),
-            kind: job.row.kind.as_str().to_string(),
-            dest: job.row.dest.clone(),
-            status: "failed".to_string(),
-            bytes: 0,
-            mirror: None,
-            files: Vec::new(),
-            error: Some(msg),
-        };
+        return (
+            DepItemOutcome {
+                id: job.id.clone(),
+                kind: job.row.kind.as_str().to_string(),
+                dest: job.row.dest.clone(),
+                status: "failed".to_string(),
+                bytes: 0,
+                mirror: None,
+                files: Vec::new(),
+                error: Some(msg),
+            },
+            Vec::new(),
+        );
     };
 
     // Extract & install atomically.
@@ -1475,21 +1492,30 @@ fn execute_job(
         st.items[idx].phase = ItemPhase::Installing;
     }
 
-    let install_res = match job.row.kind {
-        DepKind::Tool => install_tool_asset(job, &asset_path, vendor_bin_dir, job_dir, os),
+    let install_res: Result<(Vec<PathBuf>, Vec<InstalledFontFile>)> = match job.row.kind {
+        DepKind::Tool => install_tool_asset(job, &asset_path, vendor_bin_dir, job_dir, os)
+            .map(|files| (files, Vec::new())),
         DepKind::FontRaw => {
             let fdir = font_dir.expect("validated during planning");
-            install_raw_font_asset(job, &asset_path, fdir)
+            install_raw_font_asset(job, &asset_path, fdir).map(|records| {
+                let files = records.iter().map(|r| r.path.clone()).collect();
+                (files, records)
+            })
         }
         DepKind::FontZip => {
             let fdir = font_dir.expect("validated during planning");
             let pattern = job.font_pattern.as_deref().expect("validated during planning");
-            install_zip_font_asset(job, &asset_path, pattern, fdir, receipts_dir, job_dir)
+            install_zip_font_asset(job, &asset_path, pattern, fdir, receipts_dir, job_dir).map(
+                |records| {
+                    let files = records.iter().map(|r| r.path.clone()).collect();
+                    (files, records)
+                },
+            )
         }
     };
 
     match install_res {
-        Ok(files) => {
+        Ok((files, font_records)) => {
             {
                 let mut st = progress.lock().unwrap();
                 st.items[idx].phase = ItemPhase::Done {
@@ -1497,16 +1523,19 @@ fn execute_job(
                     bytes: downloaded_bytes,
                 };
             }
-            DepItemOutcome {
-                id: job.id.clone(),
-                kind: job.row.kind.as_str().to_string(),
-                dest: job.row.dest.clone(),
-                status: "installed".to_string(),
-                bytes: downloaded_bytes,
-                mirror: Some(used_mirror),
-                files,
-                error: None,
-            }
+            (
+                DepItemOutcome {
+                    id: job.id.clone(),
+                    kind: job.row.kind.as_str().to_string(),
+                    dest: job.row.dest.clone(),
+                    status: "installed".to_string(),
+                    bytes: downloaded_bytes,
+                    mirror: Some(used_mirror),
+                    files,
+                    error: None,
+                },
+                font_records,
+            )
         }
         Err(err) => {
             let msg = err.to_string();
@@ -1514,16 +1543,19 @@ fn execute_job(
                 let mut st = progress.lock().unwrap();
                 st.items[idx].phase = ItemPhase::Failed(msg.clone());
             }
-            DepItemOutcome {
-                id: job.id.clone(),
-                kind: job.row.kind.as_str().to_string(),
-                dest: job.row.dest.clone(),
-                status: "failed".to_string(),
-                bytes: downloaded_bytes,
-                mirror: Some(used_mirror),
-                files: Vec::new(),
-                error: Some(msg),
-            }
+            (
+                DepItemOutcome {
+                    id: job.id.clone(),
+                    kind: job.row.kind.as_str().to_string(),
+                    dest: job.row.dest.clone(),
+                    status: "failed".to_string(),
+                    bytes: downloaded_bytes,
+                    mirror: Some(used_mirror),
+                    files: Vec::new(),
+                    error: Some(msg),
+                },
+                Vec::new(),
+            )
         }
     }
 }
@@ -1817,11 +1849,35 @@ fn extract_fastfetch_from_zip(zip_path: &Path, out_path: &Path, bin_name: &str) 
     )))
 }
 
+/// Installs a font file to `dest`, skipping in-place replacement when `dest`
+/// already exists with identical bytes.
+///
+/// Avoiding needless delete+rename churn on unchanged fonts prevents corrupting
+/// the Windows `FontCache` service when a font file is already active. Returns
+/// `true` if `dest` was written/replaced on disk, `false` if already identical.
+fn install_font_file(src: &Path, dest: &Path) -> Result<bool> {
+    if dest.is_file() {
+        if let (Ok(src_meta), Ok(dest_meta)) = (fs::metadata(src), fs::metadata(dest)) {
+            if src_meta.len() == dest_meta.len() {
+                if let (Ok(src_hash), Ok(dest_hash)) = (sha256_file(src), sha256_file(dest)) {
+                    if src_hash == dest_hash {
+                        return Ok(false);
+                    }
+                }
+            }
+        }
+        #[cfg(windows)]
+        unregister_windows_font_resource(dest);
+    }
+    atomic_install_file(src, dest, false)?;
+    Ok(true)
+}
+
 fn install_raw_font_asset(
     job: &PlannedJob,
     asset_path: &Path,
     font_dir: &Path,
-) -> Result<Vec<PathBuf>> {
+) -> Result<Vec<InstalledFontFile>> {
     let name = job
         .row
         .dest
@@ -1831,8 +1887,11 @@ fn install_raw_font_asset(
         return Err(KisekiError::other(format!("unsafe font filename `{name}`")));
     }
     let dest = font_dir.join(name);
-    atomic_install_file(asset_path, &dest, false)?;
-    Ok(vec![dest])
+    let written_on_disk = install_font_file(asset_path, &dest)?;
+    Ok(vec![InstalledFontFile {
+        path: dest,
+        written_on_disk,
+    }])
 }
 
 fn install_zip_font_asset(
@@ -1842,7 +1901,7 @@ fn install_zip_font_asset(
     font_dir: &Path,
     receipts_dir: &Path,
     job_dir: &Path,
-) -> Result<Vec<PathBuf>> {
+) -> Result<Vec<InstalledFontFile>> {
     let regex = Regex::new(pattern_str).map_err(|e| {
         KisekiError::other(format!(
             "invalid font regex `{pattern_str}` for `{}`: {e}",
@@ -1879,14 +1938,15 @@ fn install_zip_font_asset(
         }
 
         let staged_face = job_dir.join(&base_name);
-        let written = copy_bounded_zip_entry(&mut entry, &staged_face, MAX_SINGLE_EXTRACTED_BYTES)?;
-        if written == 0 {
+        let written_bytes =
+            copy_bounded_zip_entry(&mut entry, &staged_face, MAX_SINGLE_EXTRACTED_BYTES)?;
+        if written_bytes == 0 {
             return Err(KisekiError::other(format!(
                 "extracted empty font file `{base_name}` from `{}`",
                 job.id
             )));
         }
-        total_extracted = total_extracted.saturating_add(written);
+        total_extracted = total_extracted.saturating_add(written_bytes);
         if total_extracted > MAX_TOTAL_EXTRACTED_BYTES {
             return Err(KisekiError::other(format!(
                 "font archive `{}` exceeded max total extracted size ({MAX_TOTAL_EXTRACTED_BYTES} bytes)",
@@ -1895,10 +1955,13 @@ fn install_zip_font_asset(
         }
 
         let dest = font_dir.join(&base_name);
-        atomic_install_file(&staged_face, &dest, false)?;
+        let written_on_disk = install_font_file(&staged_face, &dest)?;
         let _ = fs::remove_file(&staged_face);
         installed_names.push(base_name);
-        installed_files.push(dest);
+        installed_files.push(InstalledFontFile {
+            path: dest,
+            written_on_disk,
+        });
     }
 
     if installed_files.is_empty() {
@@ -2135,7 +2198,8 @@ fn download_ofl_license(mirrors: &[String], dest: &Path, timeouts: IoTimeouts) -
 fn finalize_platform_fonts(
     platform: &dyn Platform,
     font_dir: &Path,
-    installed_files: &[PathBuf],
+    installed_files: &[InstalledFontFile],
+    force_refresh: bool,
 ) -> Option<String> {
     match platform.os() {
         OsKind::MacOs => None,
@@ -2161,12 +2225,12 @@ fn finalize_platform_fonts(
             }
             #[cfg(windows)]
             {
-                if let Err(err) = register_windows_fonts(installed_files) {
+                if let Err(err) = register_windows_fonts(installed_files, force_refresh) {
                     return Some(format!("部分字体注册失败: {err}"));
                 }
             }
             #[cfg(not(windows))]
-            let _ = installed_files;
+            let _ = (installed_files, force_refresh);
             None
         }
     }
@@ -2177,13 +2241,36 @@ fn finalize_platform_fonts(
 // ---------------------------------------------------------------------------
 
 #[cfg(windows)]
-fn register_windows_fonts(files: &[PathBuf]) -> Result<()> {
+fn unregister_windows_font_resource(path: &Path) {
+    use std::os::windows::ffi::OsStrExt;
+
+    #[link(name = "gdi32")]
+    extern "system" {
+        fn RemoveFontResourceW(name: *const u16) -> i32;
+    }
+
+    let w_path: Vec<u16> = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    unsafe {
+        let _ = RemoveFontResourceW(w_path.as_ptr());
+    }
+}
+
+#[cfg(windows)]
+fn register_windows_fonts(files: &[InstalledFontFile], force_refresh: bool) -> Result<()> {
     use std::ffi::OsStr;
     use std::os::windows::ffi::OsStrExt;
 
     const HKEY_CURRENT_USER: isize = 0x80000001u32 as isize;
+    const KEY_QUERY_VALUE: u32 = 0x0001;
     const KEY_SET_VALUE: u32 = 0x0002;
     const REG_SZ: u32 = 1;
+    const REG_EXPAND_SZ: u32 = 2;
+    const ERROR_MORE_DATA: i32 = 234;
+    const ERROR_NO_MORE_ITEMS: i32 = 259;
     const HWND_BROADCAST: isize = 0xffff;
     const WM_FONTCHANGE: u32 = 0x001D;
     const SMTO_ABORTIFHUNG: u32 = 0x0002;
@@ -2191,6 +2278,7 @@ fn register_windows_fonts(files: &[PathBuf]) -> Result<()> {
     #[link(name = "gdi32")]
     extern "system" {
         fn AddFontResourceW(name: *const u16) -> i32;
+        fn RemoveFontResourceW(name: *const u16) -> i32;
     }
     #[link(name = "user32")]
     extern "system" {
@@ -2217,6 +2305,17 @@ fn register_windows_fonts(files: &[PathBuf]) -> Result<()> {
             result: *mut isize,
             disposition: *mut u32,
         ) -> i32;
+        fn RegEnumValueW(
+            hkey: isize,
+            index: u32,
+            value_name: *mut u16,
+            cch_value_name: *mut u32,
+            reserved: *const u32,
+            value_type: *mut u32,
+            data: *mut u8,
+            cb_data: *mut u32,
+        ) -> i32;
+        fn RegDeleteValueW(hkey: isize, value_name: *const u16) -> i32;
         fn RegSetValueExW(
             hkey: isize,
             value_name: *const u16,
@@ -2232,6 +2331,21 @@ fn register_windows_fonts(files: &[PathBuf]) -> Result<()> {
         s.encode_wide().chain(std::iter::once(0)).collect()
     }
 
+    fn broadcast_font_change() {
+        let mut ignored: usize = 0;
+        unsafe {
+            let _ = SendMessageTimeoutW(
+                HWND_BROADCAST,
+                WM_FONTCHANGE,
+                0,
+                0,
+                SMTO_ABORTIFHUNG,
+                1000,
+                &mut ignored,
+            );
+        }
+    }
+
     let subkey = wide(OsStr::new(
         r"Software\Microsoft\Windows NT\CurrentVersion\Fonts",
     ));
@@ -2245,7 +2359,7 @@ fn register_windows_fonts(files: &[PathBuf]) -> Result<()> {
             0,
             std::ptr::null(),
             0,
-            KEY_SET_VALUE,
+            KEY_QUERY_VALUE | KEY_SET_VALUE,
             std::ptr::null(),
             &mut hkey,
             &mut disp,
@@ -2257,8 +2371,72 @@ fn register_windows_fonts(files: &[PathBuf]) -> Result<()> {
         )));
     }
 
-    let mut any_added = false;
-    for path in files {
+    // Snapshot existing HKCU Fonts entries so replaced fonts can be unregistered
+    // before re-registering (forcing Windows FontCache to invalidate stale entries
+    // instead of corrupting DirectWrite's system font collection).
+    let mut existing: Vec<(String, String)> = Vec::new();
+    let mut name_buf = vec![0u16; 512];
+    let mut data_buf = vec![0u8; 2048];
+    let mut enum_idx: u32 = 0;
+    loop {
+        let mut cch_name = name_buf.len() as u32;
+        let mut cb_data = data_buf.len() as u32;
+        let mut val_type: u32 = 0;
+        let er = unsafe {
+            RegEnumValueW(
+                hkey,
+                enum_idx,
+                name_buf.as_mut_ptr(),
+                &mut cch_name,
+                std::ptr::null(),
+                &mut val_type,
+                data_buf.as_mut_ptr(),
+                &mut cb_data,
+            )
+        };
+        if er == ERROR_NO_MORE_ITEMS {
+            break;
+        }
+        if er == ERROR_MORE_DATA {
+            let need_name = (cch_name as usize).saturating_add(1);
+            let need_data = cb_data as usize;
+            if need_name <= 32768 && need_data <= 65536 {
+                if need_name > name_buf.len() {
+                    name_buf.resize(need_name, 0);
+                }
+                if need_data > data_buf.len() {
+                    data_buf.resize(need_data, 0);
+                }
+                continue;
+            }
+            enum_idx += 1;
+            continue;
+        }
+        if er != 0 {
+            break;
+        }
+        if val_type == REG_SZ || val_type == REG_EXPAND_SZ {
+            let name = String::from_utf16_lossy(&name_buf[..cch_name as usize]);
+            let units: Vec<u16> = data_buf[..cb_data as usize]
+                .chunks_exact(2)
+                .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                .collect();
+            let trimmed_len = units
+                .iter()
+                .rposition(|&u| u != 0)
+                .map_or(0, |i| i + 1);
+            let value = String::from_utf16_lossy(&units[..trimmed_len]);
+            existing.push((name, value));
+        }
+        enum_idx += 1;
+    }
+
+    let mut to_register: Vec<(Vec<u16>, Vec<u16>)> = Vec::new();
+    let mut unregistered_any = false;
+
+    for entry in files {
+        let path = &entry.path;
+        let written_on_disk = entry.written_on_disk;
         let Some(file_name) = path.file_name().and_then(|s| s.to_str()) else {
             continue;
         };
@@ -2272,9 +2450,49 @@ fn register_windows_fonts(files: &[PathBuf]) -> Result<()> {
             "TrueType"
         };
         let display_name = format!("{stem} ({format_label})");
+        let norm_path = path.to_string_lossy().to_ascii_lowercase();
+        let norm_name = display_name.to_ascii_lowercase();
+
+        let matched_names: Vec<&str> = existing
+            .iter()
+            .filter(|(n, v)| {
+                v.to_ascii_lowercase() == norm_path || n.to_ascii_lowercase() == norm_name
+            })
+            .map(|(n, _)| n.as_str())
+            .collect();
+
         let w_path = wide(path.as_os_str());
         let w_name = wide(OsStr::new(&display_name));
 
+        if written_on_disk || force_refresh {
+            if !matched_names.is_empty() {
+                for existing_name in matched_names {
+                    let w_existing = wide(OsStr::new(existing_name));
+                    unsafe {
+                        let _ = RegDeleteValueW(hkey, w_existing.as_ptr());
+                    }
+                }
+                unsafe {
+                    let _ = RemoveFontResourceW(w_path.as_ptr());
+                }
+                unregistered_any = true;
+            }
+            to_register.push((w_name, w_path));
+        } else if matched_names.is_empty() {
+            // File was already byte-identical on disk but missing from HKCU Fonts.
+            to_register.push((w_name, w_path));
+        }
+    }
+
+    if unregistered_any {
+        // Give the Windows FontCache service a moment to observe the removal
+        // before re-adding the updated font files at the same path.
+        broadcast_font_change();
+        std::thread::sleep(Duration::from_millis(500));
+    }
+
+    let mut any_added = false;
+    for (w_name, w_path) in to_register {
         unsafe {
             let _ = AddFontResourceW(w_path.as_ptr());
             let byte_len = (w_path.len() * 2) as u32;
@@ -2292,18 +2510,9 @@ fn register_windows_fonts(files: &[PathBuf]) -> Result<()> {
 
     unsafe {
         let _ = RegCloseKey(hkey);
-        if any_added {
-            let mut ignored: usize = 0;
-            let _ = SendMessageTimeoutW(
-                HWND_BROADCAST,
-                WM_FONTCHANGE,
-                0,
-                0,
-                SMTO_ABORTIFHUNG,
-                1000,
-                &mut ignored,
-            );
-        }
+    }
+    if any_added {
+        broadcast_font_change();
     }
     Ok(())
 }
@@ -3015,5 +3224,24 @@ mod tests {
         fs::remove_file(font_dir.join("Face-Regular.ttf")).unwrap();
         let (ok3, _) = check_font_zip_receipt(&receipts_dir, "maple-mono-nf-cn", &sha, &font_dir);
         assert!(!ok3);
+    }
+
+    #[test]
+    fn install_font_file_skips_identical_bytes_and_updates_on_change() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("src.ttf");
+        let dest = dir.path().join("fonts").join("Face-Regular.ttf");
+
+        fs::write(&src, b"font-bytes-v1").unwrap();
+        assert!(install_font_file(&src, &dest).unwrap());
+        assert_eq!(fs::read(&dest).unwrap(), b"font-bytes-v1");
+
+        // Re-installing byte-identical content skips the overwrite.
+        assert!(!install_font_file(&src, &dest).unwrap());
+
+        // Updated font bytes replace the destination cleanly.
+        fs::write(&src, b"font-bytes-v2-updated").unwrap();
+        assert!(install_font_file(&src, &dest).unwrap());
+        assert_eq!(fs::read(&dest).unwrap(), b"font-bytes-v2-updated");
     }
 }

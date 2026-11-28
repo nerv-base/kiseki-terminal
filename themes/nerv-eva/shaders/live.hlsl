@@ -38,16 +38,16 @@ float kiseki_hash11(float p) {
     return frac(p);
 }
 
-// Bottom-right "cover" fit, matching tokens.json#atmosphere.wallpaper.
-float2 kiseki_cover_uv(float2 uv, float2 screenSize, float2 imgSize) {
+// Right-anchored "cover" fit with configurable vertical focal anchor.
+float2 kiseki_cover_uv(float2 uv, float2 screenSize, float2 imgSize, float anchorY) {
     float screenAspect = screenSize.x / max(screenSize.y, 1.0);
     float imgAspect = imgSize.x / max(imgSize.y, 1.0);
     float2 outUV = uv;
     if (screenAspect > imgAspect) {
-        float visH = imgAspect / screenAspect;
-        outUV.y = (1.0 - visH) + uv.y * visH;
+        float visH = imgAspect / max(screenAspect, 0.0001);
+        outUV.y = (1.0 - visH) * anchorY + uv.y * visH;
     } else {
-        float visW = screenAspect / imgAspect;
+        float visW = screenAspect / max(imgAspect, 0.0001);
         outUV.x = (1.0 - visW) + uv.x * visW;
     }
     return saturate(outUV);
@@ -66,21 +66,27 @@ float kiseki_hex_edge(float2 p) {
 // template must not redefine it.
 
 float4 main(float4 pos : SV_POSITION, float2 tex : TEXCOORD) : SV_TARGET {
-    float4 term = shaderTexture.Sample(samplerState, tex);
+    float texW, texH;
+    shaderTexture.GetDimensions(texW, texH);
+    float2 texSize = max(float2(texW, texH), float2(1.0, 1.0));
+    float2 uv = saturate(pos.xy / texSize);
+    float4 term = shaderTexture.Load(int3(pos.xy, 0));
 
     float imgW, imgH;
     imageTexture.GetDimensions(imgW, imgH);
-    float2 imgUV = kiseki_cover_uv(tex, Resolution, float2(max(imgW, 1.0), max(imgH, 1.0)));
+    float2 imgSize = max(float2(imgW, imgH), float2(1.0, 1.0));
+    float2 imgUV = kiseki_cover_uv(uv, texSize, imgSize, 0.45);
 
-    float narrow = kiseki_narrow_factor(Resolution);
+    float narrow = kiseki_narrow_factor(texSize);
+    float bgOpacity = KISEKI_BG_OPACITY * lerp(0.28, 1.0, narrow);
 
     // --- 1. Periodic micro RGB horizontal-slice glitch burst ---------------
 #if KISEKI_QUALITY_LEVEL >= 2
     float glitchCycle = frac(Time / KISEKI_PARAM_GLITCH_INTERVAL_SEC);
     float glitchOn = step(glitchCycle, 0.028);
     float stepTick = floor(Time * 28.0);
-    float bandA = step(0.28, tex.y) * step(tex.y, 0.34);
-    float bandB = step(0.62, tex.y) * step(tex.y, 0.67);
+    float bandA = step(0.28, uv.y) * step(uv.y, 0.34);
+    float bandB = step(0.62, uv.y) * step(uv.y, 0.67);
     float sliceMask = saturate(bandA + bandB) * glitchOn * narrow;
     float sliceShift = (kiseki_hash11(stepTick + bandA * 7.0) - 0.5) * 0.014 * sliceMask;
     float chromaOff = (0.0028 * glitchOn) + (0.0045 * sliceMask);
@@ -101,24 +107,26 @@ float4 main(float4 pos : SV_POSITION, float2 tex : TEXCOORD) : SV_TARGET {
     float heartbeat = 0.5 + 0.5 * sin(Time * KISEKI_PARAM_HEARTBEAT_HZ);
     wall += wall * lineEnergy * (0.20 * heartbeat);
 
-    // --- 3. Slow sweeping MAGI amber tactical scan beam -------------------
+    // --- 3. Slow sweeping MAGI amber tactical scan beam (DIP thickness) ---
+    float dipScale = 900.0 * max(Scale, 1.0);
+    float dipH = texSize.y / dipScale;
     float scanY = frac(Time / KISEKI_PARAM_SCAN_PERIOD_SEC);
-    float dScan = abs(tex.y - scanY);
-    float scanCore = exp(-dScan * 220.0);
+    float dScanDip = abs(uv.y - scanY) * dipH;
+    float scanCore = exp(-dScanDip * 220.0);
     // Edges ordered low->high; the tail is a masked band, never a reversed ramp.
-    float scanTail = (1.0 - smoothstep(0.0, 0.08, scanY - tex.y)) * step(tex.y, scanY) * 0.25;
+    float scanTail = (1.0 - smoothstep(0.0, 0.08, (scanY - uv.y) * dipH)) * step(uv.y, scanY) * 0.25;
 
-    float3 animBg = lerp(KISEKI_BASE_BG, wall, KISEKI_BG_OPACITY);
+    float3 animBg = lerp(KISEKI_BASE_BG, wall, bgOpacity);
     animBg += KISEKI_ACCENT_PRIMARY * (scanCore * 0.16 + scanTail * 0.05) * narrow;
     animBg += KISEKI_ACCENT_PRIMARY * lineEnergy * (scanCore * 0.70 + scanTail * 0.45);
 
     // --- 4. AT-Field hexagonal radar shimmer on the art half --------------
     float2 hexCoord = pos.xy / (KISEKI_PARAM_HEX_CELL_PX * max(Scale, 1.0));
     float hexLine = kiseki_hex_edge(hexCoord);
-    float hexZone = smoothstep(0.45, 0.82, tex.x)
-        * (1.0 - smoothstep(0.0, 0.12, abs(tex.y - 0.5) - 0.38))
+    float hexZone = smoothstep(0.45, 0.82, uv.x)
+        * (1.0 - smoothstep(0.0, 0.12, abs(uv.y - 0.5) - 0.38))
         * narrow;
-    float hexWave = 0.5 + 0.5 * sin(Time * 1.1 - tex.x * 4.0 + tex.y * 2.5);
+    float hexWave = 0.5 + 0.5 * sin(Time * 1.1 - uv.x * 4.0 + uv.y * 2.5);
     animBg += lerp(KISEKI_ACCENT_SECONDARY, KISEKI_ACCENT_PRIMARY, hexWave)
         * hexLine * hexZone * (0.05 * hexWave);
 

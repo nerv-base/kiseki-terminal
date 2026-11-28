@@ -326,14 +326,26 @@ fn load_zsh_plugin(out: &mut String, plugin: &str, guard: &str) {
 }
 
 /// Renders `generated/env.ps1`.
-pub fn env_ps1(theme: &ResolvedTheme, config_dir: &Path, policy: PromptPolicy) -> String {
-    env_ps1_with_vendor(theme, config_dir, policy, &config_dir.join("vendor/bin"))
+pub fn env_ps1(
+    theme: &ResolvedTheme,
+    config_dir: &Path,
+    policy: PromptPolicy,
+    aliases: bool,
+) -> String {
+    env_ps1_with_vendor(
+        theme,
+        config_dir,
+        policy,
+        aliases,
+        &config_dir.join("vendor/bin"),
+    )
 }
 
 pub(crate) fn env_ps1_with_vendor(
     theme: &ResolvedTheme,
     config_dir: &Path,
     policy: PromptPolicy,
+    aliases: bool,
     vendor_bin: &Path,
 ) -> String {
     let config_dir_str = config_dir.to_string_lossy().into_owned();
@@ -415,24 +427,241 @@ pub(crate) fn env_ps1_with_vendor(
             out.push_str("    if ($kisekiOmpMod) {\n");
             out.push_str("        try {\n");
             out.push_str("            & $kisekiOmpMod {\n");
-            out.push_str("                if ($null -ne $script:Streaming -and $null -ne $script:Streaming.ServeProcess -and -not $script:Streaming.ServeProcess.HasExited) {\n");
-            out.push_str("                    $script:Streaming.ServeProcess.Kill()\n");
+            out.push_str("                if ($null -ne $script:Streaming) {\n");
+            out.push_str("                    if ($null -ne $script:Streaming.ServeProcess -and -not $script:Streaming.ServeProcess.HasExited) {\n");
+            out.push_str("                        $script:Streaming.ServeProcess.Kill()\n");
+            out.push_str("                    }\n");
+            out.push_str("                    if ($null -ne $script:Streaming.Process -and -not $script:Streaming.Process.HasExited) {\n");
+            out.push_str("                        $script:Streaming.Process.Kill()\n");
+            out.push_str("                    }\n");
+            out.push_str("                    $script:Streaming.ServeProcess = $null\n");
+            out.push_str("                    $script:Streaming.StdIn = $null\n");
+            out.push_str("                    $script:Streaming.Process = $null\n");
+            out.push_str("                    $script:Streaming.State = 'NEW'\n");
+            out.push_str("                    $script:Streaming.Prompt = ''\n");
+            out.push_str("                    $script:Streaming.Transient = ''\n");
+            out.push_str("                    $script:Streaming.Dirty = $false\n");
             out.push_str("                }\n");
             out.push_str("            }\n");
             out.push_str("        } catch {}\n");
             out.push_str("    }\n");
-            out.push_str("    if ($env:POSH_CONFIG -ne $env:POSH_THEME -or $null -eq $kisekiOmpMod) {\n");
+            out.push_str("    $kisekiPoshCur = if ($env:POSH_CONFIG) { $env:POSH_CONFIG.Replace('/', '\\') } else { '' }\n");
+            out.push_str("    $kisekiPoshTarget = $env:POSH_THEME.Replace('/', '\\')\n");
+            out.push_str("    if (-not [string]::Equals($kisekiPoshCur, $kisekiPoshTarget, [System.StringComparison]::OrdinalIgnoreCase) -or $null -eq $kisekiOmpMod) {\n");
             out.push_str("        if ($kisekiOmpMod) {\n");
             out.push_str("            try { Remove-Module -Name 'oh-my-posh-core' -Force -ErrorAction SilentlyContinue } catch {}\n");
             out.push_str("        }\n");
             out.push_str("        $global:_ompInitialized = $false\n");
+            out.push_str("        $env:POSH_CONFIG = $env:POSH_THEME\n");
+            out.push_str("        $env:POSH_SESSION_ID = \"kiseki-$PID-$([guid]::NewGuid().ToString('N'))\"\n");
             out.push_str("        $kisekiOmpShell = if ($PSVersionTable.PSEdition -eq 'Core') { 'pwsh' } else { 'powershell' }\n");
             out.push_str("        & $kisekiOmp init $kisekiOmpShell --config $env:POSH_THEME | Invoke-Expression\n");
             out.push_str("        if (Get-Command _KisekiInstallPromptHook -ErrorAction SilentlyContinue) {\n");
             out.push_str("            _KisekiInstallPromptHook -Candidate $function:prompt\n");
             out.push_str("        }\n");
             out.push_str("    } else {\n");
-            out.push_str("        $env:POSH_SESSION_ID = \"kiseki-$PID-$(Get-Random)\"\n");
+            out.push_str("        $env:POSH_CONFIG = $env:POSH_THEME\n");
+            out.push_str("        $env:POSH_SESSION_ID = \"kiseki-$PID-$([guid]::NewGuid().ToString('N'))\"\n");
+            out.push_str("    }\n");
+            // PowerShell/PSReadLine does not automatically re-invoke `prompt` when the
+            // terminal window is resized (e.g. windowed <-> maximized in Windows Terminal),
+            // leaving Oh My Posh's right-aligned prompt stranded at the previous column.
+            // Watch for terminal width changes only while idle at the prompt using a
+            // one-shot (AutoReset = $false, 50ms) timer armed from PowerShell.OnIdle:
+            // zero events or CPU during command execution, zero key-handler overrides.
+            // Normal width changes re-justify the cached prompt's gap in-memory (~2ms,
+            // zero subprocess); only ultra-narrow overflow transitions invoke Oh My Posh.
+            out.push_str("    if ($kisekiIsTty -and $ExecutionContext.SessionState.LanguageMode -ne 'ConstrainedLanguage' -and -not $global:_KisekiResizeHookInstalled) {\n");
+            out.push_str("        $global:_KisekiResizeHookInstalled = $true\n");
+            out.push_str("        $global:_KisekiAtPrompt = $false\n");
+            out.push_str("        $global:_KisekiRepainting = $false\n");
+            out.push_str("        $global:_KisekiPromptWidth = 0\n");
+            out.push_str("        $global:_KisekiPendingWidth = 0\n");
+            out.push_str("        $global:_KisekiBasePrompt = ''\n");
+            out.push_str("        $global:_KisekiBasePromptWidth = 0\n");
+            out.push_str("        $global:_KisekiBaseExtraLines = 1\n");
+            out.push_str("        $global:_KisekiGapRegex = [regex]'(?<=\\x1b\\[0m)( +)(?=[^\\r\\n])'\n");
+            out.push_str("        try {\n");
+            out.push_str("            $global:_KisekiPromptWidth = $Host.UI.RawUI.WindowSize.Width\n");
+            out.push_str("            $global:_KisekiPendingWidth = $global:_KisekiPromptWidth\n");
+            out.push_str("        } catch {}\n");
+            out.push_str("        function global:_KisekiCaptureBasePrompt($rendered, [int]$width) {\n");
+            out.push_str("            if (-not ($rendered -is [string]) -or [string]::IsNullOrEmpty($rendered) -or $width -le 0) { return }\n");
+            out.push_str("            $lines = $rendered -split \"`n\"\n");
+            out.push_str("            for ($i = 0; $i -lt ($lines.Count - 1); $i++) {\n");
+            out.push_str("                if ($lines[$i].Length -gt 0 -and $global:_KisekiGapRegex.IsMatch($lines[$i])) {\n");
+            out.push_str("                    $global:_KisekiBasePrompt = $rendered\n");
+            out.push_str("                    $global:_KisekiBasePromptWidth = $width\n");
+            out.push_str("                    try { $global:_KisekiBaseExtraLines = (Get-PSReadLineOption).ExtraPromptLineCount } catch { $global:_KisekiBaseExtraLines = 1 }\n");
+            out.push_str("                    return\n");
+            out.push_str("                }\n");
+            out.push_str("            }\n");
+            out.push_str("        }\n");
+            out.push_str("        function global:_KisekiTryFastRejustify([int]$newWidth) {\n");
+            out.push_str("            if ([string]::IsNullOrEmpty($global:_KisekiBasePrompt) -or $global:_KisekiBasePromptWidth -le 0) { return $null }\n");
+            out.push_str("            $delta = $newWidth - $global:_KisekiBasePromptWidth\n");
+            out.push_str("            $lines = $global:_KisekiBasePrompt -split \"`n\"\n");
+            out.push_str("            for ($i = 0; $i -lt ($lines.Count - 1); $i++) {\n");
+            out.push_str("                if ($lines[$i].Length -eq 0) { continue }\n");
+            out.push_str("                $ms = $global:_KisekiGapRegex.Matches($lines[$i])\n");
+            out.push_str("                if ($ms.Count -eq 0) { return $null }\n");
+            out.push_str("                $best = $ms[0]\n");
+            out.push_str("                foreach ($m in $ms) { if ($m.Length -gt $best.Length) { $best = $m } }\n");
+            out.push_str("                $newGap = $best.Length + $delta\n");
+            out.push_str("                if ($newGap -lt 1) { return $null }\n");
+            out.push_str("                $lines[$i] = $lines[$i].Substring(0, $best.Index) + (' ' * $newGap) + $lines[$i].Substring($best.Index + $best.Length)\n");
+            out.push_str("                return \"$([char]27)]7777;$($global:_KisekiBaseExtraLines)$([char]7)\" + ($lines -join \"`n\")\n");
+            out.push_str("            }\n");
+            out.push_str("            return $null\n");
+            out.push_str("        }\n");
+            out.push_str("        function global:_KisekiRepaintPromptOnResize([int]$newWidth, $fastPrompt) {\n");
+            out.push_str("            $ompMod = Get-Module -Name 'oh-my-posh-core'\n");
+            out.push_str("            if ($null -eq $ompMod) { return }\n");
+            out.push_str("            try {\n");
+            out.push_str("                $raw = $Host.UI.RawUI\n");
+            out.push_str("                $oldY = $raw.CursorPosition.Y\n");
+            out.push_str("                $cmd = ''; $cur = 0\n");
+            out.push_str("                try { [Microsoft.PowerShell.PSConsoleReadLine]::GetBufferState([ref]$cmd, [ref]$cur) } catch {}\n");
+            out.push_str("                $useFast = ($fastPrompt -is [string]) -and (-not [string]::IsNullOrEmpty($fastPrompt))\n");
+            out.push_str("                $global:_KisekiRepainting = $true\n");
+            out.push_str("                $renderedOut = $null\n");
+            out.push_str("                try {\n");
+            out.push_str("                    $renderedOut = & $ompMod {\n");
+            out.push_str("                        param($preRendered)\n");
+            out.push_str("                        $prevEnc = [Console]::OutputEncoding\n");
+            out.push_str("                        try {\n");
+            out.push_str("                            [Console]::OutputEncoding = [Text.Encoding]::UTF8\n");
+            out.push_str("                            $text = if (-not [string]::IsNullOrEmpty($preRendered)) { $preRendered } else { (Get-PoshPrompt 'primary') -join \"`n\" }\n");
+            out.push_str("                            if ([string]::IsNullOrEmpty($text)) { return $null }\n");
+            out.push_str("                            if ($null -ne $script:Streaming) {\n");
+            out.push_str("                                $prevState = $script:Streaming.State\n");
+            out.push_str("                                $prevPrompt = $script:Streaming.Prompt\n");
+            out.push_str("                                try {\n");
+            out.push_str("                                    $script:Streaming.Prompt = $text\n");
+            out.push_str("                                    $script:Streaming.State = 'RUNNING'\n");
+            out.push_str("                                    [Microsoft.PowerShell.PSConsoleReadLine]::InvokePrompt()\n");
+            out.push_str("                                } finally {\n");
+            out.push_str("                                    if (-not $global:_ompStreaming) {\n");
+            out.push_str("                                        $script:Streaming.State = $prevState\n");
+            out.push_str("                                        $script:Streaming.Prompt = $prevPrompt\n");
+            out.push_str("                                    }\n");
+            out.push_str("                                }\n");
+            out.push_str("                            } else {\n");
+            out.push_str("                                [Microsoft.PowerShell.PSConsoleReadLine]::InvokePrompt()\n");
+            out.push_str("                            }\n");
+            out.push_str("                            return $text\n");
+            out.push_str("                        } finally {\n");
+            out.push_str("                            [Console]::OutputEncoding = $prevEnc\n");
+            out.push_str("                        }\n");
+            out.push_str("                    } $(if ($useFast) { $fastPrompt } else { $null })\n");
+            out.push_str("                } finally {\n");
+            out.push_str("                    $global:_KisekiRepainting = $false\n");
+            out.push_str("                }\n");
+            out.push_str("                if (-not $useFast -and [string]::IsNullOrEmpty($global:_KisekiBasePrompt) -and -not [string]::IsNullOrEmpty($renderedOut)) {\n");
+            out.push_str("                    $stripped = $renderedOut -replace '^\\u001b\\]7777;\\d+\\u0007', ''\n");
+            out.push_str("                    _KisekiCaptureBasePrompt $stripped $newWidth\n");
+            out.push_str("                }\n");
+            out.push_str("                $newY = $raw.CursorPosition.Y\n");
+            out.push_str("                $inputTailRows = 0\n");
+            out.push_str("                if ($cmd.Length -gt 0 -and $raw.WindowSize.Width -gt 0) {\n");
+            out.push_str("                    $tail = $cmd.Substring([Math]::Min($cur, $cmd.Length))\n");
+            out.push_str("                    $lines = $tail.Split(\"`n\")\n");
+            out.push_str("                    $col = $raw.CursorPosition.X\n");
+            out.push_str("                    for ($li = 0; $li -lt $lines.Count; $li++) {\n");
+            out.push_str("                        $segLen = $lines[$li].TrimEnd(\"`r\").Length\n");
+            out.push_str("                        if ($li -eq 0) {\n");
+            out.push_str("                            $inputTailRows += [Math]::Floor(($col + $segLen) / $raw.WindowSize.Width)\n");
+            out.push_str("                        } else {\n");
+            out.push_str("                            $inputTailRows += 1 + [Math]::Floor([Math]::Max(0, $segLen - 1) / $raw.WindowSize.Width)\n");
+            out.push_str("                        }\n");
+            out.push_str("                    }\n");
+            out.push_str("                }\n");
+            out.push_str("                $clearFromY = $newY + $inputTailRows + 1\n");
+            out.push_str("                if ($clearFromY -le $oldY) {\n");
+            out.push_str("                    $vpRow = $clearFromY - $raw.WindowPosition.Y + 1\n");
+            out.push_str("                    if ($vpRow -ge 1 -and $vpRow -le $raw.WindowSize.Height) {\n");
+            out.push_str("                        [Console]::Write(\"$([char]27)7$([char]27)[$vpRow;1H$([char]27)[0J$([char]27)8\")\n");
+            out.push_str("                    }\n");
+            out.push_str("                }\n");
+            out.push_str("            } catch {}\n");
+            out.push_str("        }\n");
+            out.push_str("        if ($null -ne $function:prompt -and ($function:prompt.ToString() -match '_KisekiSyncHook') -and ($function:prompt.ToString() -notmatch '_KisekiCaptureBasePrompt')) {\n");
+            out.push_str("            function global:prompt {\n");
+            out.push_str("                if (-not $global:_KisekiRepainting) {\n");
+            out.push_str("                    $global:_KisekiAtPrompt = $false\n");
+            out.push_str("                    if ($null -ne $global:_KisekiResizeTimer) { try { $global:_KisekiResizeTimer.Stop() } catch {} }\n");
+            out.push_str("                    _KisekiSyncHook\n");
+            out.push_str("                    $global:_KisekiBasePrompt = ''\n");
+            out.push_str("                    $global:_KisekiBasePromptWidth = 0\n");
+            out.push_str("                    try {\n");
+            out.push_str("                        $global:_KisekiPromptWidth = $Host.UI.RawUI.WindowSize.Width\n");
+            out.push_str("                        $global:_KisekiPendingWidth = $global:_KisekiPromptWidth\n");
+            out.push_str("                    } catch {}\n");
+            out.push_str("                }\n");
+            out.push_str("                $kisekiOut = if ($null -ne $global:_KisekiOriginalPrompt) {\n");
+            out.push_str("                    & $global:_KisekiOriginalPrompt\n");
+            out.push_str("                } else {\n");
+            out.push_str("                    \"PS $($executionContext.SessionState.Path.CurrentLocation)$('>' * ($nestedPromptLevel + 1)) \"\n");
+            out.push_str("                }\n");
+            out.push_str("                if (-not $global:_KisekiRepainting -and $null -ne $function:_KisekiCaptureBasePrompt) {\n");
+            out.push_str("                    _KisekiCaptureBasePrompt $kisekiOut $global:_KisekiPromptWidth\n");
+            out.push_str("                }\n");
+            out.push_str("                return $kisekiOut\n");
+            out.push_str("            }\n");
+            out.push_str("        }\n");
+            out.push_str("        try {\n");
+            out.push_str("            $global:_KisekiResizeTimer = New-Object System.Timers.Timer 50\n");
+            out.push_str("            $global:_KisekiResizeTimer.AutoReset = $false\n");
+            out.push_str("            $null = Register-ObjectEvent -InputObject $global:_KisekiResizeTimer -EventName Elapsed -SourceIdentifier 'Kiseki.ResizePoll' -Action {\n");
+            out.push_str("                if (-not $global:_KisekiAtPrompt) { return }\n");
+            out.push_str("                try {\n");
+            out.push_str("                    $w = $Host.UI.RawUI.WindowSize.Width\n");
+            out.push_str("                    if ($w -gt 0 -and $w -ne $global:_KisekiPromptWidth) {\n");
+            out.push_str("                        $fast = _KisekiTryFastRejustify $w\n");
+            out.push_str("                        if (-not [string]::IsNullOrEmpty($fast)) {\n");
+            out.push_str("                            $global:_KisekiPromptWidth = $w\n");
+            out.push_str("                            $global:_KisekiPendingWidth = $w\n");
+            out.push_str("                            _KisekiRepaintPromptOnResize $w $fast\n");
+            out.push_str("                        } elseif ($w -ne $global:_KisekiPendingWidth) {\n");
+            out.push_str("                            $global:_KisekiPendingWidth = $w\n");
+            out.push_str("                        } else {\n");
+            out.push_str("                            $global:_KisekiPromptWidth = $w\n");
+            out.push_str("                            _KisekiRepaintPromptOnResize $w $null\n");
+            out.push_str("                        }\n");
+            out.push_str("                    } else {\n");
+            out.push_str("                        $global:_KisekiPendingWidth = $w\n");
+            out.push_str("                    }\n");
+            out.push_str("                } catch {}\n");
+            out.push_str("                if ($global:_KisekiAtPrompt -and $null -ne $global:_KisekiResizeTimer) {\n");
+            out.push_str("                    try { $global:_KisekiResizeTimer.Start() } catch {}\n");
+            out.push_str("                }\n");
+            out.push_str("            }\n");
+            out.push_str("            $null = Register-EngineEvent -SourceIdentifier PowerShell.OnIdle -Action {\n");
+            out.push_str("                if (-not $global:_KisekiAtPrompt) {\n");
+            out.push_str("                    $global:_KisekiAtPrompt = $true\n");
+            out.push_str("                    try {\n");
+            out.push_str("                        $w = $Host.UI.RawUI.WindowSize.Width\n");
+            out.push_str("                        if ($w -gt 0 -and $global:_KisekiPromptWidth -gt 0 -and $w -ne $global:_KisekiPromptWidth) {\n");
+            out.push_str("                            $fast = _KisekiTryFastRejustify $w\n");
+            out.push_str("                            $global:_KisekiPromptWidth = $w\n");
+            out.push_str("                            $global:_KisekiPendingWidth = $w\n");
+            out.push_str("                            _KisekiRepaintPromptOnResize $w $fast\n");
+            out.push_str("                        }\n");
+            out.push_str("                    } catch {}\n");
+            out.push_str("                    if ($null -ne $global:_KisekiResizeTimer) {\n");
+            out.push_str("                        try { $global:_KisekiResizeTimer.Start() } catch {}\n");
+            out.push_str("                    }\n");
+            out.push_str("                }\n");
+            out.push_str("            }\n");
+            out.push_str("            $null = Register-EngineEvent -SourceIdentifier PowerShell.Exiting -Action {\n");
+            out.push_str("                if ($null -ne $global:_KisekiResizeTimer) {\n");
+            out.push_str("                    try {\n");
+            out.push_str("                        $global:_KisekiResizeTimer.Stop()\n");
+            out.push_str("                        $global:_KisekiResizeTimer.Dispose()\n");
+            out.push_str("                    } catch {}\n");
+            out.push_str("                }\n");
+            out.push_str("            }\n");
+            out.push_str("        } catch {}\n");
             out.push_str("    }\n");
             out.push_str("} else {\n");
             out.push_str(&format!(
@@ -476,6 +705,17 @@ pub(crate) fn env_ps1_with_vendor(
     out.push_str("        }\n");
     out.push_str("    } catch {}\n");
     out.push_str("}\n");
+
+    if !aliases {
+        out.push_str("\n# Clean up lingering v1 Kiseki aliases when v2 aliases are disabled.\n");
+        out.push_str("$kisekiV1Targets = @('Switch-KisekiTheme', 'Get-KisekiThemes', 'Toggle-KisekiLive', 'Toggle-RetroCRT', 'Set-TerminalFont', 'Set-TerminalBg')\n");
+        out.push_str("foreach ($kisekiV1Alias in @('theme', 'themes', 'live', 'motion', 'crt', 'termfont', 'termbg')) {\n");
+        out.push_str("    $kisekiExisting = Get-Alias -Name $kisekiV1Alias -ErrorAction SilentlyContinue\n");
+        out.push_str("    if ($null -ne $kisekiExisting -and ($kisekiV1Targets -contains $kisekiExisting.Definition)) {\n");
+        out.push_str("        Remove-Item -LiteralPath \"Alias:\\$kisekiV1Alias\" -Force -ErrorAction SilentlyContinue\n");
+        out.push_str("    }\n");
+        out.push_str("}\n");
+    }
 
     out.push_str("\n# Auto-greeting once per new interactive terminal session.\n");
     out.push_str("if ($kisekiIsTty -and -not $env:KISEKI_NO_FETCH -and -not $env:KISEKI_GREETED `\n");
@@ -566,12 +806,26 @@ pub fn pwsh_init_script(config_dir: &Path, aliases: bool) -> String {
     out.push_str("        $global:_KisekiOriginalPrompt = $currentPrompt\n");
     out.push_str("    }\n");
     out.push_str("    function global:prompt {\n");
-    out.push_str("        _KisekiSyncHook\n");
-    out.push_str("        if ($null -ne $global:_KisekiOriginalPrompt) {\n");
+    out.push_str("        if (-not $global:_KisekiRepainting) {\n");
+    out.push_str("            $global:_KisekiAtPrompt = $false\n");
+    out.push_str("            if ($null -ne $global:_KisekiResizeTimer) { try { $global:_KisekiResizeTimer.Stop() } catch {} }\n");
+    out.push_str("            _KisekiSyncHook\n");
+    out.push_str("            $global:_KisekiBasePrompt = ''\n");
+    out.push_str("            $global:_KisekiBasePromptWidth = 0\n");
+    out.push_str("            try {\n");
+    out.push_str("                $global:_KisekiPromptWidth = $Host.UI.RawUI.WindowSize.Width\n");
+    out.push_str("                $global:_KisekiPendingWidth = $global:_KisekiPromptWidth\n");
+    out.push_str("            } catch {}\n");
+    out.push_str("        }\n");
+    out.push_str("        $kisekiOut = if ($null -ne $global:_KisekiOriginalPrompt) {\n");
     out.push_str("            & $global:_KisekiOriginalPrompt\n");
     out.push_str("        } else {\n");
     out.push_str("            \"PS $($executionContext.SessionState.Path.CurrentLocation)$('>' * ($nestedPromptLevel + 1)) \"\n");
     out.push_str("        }\n");
+    out.push_str("        if (-not $global:_KisekiRepainting -and $null -ne $function:_KisekiCaptureBasePrompt) {\n");
+    out.push_str("            _KisekiCaptureBasePrompt $kisekiOut $global:_KisekiPromptWidth\n");
+    out.push_str("        }\n");
+    out.push_str("        return $kisekiOut\n");
     out.push_str("    }\n");
     out.push_str("}\n");
     out.push_str("if (Test-Path $script:KisekiEnvFile) {\n");
@@ -1128,11 +1382,24 @@ mod tests {
 
     #[test]
     fn ps1_env_sets_colors_without_key_handlers() {
-        let content = env_ps1(&theme(), &config_dir(), PromptPolicy::ManagedTemplate);
+        let content = env_ps1(&theme(), &config_dir(), PromptPolicy::ManagedTemplate, false);
         assert!(content.starts_with('\u{FEFF}'), "env.ps1 must start with UTF-8 BOM for PS 5.1");
         assert!(content.contains("$env:KISEKI_THEME = 'nerv-eva'"));
         assert!(content.contains("$env:KISEKI_ACCENT_PRIMARY = '#F06A22'"));
         assert!(content.contains("& $kisekiOmp init $kisekiOmpShell --config $env:POSH_THEME | Invoke-Expression"));
+        assert!(content.contains("$script:Streaming.State = 'NEW'"));
+        assert!(content.contains("$script:Streaming.ServeProcess = $null"));
+        assert!(content.contains("$script:Streaming.StdIn = $null"));
+        assert!(content.contains("$script:Streaming.Prompt = ''"));
+        assert!(content.contains("$script:Streaming.Transient = ''"));
+        assert!(content.contains("$script:Streaming.Dirty = $false"));
+        assert!(content.contains("$env:POSH_CONFIG = $env:POSH_THEME"));
+        assert!(content.contains("OrdinalIgnoreCase"));
+        assert!(content.contains("_KisekiRepaintPromptOnResize"));
+        assert!(content.contains("_KisekiTryFastRejustify"));
+        assert!(content.contains("_KisekiResizeTimer.AutoReset = $false"));
+        assert!(content.contains("Get-KisekiThemes"));
+        assert!(content.contains("Switch-KisekiTheme"));
         assert!(content.contains("Set-PSReadLineOption -Colors"));
         assert!(content.contains("& $kisekiFetch --config $kisekiFfConfig"));
         for (tool, vendor) in [("oh-my-posh", "oh-my-posh.exe"), ("fastfetch", "fastfetch.exe")] {
@@ -1143,6 +1410,11 @@ mod tests {
         assert!(!content.contains("Set-PSReadLineKeyHandler"));
         assert!(!content.contains("Set-Alias"));
         assert!(lint_shell_artifacts(&content).is_empty());
+
+        // When aliases are enabled, v1 alias cleanup is omitted.
+        let with_aliases = env_ps1(&theme(), &config_dir(), PromptPolicy::ManagedTemplate, true);
+        assert!(!with_aliases.contains("kisekiV1Targets"));
+        assert!(lint_shell_artifacts(&with_aliases).is_empty());
     }
 
     #[test]

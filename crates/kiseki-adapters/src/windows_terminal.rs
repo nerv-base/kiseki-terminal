@@ -1075,7 +1075,7 @@ mod tests {
         let value = parse_value(&patched).unwrap();
         let defaults = &value["profiles"]["defaults"];
         assert_eq!(defaults["font"]["face"], "JetBrainsMono Nerd Font");
-        assert_eq!(defaults["font"]["size"], 11.0);
+        assert_eq!(defaults["font"]["size"], 12.0);
         assert_eq!(defaults["font"]["weight"], "normal");
         // Siblings and their comments survive untouched.
         assert_eq!(defaults["font"]["features"]["calt"], true);

@@ -5,7 +5,7 @@
 //! `init` can ask the user whether to keep their layout (palette-only) or use
 //! the managed template.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use kiseki_compiler::artifact::names as artifact_names;
 use kiseki_platform::{PathKind, Platform, ReloadOutcome};
@@ -20,9 +20,48 @@ use crate::{
 pub struct PromptAdapter;
 
 impl PromptAdapter {
+    fn normalize_path(path: &Path) -> String {
+        path.to_string_lossy()
+            .replace('\\', "/")
+            .trim_end_matches('/')
+            .to_ascii_lowercase()
+    }
+
+    /// True when `path` belongs to Kiseki itself (v2 generated artefacts or
+    /// legacy v1 `~/.config/kiseki-terminal/...` configs) rather than a
+    /// hand-authored user prompt config.
+    fn is_kiseki_managed_path(platform: &dyn Platform, path: &Path) -> bool {
+        if platform.paths().owns(path) {
+            return true;
+        }
+        let norm = Self::normalize_path(path);
+        let config_norm = Self::normalize_path(platform.paths().config_dir());
+        if !config_norm.is_empty()
+            && (norm == config_norm
+                || norm
+                    .strip_prefix(&config_norm)
+                    .is_some_and(|rest| rest.starts_with('/')))
+        {
+            return true;
+        }
+        if norm.ends_with("/kiseki/generated/prompt.omp.json")
+            || norm.ends_with("/kiseki/generated/prompt.omp.palette.json")
+            || norm.ends_with("/kiseki/generated/starship-palette.toml")
+        {
+            return true;
+        }
+        norm.contains("/kiseki-terminal/") || norm.contains("/.kiseki-terminal/")
+    }
+
     fn omp_config_path(platform: &dyn Platform) -> Option<PathBuf> {
-        if let Some(explicit) = platform.env_var("POSH_THEME") {
-            return Some(PathBuf::from(explicit));
+        if let Some(explicit) = platform
+            .env_var("POSH_THEME")
+            .filter(|value| !value.trim().is_empty())
+        {
+            let explicit_path = PathBuf::from(explicit);
+            if !Self::is_kiseki_managed_path(platform, &explicit_path) {
+                return Some(explicit_path);
+            }
         }
         let home = platform
             .env_var("HOME")
@@ -36,8 +75,14 @@ impl PromptAdapter {
     }
 
     fn starship_config_path(platform: &dyn Platform) -> Option<PathBuf> {
-        if let Some(explicit) = platform.env_var("STARSHIP_CONFIG") {
-            return Some(PathBuf::from(explicit));
+        if let Some(explicit) = platform
+            .env_var("STARSHIP_CONFIG")
+            .filter(|value| !value.trim().is_empty())
+        {
+            let explicit_path = PathBuf::from(explicit);
+            if !Self::is_kiseki_managed_path(platform, &explicit_path) {
+                return Some(explicit_path);
+            }
         }
         let home = platform
             .env_var("HOME")
@@ -405,5 +450,40 @@ mod tests {
         });
         let report = PromptAdapter.validate(&plan, &platform).unwrap();
         assert!(report.has_fatal());
+    }
+
+    #[test]
+    fn detect_ignores_kiseki_managed_v2_and_v1_prompt_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let platform = MockPlatform::new(dir.path());
+        platform.set_env("HOME", &dir.path().to_string_lossy());
+
+        // v2 generated prompt.omp.json must not be flagged as hand-authored.
+        let v2_omp = platform.paths().generated("prompt.omp.json");
+        platform
+            .write_preserving_symlinks(&v2_omp, b"{}")
+            .unwrap();
+        platform.set_env("POSH_THEME", &v2_omp.to_string_lossy());
+        let report = PromptAdapter.detect(&EnvContext::local(), &platform).unwrap();
+        assert!(report.notes.is_empty(), "v2 generated OMP should be ignored: {:?}", report.notes);
+
+        // v1 legacy kiseki-terminal prompt config must also be ignored.
+        let v1_omp = dir.path().join(".config/kiseki-terminal/themes/nerv-eva/prompt.omp.json");
+        platform
+            .write_preserving_symlinks(&v1_omp, b"{}")
+            .unwrap();
+        platform.set_env("POSH_THEME", &v1_omp.to_string_lossy());
+        let report = PromptAdapter.detect(&EnvContext::local(), &platform).unwrap();
+        assert!(report.notes.is_empty(), "v1 OMP should be ignored: {:?}", report.notes);
+
+        // A genuinely hand-authored user config is still detected.
+        let user_omp = dir.path().join("my-custom.omp.json");
+        platform
+            .write_preserving_symlinks(&user_omp, b"{}")
+            .unwrap();
+        platform.set_env("POSH_THEME", &user_omp.to_string_lossy());
+        let report = PromptAdapter.detect(&EnvContext::local(), &platform).unwrap();
+        assert_eq!(report.notes.len(), 1);
+        assert!(report.notes[0].contains("my-custom.omp.json"));
     }
 }

@@ -707,7 +707,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(theme.typography.families, vec!["jetbrains-mono-nf", "maple-mono-nf-cn"]);
-        assert_eq!(theme.typography.size_pt, Some(11.0));
+        assert_eq!(theme.typography.size_pt, Some(12.0));
     }
 
     #[test]

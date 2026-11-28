@@ -86,6 +86,7 @@
     },
     {
       "alignment": "right",
+      "overflow": "hide",
       "segments": [
         {
           "background": "#171214",

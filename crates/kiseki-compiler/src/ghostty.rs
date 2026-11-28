@@ -237,7 +237,7 @@ mod tests {
             "background-blur = true",
             "window-padding-x = 18",
             "font-family = JetBrainsMono Nerd Font",
-            "font-size = 11.00",
+            "font-size = 12.00",
             "font-feature = liga",
             "cursor-style = block",
             "background-image = /themes/nerv-eva/assets/wallpaper.png",
