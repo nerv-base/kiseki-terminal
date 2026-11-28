@@ -182,6 +182,7 @@ pub struct DepManifest {
 #[derive(Debug, Clone)]
 struct InstalledFontFile {
     path: PathBuf,
+    #[cfg_attr(not(windows), allow(dead_code))]
     written_on_disk: bool,
 }
 
