@@ -337,7 +337,7 @@ jobs:
               gh release edit "$TAG" --draft=false
             fi
           else
-            FLAGS=(--title "${TAG} — Kiseki Terminal v2" --notes-file dist/RELEASE_NOTES.md --target "${{ github.ref_name }}")
+            FLAGS=(--title "${TAG} — Kiseki Terminal v2" --notes-file dist/RELEASE_NOTES.md --target "${SHA}")
             if [ "$DRAFT" = "true" ]; then FLAGS+=(--draft); fi
             if [ "$PRERELEASE" = "true" ]; then FLAGS+=(--prerelease); fi
             gh release create "$TAG" "${FLAGS[@]}" "${ASSETS[@]}"
