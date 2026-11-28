@@ -1,0 +1,156 @@
+name: Build and publish Kiseki Gallery
+
+# Dual-concurrency architecture (adapted from awesome-dsh-plugin):
+# - `push` runs publish newly merged PR entries within seconds using cached probes.
+# - `schedule` & `workflow_dispatch` probe all repos (or a single `target_repo`)
+#   for new releases, stars, downloads, WebP thumbnails, and updates without ever
+#   being cancelled by a daytime merge push.
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '19 */2 * * *' # Every 2 hours, off the :00/:30 herd
+  workflow_dispatch:
+    inputs:
+      probe_all:
+        description: Re-validate every entry ignoring commit cache
+        type: boolean
+        default: false
+      skip_probes:
+        description: Deploy index from cached data only
+        type: boolean
+        default: false
+      target_repo:
+        description: Refresh a single theme ID or owner/repo
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: build-gallery-${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 'probe' || 'push' }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # Sharded caches: separate cache entries prevent one new file from
+      # invalidating unrelated caches and forcing a cold-start API storm.
+      - uses: actions/cache/restore@v4
+        with:
+          path: data/probe-state.json
+          key: probe-state-v1-${{ github.run_id }}
+          restore-keys: probe-state-v1-
+      - uses: actions/cache/restore@v4
+        with:
+          path: data/stars.json
+          key: stars-v1-${{ github.run_id }}
+          restore-keys: stars-v1-
+      - uses: actions/cache/restore@v4
+        with:
+          path: data/downloads.json
+          key: downloads-v1-${{ github.run_id }}
+          restore-keys: downloads-v1-
+      - uses: actions/cache/restore@v4
+        with:
+          path: data/updates.json
+          key: updates-v1-${{ github.run_id }}
+          restore-keys: updates-v1-
+
+      - name: Check whether theme entries exist
+        id: entries
+        run: |
+          count=$(find data/themes -maxdepth 1 -name '*.yml' | wc -l | tr -d ' ')
+          echo "count=${count}" >> "$GITHUB_OUTPUT"
+          echo "Found ${count} theme entry file(s)."
+
+      - name: Install cwebp and Kiseki CLI
+        if: steps.entries.outputs.count != '0' && (github.event_name != 'workflow_dispatch' || !inputs.skip_probes)
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq webp
+          curl -fsSL https://dl.kisekiterm.dev/install.sh | sh -s -- --skip-fonts
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.config/kiseki/bin" >> "$GITHUB_PATH"
+
+      - name: Probe repositories and validate changed commits
+        id: probe
+        if: steps.entries.outputs.count != '0' && (github.event_name != 'workflow_dispatch' || !inputs.skip_probes)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PROBE_ALL: ${{ inputs.probe_all && '1' || '' }}
+          PROBE_TARGET_REPO: ${{ inputs.target_repo || '' }}
+        run: |
+          node scripts/probe-themes.mjs
+          echo "probed=1" >> "$GITHUB_OUTPUT"
+
+      - name: Build minified index.json and updates.json
+        run: node scripts/build-index.mjs
+
+      - name: Save sharded caches
+        if: steps.probe.outputs.probed == '1'
+        uses: actions/cache/save@v4
+        with:
+          path: data/probe-state.json
+          key: probe-state-v1-${{ github.run_id }}
+      - if: steps.probe.outputs.probed == '1'
+        uses: actions/cache/save@v4
+        with:
+          path: data/stars.json
+          key: stars-v1-${{ github.run_id }}
+      - if: steps.probe.outputs.probed == '1'
+        uses: actions/cache/save@v4
+        with:
+          path: data/downloads.json
+          key: downloads-v1-${{ github.run_id }}
+      - if: steps.probe.outputs.probed == '1'
+        uses: actions/cache/save@v4
+        with:
+          path: data/updates.json
+          key: updates-v1-${{ github.run_id }}
+
+      - name: Upload index, thumbnails, and wallpaper-free archives to Cloudflare R2
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          R2_BUCKET: ${{ vars.R2_BUCKET || 'kiseki-dl' }}
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::notice::CLOUDFLARE_API_TOKEN or CLOUDFLARE_ACCOUNT_ID not configured; skipping R2 upload."
+            exit 0
+          fi
+          npx --yes wrangler@4 r2 object put "${R2_BUCKET}/gallery/index.json" --file dist/index.json --content-type "application/json; charset=utf-8" --remote
+          npx --yes wrangler@4 r2 object put "${R2_BUCKET}/gallery/index.json.sha256" --file dist/index.json.sha256 --content-type "text/plain; charset=utf-8" --remote
+          npx --yes wrangler@4 r2 object put "${R2_BUCKET}/gallery/updates.json" --file dist/updates.json --content-type "application/json; charset=utf-8" --remote
+          if [ -d dist/r2-assets/thumbs ]; then
+            for f in dist/r2-assets/thumbs/*.webp; do
+              [ -f "$f" ] || continue
+              npx --yes wrangler@4 r2 object put "${R2_BUCKET}/gallery/thumbs/$(basename "$f")" --file "$f" --content-type "image/webp" --remote
+            done
+          fi
+          if [ -d dist/r2-assets/archives ]; then
+            for f in dist/r2-assets/archives/*.tar.gz; do
+              [ -f "$f" ] || continue
+              npx --yes wrangler@4 r2 object put "${R2_BUCKET}/gallery/archives/$(basename "$f")" --file "$f" --content-type "application/gzip" --remote
+            done
+          fi
+
+      - name: Deploy fallback index to GitHub Pages
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+      - id: deployment
+        uses: actions/deploy-pages@v4
+        continue-on-error: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}

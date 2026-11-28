@@ -1,0 +1,15 @@
+{
+  "name": "kiseki-themes-registry",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test scripts/*.test.mjs",
+    "check": "node scripts/check-submission.mjs",
+    "readme": "node scripts/generate-readme.mjs",
+    "build-index": "node scripts/build-index.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

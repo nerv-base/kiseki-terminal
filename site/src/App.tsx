@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FC } from 'react';
 import { BootCurtain } from './components/BootCurtain';
 import { DocsHub } from './components/DocsHub';
+import { GalleryHub } from './components/GalleryHub';
 import { Header } from './components/Header';
 import { HeroSection } from './components/HeroSection';
 import { InstallSection } from './components/InstallSection';
@@ -39,6 +40,9 @@ const ALL_LAYERS_DEFAULT: LayerState = {
 function parseHashRoute(): { view: ViewMode; docChapter?: DocChapterId } {
   if (typeof window === 'undefined') return { view: 'landing' };
   const h = window.location.hash.replace(/^#/, '');
+  if (h === 'gallery' || h.startsWith('gallery/')) {
+    return { view: 'gallery' };
+  }
   if (h.startsWith('docs')) {
     const sub = h.split('/')[1] as DocChapterId | undefined;
     const valid = DOC_CHAPTERS_META.some((c) => c.id === sub);
@@ -186,7 +190,7 @@ export const App: FC = () => {
     const fx = fxStageRef.current;
     if (!kv || !term || !fx) return;
 
-    if (view === 'docs') {
+    if (view !== 'landing') {
       kv.stopLoop();
       term.stopLoop();
       fx.stopLoop();
@@ -266,8 +270,12 @@ export const App: FC = () => {
     [activeTheme, layers, profile, bgOpacityOverride, pushSnapshot],
   );
 
-  const navigateTo = useCallback((target: 'home' | 'terminal' | 'download' | 'docs', docId?: DocChapterId) => {
-    if (target === 'docs') {
+  const navigateTo = useCallback((target: 'home' | 'terminal' | 'gallery' | 'download' | 'docs', docId?: DocChapterId) => {
+    if (target === 'gallery') {
+      setView('gallery');
+      window.history.replaceState(null, '', '#gallery');
+      window.scrollTo({ top: 0, behavior: 'auto' });
+    } else if (target === 'docs') {
       const nextDoc = docId ?? docChapter;
       setView('docs');
       if (docId) setDocChapter(docId);
@@ -447,7 +455,7 @@ export const App: FC = () => {
         onToggleLang={() => setLang((l) => (l === 'zh' ? 'en' : 'zh'))}
       />
 
-      <div id="k-view-landing" className={view === 'docs' ? 'hidden' : ''}>
+      <div id="k-view-landing" className={view !== 'landing' ? 'hidden' : ''}>
         <HeroSection
           kvCanvasRef={kvCanvasRef}
           fxCanvasRef={fxCanvasRef}
@@ -503,6 +511,18 @@ export const App: FC = () => {
           onOpenDoc={(docId) => navigateTo('docs', docId)}
         />
       </div>
+
+      {view === 'gallery' && (
+        <GalleryHub
+          lang={lang}
+          onTryOfficialTheme={(id) => {
+            activateTheme(id, true, false);
+            navigateTo('terminal');
+          }}
+          onOpenDocs={(chapter) => navigateTo('docs', chapter)}
+          onNavigate={(target) => navigateTo(target)}
+        />
+      )}
 
       {view === 'docs' && (
         <DocsHub

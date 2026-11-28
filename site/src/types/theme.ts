@@ -6,7 +6,76 @@ export type Lang = 'zh' | 'en';
 
 export type InstallTab = 'brew' | 'curl' | 'ps1';
 
-export type ViewMode = 'landing' | 'docs';
+export type ViewMode = 'landing' | 'gallery' | 'docs';
+
+export type GallerySortKey = 'trending' | 'downloads' | 'stars' | 'updated' | 'newest';
+
+export interface GalleryThemeEntry {
+  id: string;
+  name: string;
+  subtitle: string;
+  version: string;
+  appearance: 'dark' | 'light';
+  tags: string[];
+  authors: Array<{ name: string; url?: string }>;
+  license: string;
+  repo: string;
+  subpath?: string;
+  commit?: string;
+  createdAt: string;
+  updatedAt: string;
+  builtin?: boolean;
+  capabilities: {
+    hasWallpaper: boolean;
+    hasShader: boolean;
+    shaderProfiles: string[];
+    wcagGrade: string;
+  };
+  metrics: {
+    stars: number;
+    stars7d: number;
+    downloads: number;
+    downloads30d: number;
+    trendingScore: number;
+  };
+  download?: {
+    trackUrl?: string | null;
+    url: string;
+    sha256: string;
+    bytes: number;
+  };
+  preview: {
+    thumbUrl?: string | null;
+    palette: {
+      base: string;
+      surface0: string;
+      textPrimary: string;
+      accentPrimary: string;
+      accentSecondary: string;
+      keyword: string;
+      string: string;
+      function: string;
+    };
+  };
+}
+
+export interface GalleryIndexPayload {
+  schemaVersion: number;
+  generatedAt: string;
+  themes: GalleryThemeEntry[];
+}
+
+export interface GalleryUpdatesPayload {
+  schemaVersion: number;
+  themes: Record<
+    string,
+    {
+      latestTag?: string | null;
+      releaseNotes?: string | null;
+      recentCommits?: string[];
+    }
+  >;
+}
 
 export type DocChapterId = 'quickstart' | 'cli' | 'compose' | 'sdk' | 'faq';
 

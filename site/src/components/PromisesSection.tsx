@@ -84,7 +84,7 @@ export const PromisesSection: FC<PromisesSectionProps> = ({ lang }) => {
                 color: 'var(--k-success)',
               }}
             >
-              + source &quot;~/.local/share/kiseki/init.zsh&quot;
+              + source &quot;~/.config/kiseki/generated/env.zsh&quot;
             </pre>
           </div>
 
@@ -135,13 +135,13 @@ export const PromisesSection: FC<PromisesSectionProps> = ({ lang }) => {
             <p className="text-sm leading-relaxed m-0" style={{ color: 'var(--k-text-secondary)' }}>
               {lang === 'zh' ? (
                 <>
-                  <span className="font-k-mono">8.18 MiB</span> 单文件内置 4 套主题，无需 Python；冷启动{' '}
-                  <span className="font-k-mono">4.3 ms</span>，多窗口秒同步。
+                  <span className="font-k-mono">8.43 MiB</span> 单文件内置 4 套主题，无需 Python；冷启动{' '}
+                  <span className="font-k-mono">4.5 ms</span>，多窗口秒同步。
                 </>
               ) : (
                 <>
-                  <span className="font-k-mono">8.18 MiB</span> binary bundles 4 themes with no Python;{' '}
-                  <span className="font-k-mono">4.3 ms</span> startup and instant multi-window sync.
+                  <span className="font-k-mono">8.43 MiB</span> binary bundles 4 themes with no Python;{' '}
+                  <span className="font-k-mono">4.5 ms</span> startup and instant multi-window sync.
                 </>
               )}
             </p>
@@ -151,7 +151,7 @@ export const PromisesSection: FC<PromisesSectionProps> = ({ lang }) => {
             >
               <div>
                 <span className="text-base font-bold k-tabular" style={{ color: 'var(--k-accent-primary)' }}>
-                  4.3 ms
+                  4.5 ms
                 </span>
                 <span className="text-[0.6875rem] ml-1" style={{ color: 'var(--k-text-muted)' }}>
                   {t.m_start}
@@ -159,7 +159,7 @@ export const PromisesSection: FC<PromisesSectionProps> = ({ lang }) => {
               </div>
               <div>
                 <span className="text-base font-bold k-tabular" style={{ color: 'var(--k-accent-secondary)' }}>
-                  54.7 µs
+                  60.0 µs
                 </span>
                 <span className="text-[0.6875rem] ml-1" style={{ color: 'var(--k-text-muted)' }}>
                   {t.m_hook}
@@ -167,7 +167,7 @@ export const PromisesSection: FC<PromisesSectionProps> = ({ lang }) => {
               </div>
               <div>
                 <span className="text-base font-bold k-tabular" style={{ color: 'var(--k-text-primary)' }}>
-                  8.18 MB
+                  8.43 MB
                 </span>
                 <span className="text-[0.6875rem] ml-1" style={{ color: 'var(--k-text-muted)' }}>
                   {t.m_bin}

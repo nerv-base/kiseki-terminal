@@ -91,6 +91,7 @@ export const I18N: Record<
   {
     nav_home: string;
     nav_try: string;
+    nav_gallery: string;
     nav_dl: string;
     nav_docs: string;
     hero_sub: string;
@@ -127,6 +128,7 @@ export const I18N: Record<
   zh: {
     nav_home: '首页',
     nav_try: '试玩',
+    nav_gallery: '市场',
     nav_dl: '下载',
     nav_docs: '文档',
     hero_sub: '给终端换上二次元壁纸、动态光影与配色。',
@@ -162,6 +164,7 @@ export const I18N: Record<
   en: {
     nav_home: 'Home',
     nav_try: 'Try Live',
+    nav_gallery: 'Gallery',
     nav_dl: 'Download',
     nav_docs: 'Docs',
     hero_sub: 'Live anime wallpapers, shaders & themes for your terminal.',

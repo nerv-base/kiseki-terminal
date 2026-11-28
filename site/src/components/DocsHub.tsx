@@ -217,13 +217,13 @@ export const DocsHub: FC<DocsHubProps> = ({
                     <p className="text-sm leading-relaxed m-0" style={{ color: 'var(--k-text-secondary)' }}>
                       {lang === 'zh' ? (
                         <>
-                          向导会自动探测 Ghostty / Windows Terminal / Zsh / PowerShell 环境，只追加外部{' '}
-                          <code className="font-k-mono">include</code> 挂载；如果你使用 Nix 或 Home Manager，可用{' '}
+                          向导会自动探测 Ghostty / Windows Terminal / Kitty / WezTerm / iTerm2 / Alacritty 与 Zsh / Bash / Fish / PowerShell 环境，只追加外部{' '}
+                          <code className="font-k-mono">include</code> 或保留注释补丁挂载；如果你使用 Nix 或 Home Manager，可用{' '}
                           <code className="font-k-mono">kiseki init --render-only</code> 仅生成产物。
                         </>
                       ) : (
                         <>
-                          Auto-detects Ghostty, Windows Terminal, Zsh, and PowerShell. Uses clean external includes or comment-preserving JSONC patches. Pass{' '}
+                          Auto-detects Ghostty, Windows Terminal, Kitty, WezTerm, iTerm2, Alacritty and Zsh / Bash / Fish / PowerShell. Uses clean external includes, Parent Profile inheritance, or comment-preserving JSONC patches. Pass{' '}
                           <code className="font-k-mono">--render-only</code> for Nix / Home Manager.
                         </>
                       )}
@@ -231,16 +231,21 @@ export const DocsHub: FC<DocsHubProps> = ({
                   </div>
 
                   <div className="space-y-3">
-                    <h3 className="text-base font-bold m-0">{lang === 'zh' ? '3. 推荐配套工具（可选）' : '3. Optional Companions'}</h3>
-                    <CodeBlock lang={lang} code="brew install oh-my-posh fastfetch zsh-syntax-highlighting" />
+                    <h3 className="text-base font-bold m-0">{lang === 'zh' ? '3. 自动依赖与字体检查' : '3. Dependencies & Fonts'}</h3>
+                    <CodeBlock lang={lang} code={`kiseki deps\nkiseki fonts status`} />
                     <p className="text-sm leading-relaxed m-0" style={{ color: 'var(--k-text-secondary)' }}>
                       {lang === 'zh' ? (
                         <>
-                          安装后即可解锁主题专属 Prompt 段（如 <code className="font-k-mono">[弐号機]</code> /{' '}
-                          <code className="font-k-mono">❀ 夜桜</code>）、像素系统信息卡与 24 项命令实时语法高亮。
+                          Homebrew 与一键安装脚本会自动为你配齐 Oh My Posh、Fastfetch 与 Zsh 语法高亮/自动建议插件（独立脚本还会安装 4 族主题推荐字体，传{' '}
+                          <code className="font-k-mono">--skip-fonts</code> / <code className="font-k-mono">-SkipFonts</code> 可跳过）。随时运行{' '}
+                          <code className="font-k-mono">kiseki deps</code> 查看各组件状态。
                         </>
                       ) : (
-                        <>Unlocks themed Oh My Posh prompts, TrueColor pixel Fastfetch cards, and 24-token live Zsh command highlighting.</>
+                        <>
+                          Homebrew and the standalone installers provision Oh My Posh, Fastfetch, and Zsh highlighting/autosuggestions automatically (the standalone installers also fetch the 4 recommended font families; pass{' '}
+                          <code className="font-k-mono">--skip-fonts</code> / <code className="font-k-mono">-SkipFonts</code> to opt out). Run{' '}
+                          <code className="font-k-mono">kiseki deps</code> anytime to inspect status.
+                        </>
                       )}
                     </p>
                   </div>
@@ -253,7 +258,7 @@ export const DocsHub: FC<DocsHubProps> = ({
                     <div className="font-k-mono text-[0.6875rem] tracking-[0.2em]" style={{ color: 'var(--k-accent-primary)' }}>
                       CHAPTER 02 // CLI REFERENCE
                     </div>
-                    <h1 className="k-act-heading text-3xl m-0">{lang === 'zh' ? '全部 15 个核心命令' : 'All 15 Core Commands'}</h1>
+                    <h1 className="k-act-heading text-3xl m-0">{lang === 'zh' ? '核心命令参考' : 'Core CLI Commands'}</h1>
                   </div>
                   <div className="divide-y font-k-mono text-xs" style={{ borderColor: 'color-mix(in srgb, var(--k-border) 25%, transparent)' }}>
                     {CLI_COMMANDS.filter(
@@ -341,7 +346,61 @@ export const DocsHub: FC<DocsHubProps> = ({
                       </>
                     )}
                   </p>
-                  <CodeBlock lang={lang} code={`kiseki theme validate ./my-theme\nkiseki theme install ./my-theme && kiseki use my-theme`} />
+                  <CodeBlock
+                    lang={lang}
+                    code={`kiseki theme init my-theme --with-shader\nkiseki theme validate ./my-theme\nkiseki theme install ./my-theme && kiseki use my-theme`}
+                  />
+                  <p className="text-xs leading-relaxed m-0" style={{ color: 'var(--k-text-muted)' }}>
+                    {lang === 'zh' ? (
+                      <>
+                        完整规范与版权指南见仓库{' '}
+                        <a
+                          href="https://github.com/nerv-base/kiseki-terminal/blob/v2/docs/COMMUNITY_THEMES.md"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="underline"
+                          style={{ color: 'var(--k-accent-secondary)' }}
+                        >
+                          docs/COMMUNITY_THEMES.md
+                        </a>{' '}
+                        与{' '}
+                        <a
+                          href="https://github.com/nerv-base/kiseki-terminal/blob/v2/CONTRIBUTING.md"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="underline"
+                          style={{ color: 'var(--k-accent-secondary)' }}
+                        >
+                          CONTRIBUTING.md
+                        </a>
+                        ；线上社区主题市场（Kiseki Gallery）将在 v2.1+ 规划落地。
+                      </>
+                    ) : (
+                      <>
+                        See{' '}
+                        <a
+                          href="https://github.com/nerv-base/kiseki-terminal/blob/v2/docs/COMMUNITY_THEMES.md"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="underline"
+                          style={{ color: 'var(--k-accent-secondary)' }}
+                        >
+                          docs/COMMUNITY_THEMES.md
+                        </a>{' '}
+                        and{' '}
+                        <a
+                          href="https://github.com/nerv-base/kiseki-terminal/blob/v2/CONTRIBUTING.md"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="underline"
+                          style={{ color: 'var(--k-accent-secondary)' }}
+                        >
+                          CONTRIBUTING.md
+                        </a>{' '}
+                        for full schema, shader &amp; provenance rules. The online Kiseki Gallery is planned for v2.1+.
+                      </>
+                    )}
+                  </p>
                 </div>
               )}
 
@@ -377,6 +436,24 @@ export const DocsHub: FC<DocsHubProps> = ({
                         ) : (
                           <>
                             Read-only symlinks are respected automatically, or pass <code className="font-k-mono">--render-only</code> to emit artifacts without touching host files.
+                          </>
+                        )}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="font-bold mb-1" style={{ color: 'var(--k-text-primary)' }}>
+                        {lang === 'zh' ? '如何同步 Neovim / Helix / tmux / Zellij / bat / btop 等生态工具？' : 'How do I enable Neovim, Helix, tmux, Zellij, bat, or btop themes?'}
+                      </div>
+                      <div>
+                        {lang === 'zh' ? (
+                          <>
+                            Kiseki 每次切换都会在 <code className="font-k-mono">generated/</code> 下自动编译全部 Tier 2 产物，默认绝不擅自改动编辑器配置；如需直接写入它们的主题目录，使用{' '}
+                            <code className="font-k-mono">kiseki use nerv-eva --only neovim,helix,tmux,bat,zellij,opencode,btop</code> 即可显式挂载。
+                          </>
+                        ) : (
+                          <>
+                            All Tier 2 artifacts are always compiled under <code className="font-k-mono">generated/</code> without touching editor configs. Opt in to drop-in mounts anytime with{' '}
+                            <code className="font-k-mono">kiseki use nerv-eva --only neovim,helix,tmux,bat,zellij,opencode,btop</code>.
                           </>
                         )}
                       </div>

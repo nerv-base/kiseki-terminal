@@ -6,17 +6,18 @@ interface HeaderProps {
   view: ViewMode;
   scrolled: boolean;
   lang: Lang;
-  onNavigate: (target: 'home' | 'terminal' | 'download' | 'docs') => void;
+  onNavigate: (target: 'home' | 'terminal' | 'gallery' | 'download' | 'docs') => void;
   onToggleLang: () => void;
 }
 
 export const Header: FC<HeaderProps> = ({ view, scrolled, lang, onNavigate, onToggleLang }) => {
   const t = I18N[lang];
   const isHomeActive = view === 'landing';
+  const isGalleryActive = view === 'gallery';
   const isDocsActive = view === 'docs';
 
   return (
-    <header id="k-header" className={`fixed top-0 left-0 right-0 z-40 h-16 ${scrolled || view === 'docs' ? 'is-scrolled' : ''}`}>
+    <header id="k-header" className={`fixed top-0 left-0 right-0 z-40 h-16 ${scrolled || view !== 'landing' ? 'is-scrolled' : ''}`}>
       <div className="max-w-[120rem] mx-auto h-full px-6 sm:px-12 lg:px-14 flex items-center justify-between gap-4">
         <button
           id="k-logo-home-btn"
@@ -99,6 +100,17 @@ export const Header: FC<HeaderProps> = ({ view, scrolled, lang, onNavigate, onTo
             style={{ color: 'var(--k-text-secondary)', borderBottom: '1px solid transparent' }}
           >
             {t.nav_try}
+          </button>
+          <button
+            type="button"
+            onClick={() => onNavigate('gallery')}
+            className="k-nav-btn bg-transparent border-0 p-0 pb-1 cursor-pointer"
+            style={{
+              color: isGalleryActive ? 'var(--k-accent-primary)' : 'var(--k-text-secondary)',
+              borderBottom: isGalleryActive ? '1px solid var(--k-accent-primary)' : '1px solid transparent',
+            }}
+          >
+            {t.nav_gallery}
           </button>
           <button
             type="button"

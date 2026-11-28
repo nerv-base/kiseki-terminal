@@ -1,0 +1,17 @@
+name = "kiseki-gallery-worker"
+main = "src/index.ts"
+compatibility_date = "2026-01-01"
+
+# Attach route on existing R2 custom domain (dl.kisekiterm.dev/gallery/* only;
+# /install.sh, /deps/*, and /releases/* continue falling through directly to R2).
+routes = [
+  { pattern = "dl.kisekiterm.dev/gallery/*", zone_name = "kisekiterm.dev" }
+]
+
+[[r2_buckets]]
+binding = "R2"
+bucket_name = "kiseki-dl"
+
+[[kv_namespaces]]
+binding = "STATS"
+id = "8d570a6503dc4f3d9f7f40ad9650b2ab"

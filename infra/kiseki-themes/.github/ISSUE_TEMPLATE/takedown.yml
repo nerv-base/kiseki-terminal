@@ -1,0 +1,35 @@
+name: Takedown / Copyright Report
+description: Request immediate removal of a theme entry & cached thumbnail from Kiseki Gallery
+title: "[Takedown] "
+labels: ["takedown"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Kiseki Gallery indexes third-party public GitHub repositories.
+        If an indexed entry infringes your copyright or violates community guidelines, provide the details below and maintainers will remove its index entry and cached thumbnail promptly.
+  - type: input
+    id: theme_id
+    attributes:
+      label: Theme ID or GitHub Repository
+      placeholder: "e.g. tokyo-midnight or owner/repo"
+    validations:
+      required: true
+  - type: dropdown
+    id: reason
+    attributes:
+      label: Reason for removal
+      options:
+        - Copyright / DMCA (unlicensed wallpaper or artwork)
+        - Malicious / deceptive package
+        - Author requesting delisting
+        - Other policy violation
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: Details & ownership link
+      description: Link to the original artwork/license or brief explanation.
+    validations:
+      required: true
