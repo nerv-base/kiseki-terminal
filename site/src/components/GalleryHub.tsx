@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FC } from 'react';
+import { useEffect, useMemo, useRef, useState, type FC, type ReactNode } from 'react';
 import {
   GALLERY_REGISTRY_REPO,
   OFFICIAL_GALLERY_THEMES,
@@ -26,6 +26,138 @@ interface GalleryHubProps {
   onOpenDocs: (chapter: DocChapterId) => void;
   onNavigate: (target: 'home' | 'download') => void;
 }
+
+/** Safe, zero-dependency inline Markdown renderer (links, bold, inline code — no innerHTML). */
+function renderInlineMarkdown(text: string): ReactNode[] {
+  const out: ReactNode[] = [];
+  const tokenRe = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|\*\*([^*]+)\*\*|`([^`]+)`/g;
+  let last = 0;
+  let key = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = tokenRe.exec(text)) !== null) {
+    if (match.index > last) {
+      out.push(text.slice(last, match.index));
+    }
+    if (match[1] && match[2]) {
+      out.push(
+        <a
+          key={`lnk-${key++}`}
+          href={match[2]}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="no-underline hover:underline"
+          style={{ color: 'var(--kg-accent)' }}
+        >
+          {renderInlineMarkdown(match[1])}
+        </a>,
+      );
+    } else if (match[3]) {
+      out.push(
+        <strong key={`b-${key++}`} className="font-semibold" style={{ color: 'var(--kg-ink)' }}>
+          {renderInlineMarkdown(match[3])}
+        </strong>,
+      );
+    } else if (match[4]) {
+      out.push(
+        <code
+          key={`c-${key++}`}
+          className="kg-mono text-[11.5px] px-1 py-[1px] rounded-[2px]"
+          style={{ background: 'var(--kg-surface)', color: 'var(--kg-ink)' }}
+        >
+          {match[4]}
+        </code>,
+      );
+    }
+    last = match.index + match[0].length;
+  }
+
+  if (last < text.length) {
+    out.push(text.slice(last));
+  }
+  return out;
+}
+
+/** Clean block Markdown renderer for GitHub Release notes inside the Gallery detail modal. */
+const ReleaseNotesMarkdown: FC<{ markdown: string }> = ({ markdown }) => {
+  const blocks = useMemo(() => {
+    const lines = markdown.replace(/\r\n/g, '\n').split('\n');
+    const nodes: ReactNode[] = [];
+    let listItems: string[] = [];
+    let paraLines: string[] = [];
+    let idx = 0;
+
+    const flushPara = () => {
+      if (!paraLines.length) return;
+      const text = paraLines.join(' ').trim();
+      paraLines = [];
+      if (text) {
+        nodes.push(
+          <p key={`p-${idx++}`} className="m-0 leading-relaxed" style={{ color: 'var(--kg-ink-secondary)' }}>
+            {renderInlineMarkdown(text)}
+          </p>,
+        );
+      }
+    };
+
+    const flushList = () => {
+      if (!listItems.length) return;
+      const items = listItems;
+      listItems = [];
+      nodes.push(
+        <ul
+          key={`ul-${idx++}`}
+          className="m-0 pl-4 space-y-1.5 list-disc"
+          style={{ color: 'var(--kg-ink-secondary)' }}
+        >
+          {items.map((item, i) => (
+            <li key={i} className="leading-relaxed">
+              {renderInlineMarkdown(item)}
+            </li>
+          ))}
+        </ul>,
+      );
+    };
+
+    for (const rawLine of lines) {
+      const line = rawLine.trim();
+      if (!line) {
+        flushPara();
+        flushList();
+        continue;
+      }
+      const heading = line.match(/^#{1,4}\s+(.+)$/);
+      if (heading) {
+        flushPara();
+        flushList();
+        nodes.push(
+          <div
+            key={`h-${idx++}`}
+            className="pt-1 font-medium"
+            style={{ color: 'var(--kg-ink)', fontSize: '12.5px' }}
+          >
+            {renderInlineMarkdown(heading[1]!)}
+          </div>,
+        );
+        continue;
+      }
+      const bullet = line.match(/^[-*+]\s+(.+)$/);
+      if (bullet) {
+        flushPara();
+        listItems.push(bullet[1]!);
+        continue;
+      }
+      flushList();
+      paraLines.push(line);
+    }
+
+    flushPara();
+    flushList();
+    return nodes;
+  }, [markdown]);
+
+  return <div className="space-y-2">{blocks}</div>;
+};
 
 /**
  * Fallback plate for community themes submitted without a screenshot thumbnail.
@@ -1004,21 +1136,36 @@ export const GalleryHub: FC<GalleryHubProps> = ({
                   ))}
                 </dl>
 
-                {/* Lazy-loaded release notes */}
+                {/* Lazy-loaded release notes (rendered safely from GitHub Release Markdown) */}
                 {!selected.builtin && updatesMap?.themes[selected.id]?.releaseNotes && (
                   <div
-                    className="pt-3 border-t space-y-1.5"
+                    className="pt-4 border-t space-y-2.5"
                     style={{ borderColor: 'var(--kg-hairline)', fontSize: 'var(--kg-text-sm)' }}
                   >
-                    <div className="font-medium" style={{ color: 'var(--kg-ink)' }}>
-                      {isZh ? '更新说明' : 'Release notes'}
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="font-medium" style={{ color: 'var(--kg-ink)' }}>
+                        {isZh ? '更新说明' : 'Release notes'}
+                        {updatesMap.themes[selected.id]?.latestTag && (
+                          <span className="ml-2 kg-mono font-normal" style={{ color: 'var(--kg-ink-muted)' }}>
+                            {updatesMap.themes[selected.id]!.latestTag}
+                          </span>
+                        )}
+                      </span>
+                      {updatesMap.themes[selected.id]?.latestTag && (
+                        <a
+                          href={`https://github.com/${selected.repo}/releases/tag/${encodeURIComponent(
+                            updatesMap.themes[selected.id]!.latestTag!,
+                          )}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="no-underline hover:underline"
+                          style={{ color: 'var(--kg-ink-muted)', fontSize: '12px' }}
+                        >
+                          {isZh ? '完整日志 ↗' : 'Full release ↗'}
+                        </a>
+                      )}
                     </div>
-                    <p
-                      className="m-0 whitespace-pre-wrap leading-relaxed"
-                      style={{ color: 'var(--kg-ink-secondary)' }}
-                    >
-                      {updatesMap.themes[selected.id]!.releaseNotes}
-                    </p>
+                    <ReleaseNotesMarkdown markdown={updatesMap.themes[selected.id]!.releaseNotes!} />
                   </div>
                 )}
               </div>
